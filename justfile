@@ -127,13 +127,13 @@ test:
 test-local:
     pytest
 
-# Run pytest with coverage report to terminal
+# Run pytest with coverage report to terminal (SQLite only — the gate lives in `just ci`)
 coverage:
-    pytest --cov --cov-report=term-missing
+    pytest --cov --cov-report=term-missing --cov-fail-under=0
 
-# Generate HTML coverage report
+# Generate HTML coverage report (SQLite only — the gate lives in `just ci`)
 coverage-html:
-    pytest --cov --cov-report=html
+    pytest --cov --cov-report=html --cov-fail-under=0
     @echo "open htmlcov/index.html"
 
 # Ruff check locally (no docker) — quick dev feedback
@@ -190,13 +190,13 @@ ci-djlint:
 ci-migration-lint:
     {{ci_compose_run_deps}} --entrypoint python web manage.py lintmigrations
 
-# pytest with coverage against SQLite (the default backend)
+# pytest against SQLite (the default backend, no services needed)
 ci-test:
-    {{ci_compose_run}} --entrypoint pytest web --cov --cov-report=term-missing --cov-report=xml
+    {{ci_compose_run}} --entrypoint pytest web
 
-# pytest against the postgres service — same suite, second backend
+# pytest against postgres — runs both event stores, so this is the run that gates coverage
 ci-test-pg:
-    {{ci_compose_run_deps}} -e TEST_DATABASE_URL={{pg_test_url}} --entrypoint pytest web
+    {{ci_compose_run_deps}} -e TEST_DATABASE_URL={{pg_test_url}} --entrypoint pytest web --cov --cov-report=term-missing --cov-report=xml
 
 # pip-audit dependency CVE scan (installed env; skip editable self)
 ci-security:

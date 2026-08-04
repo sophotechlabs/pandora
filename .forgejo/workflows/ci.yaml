@@ -39,8 +39,8 @@ jobs:
       - name: Dependency CVEs
         run: uv run pip-audit --skip-editable
       - name: Tests (SQLite)
-        run: uv run pytest --cov --cov-report=term-missing
+        run: uv run pytest
       - name: Tests (Postgres)
         env:
           TEST_DATABASE_URL: postgres://pandora:pandora@postgres:5432/pandora
-        run: uv run pytest
+        run: uv run pytest --cov --cov-report=term-missing

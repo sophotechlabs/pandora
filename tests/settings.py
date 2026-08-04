@@ -17,7 +17,21 @@ _TEST_DATABASE_URL = os.environ.get("TEST_DATABASE_URL", "").strip()
 if _TEST_DATABASE_URL:
     import dj_database_url
 
-    DATABASES = {"default": dj_database_url.parse(_TEST_DATABASE_URL)}
+    DATABASES = {
+        "default": dj_database_url.parse(_TEST_DATABASE_URL),
+        "events_sqlite": {
+            "ENGINE": "django.db.backends.sqlite3",
+            "NAME": ":memory:",
+        },
+    }
+
+    class EventsSqliteRouter:
+        def allow_migrate(self, db, app_label, **hints):
+            if db == "events_sqlite":
+                return app_label == "events"
+            return True
+
+    DATABASE_ROUTERS = [EventsSqliteRouter()]
 
 DEBUG = False
 SECRET_KEY = "test-secret-key-not-used-in-production"

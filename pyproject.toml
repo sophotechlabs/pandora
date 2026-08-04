@@ -122,6 +122,7 @@ ignore = [
 "**/conftest.py" = ["S101"]
 "**/admin.py" = ["RUF012"]
 "**/models.py" = ["RUF012", "DJ001"]
+"**/events/*_store.py" = ["S608"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["pandora"]
