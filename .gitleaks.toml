@@ -1,0 +1,6 @@
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Alertmanager webhook fixtures carry synthetic tokens and label sets, not credentials"
+paths = ['''tests/fixtures/am/.*\.json''']

@@ -1,0 +1,46 @@
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  ci:
+    runs-on: docker
+    container:
+      image: infra-soph-ci-toolbox
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: pandora
+          POSTGRES_USER: pandora
+          POSTGRES_PASSWORD: pandora
+        options: >-
+          --health-cmd "pg_isready -U pandora -d pandora"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install from the lockfile
+        run: uv sync --frozen --extra web --extra dev
+      - name: Lint, types, templates
+        run: |
+          uv run ruff check src tests
+          uv run ruff format --check src tests
+          uv run mypy --config-file pyproject.toml
+          if [ -n "$(find src -name '*.html' -print -quit)" ]; then
+            uv run djlint src --check
+          fi
+      - name: Migration safety
+        env:
+          DJANGO_DEBUG: "True"
+          DATABASE_URL: postgres://pandora:pandora@postgres:5432/pandora
+        run: uv run python manage.py lintmigrations
+      - name: Dependency CVEs
+        run: uv run pip-audit --skip-editable
+      - name: Tests (SQLite)
+        run: uv run pytest --cov --cov-report=term-missing
+      - name: Tests (Postgres)
+        env:
+          TEST_DATABASE_URL: postgres://pandora:pandora@postgres:5432/pandora
+        run: uv run pytest

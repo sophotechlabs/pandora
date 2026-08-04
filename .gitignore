@@ -216,3 +216,7 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+pandora.sqlite3
+staticfiles/
+backups/

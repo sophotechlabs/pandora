@@ -1,0 +1,29 @@
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+env:
+  REGISTRY: zot.c.p-mk1.sopho.tech
+
+jobs:
+  image:
+    runs-on: docker
+    container:
+      image: infra-soph-ci-toolbox
+      options: -v /var/run/docker.sock:/var/run/docker.sock
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and push the pandora image to zot
+        run: |
+          set -euo pipefail
+          version=$(python3 -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+          image="$REGISTRY/apps/pandora:$version"
+          latest="$REGISTRY/apps/pandora:latest"
+          sha="$REGISTRY/apps/pandora:sha-${GITHUB_SHA:0:12}"
+          docker build --network host --target prod -t "$image" -t "$latest" -t "$sha" .
+          docker push "$image"
+          docker push "$latest"
+          docker push "$sha"
+          echo "pushed $image, $latest and $sha"

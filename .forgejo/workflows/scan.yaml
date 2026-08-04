@@ -1,0 +1,29 @@
+on:
+  schedule:
+    - cron: "23 3 * * *"
+  workflow_dispatch:
+
+env:
+  REGISTRY: zot.c.p-mk1.sopho.tech
+  HADOLINT_IMAGE: hadolint/hadolint:latest-debian
+  TRIVY_IMAGE: aquasec/trivy:latest
+
+jobs:
+  scan:
+    runs-on: docker
+    container:
+      image: infra-soph-ci-toolbox
+      options: -v /var/run/docker.sock:/var/run/docker.sock
+    steps:
+      - uses: actions/checkout@v4
+      - name: Dockerfile lint
+        run: |
+          set -euo pipefail
+          docker run --rm -i "$HADOLINT_IMAGE" hadolint --failure-threshold error - < Dockerfile
+      - name: Image CVEs
+        run: |
+          set -euo pipefail
+          version=$(python3 -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock "$TRIVY_IMAGE" \
+            image --exit-code 1 --severity HIGH,CRITICAL --ignore-unfixed \
+            "$REGISTRY/apps/pandora:$version"

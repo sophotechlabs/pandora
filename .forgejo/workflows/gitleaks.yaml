@@ -1,0 +1,14 @@
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  scan:
+    runs-on: docker
+    container:
+      image: infra-soph-ci-toolbox
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - run: gitleaks git . --no-banner --redact

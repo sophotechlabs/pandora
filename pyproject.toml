@@ -1,0 +1,172 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pandora"
+version = "0.1.0"
+description = "Self-hosted event tracker on the Sentry model: Alertmanager webhooks and Sentry envelopes grouped into triageable issues"
+requires-python = ">=3.12"
+dependencies = []
+
+[project.optional-dependencies]
+web = [
+    "django>=5.1",
+    "django-unfold>=0.40",
+    "dj-database-url>=2.2",
+    "psycopg[binary]>=3.2",
+    "requests>=2.32",
+    "gunicorn>=23.0",
+    "whitenoise>=6.7",
+    "python-ulid>=2.7",
+    "django-prometheus>=2.3",
+    "opentelemetry-api>=1.44",
+    "opentelemetry-sdk>=1.44",
+    "opentelemetry-exporter-otlp-proto-http>=1.44",
+    "opentelemetry-instrumentation-django>=0.65b0",
+    "opentelemetry-instrumentation-requests>=0.65b0",
+    "opentelemetry-instrumentation-psycopg>=0.65b0",
+]
+dev = [
+    "pytest>=8.0",
+    "pytest-cov>=5.0",
+    "pytest-mock>=3.14",
+    "pytest-django>=4.9",
+    "freezegun>=1.5",
+    "ruff==0.16.0",
+    "mypy>=1.13",
+    "django-stubs[compatible-mypy]>=5.1",
+    "types-requests>=2.32",
+    "djlint>=1.36",
+    "django-upgrade>=1.22",
+    "django-migration-linter>=6.0",
+    "pip-audit>=2.7",
+    "vulture>=2.13",
+    "xenon>=0.9",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.django_migration_linter]
+include_apps = ["core", "ingest", "issues", "events"]
+no_cache = true
+ignore_name = []
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+filterwarnings = ["ignore:No directory at.*staticfiles:UserWarning"]
+DJANGO_SETTINGS_MODULE = "tests.settings"
+python_files = ["test_*.py"]
+addopts = ""
+
+[tool.coverage.run]
+source = ["src/pandora"]
+branch = true
+omit = ["*/migrations/*", "*/tests/*", "*/wsgi.py", "*/asgi.py", "*/manage.py"]
+
+[tool.coverage.report]
+fail_under = 95
+show_missing = true
+skip_covered = false
+exclude_lines = [
+    "pragma: no cover",
+    "raise NotImplementedError",
+    "if TYPE_CHECKING:",
+    "^\\s*\\.\\.\\.$",
+]
+
+[tool.ruff]
+line-length = 88
+target-version = "py312"
+extend-exclude = [
+    "**/migrations/**",
+    "staticfiles",
+    "htmlcov",
+    "backups",
+]
+
+[tool.ruff.lint]
+select = [
+    "E",
+    "W",
+    "F",
+    "I",
+    "B",
+    "UP",
+    "SIM",
+    "C4",
+    "S",
+    "DJ",
+    "TID",
+    "RET",
+    "PTH",
+    "PL",
+    "RUF",
+]
+ignore = [
+    "PLR0913",
+    "PLR0911",
+    "PLR2004",
+    "S101",
+    "SIM108",
+    "RET504",
+    "E501",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101", "S105", "S106", "S107", "S108", "S608", "PLR2004", "ARG001", "ARG002", "PLC0415", "E402", "RUF001"]
+"**/apps.py" = ["PLC0415"]
+"**/migrations/**" = ["ALL"]
+"**/settings.py" = ["S105", "S106"]
+"**/conftest.py" = ["S101"]
+"**/admin.py" = ["RUF012"]
+"**/models.py" = ["RUF012", "DJ001"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["pandora"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+[tool.mypy]
+python_version = "3.12"
+plugins = ["mypy_django_plugin.main"]
+mypy_path = "src"
+packages = [
+    "pandora.core",
+    "pandora.ingest",
+    "pandora.issues",
+    "pandora.events",
+    "pandora.am",
+    "pandora.web",
+]
+ignore_missing_imports = true
+check_untyped_defs = true
+warn_unused_ignores = true
+warn_redundant_casts = true
+warn_unreachable = true
+disallow_untyped_defs = false
+strict_optional = true
+exclude = [
+    "migrations/",
+    "manage.py",
+    "conftest.py",
+]
+
+[[tool.mypy.overrides]]
+module = "tests.*"
+ignore_errors = true
+
+[tool.django-stubs]
+django_settings_module = "tests.settings"
+
+[tool.djlint]
+profile = "django"
+extension = "html"
+indent = 2
+max_line_length = 120
+ignore = "H006,H013,H030,H031"
+format_attribute_template_tags = true
+custom_blocks = "component"

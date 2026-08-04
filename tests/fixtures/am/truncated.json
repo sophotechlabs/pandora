@@ -1,0 +1,39 @@
+{
+  "version": "4",
+  "groupKey": "{}/{severity=~\"critical|warning\"}:{alertname=\"KubeDeploymentReplicasMismatch\", namespace=\"storefront\"}",
+  "truncatedAlerts": 7,
+  "status": "firing",
+  "receiver": "pandora",
+  "groupLabels": {
+    "alertname": "KubeDeploymentReplicasMismatch",
+    "namespace": "storefront"
+  },
+  "commonLabels": {
+    "alertname": "KubeDeploymentReplicasMismatch",
+    "namespace": "storefront",
+    "severity": "critical",
+    "cluster": "p-mk2"
+  },
+  "commonAnnotations": {},
+  "externalURL": "https://alertmanager.c.p-mk2.sopho.tech",
+  "alerts": [
+    {
+      "status": "firing",
+      "labels": {
+        "alertname": "KubeDeploymentReplicasMismatch",
+        "namespace": "storefront",
+        "deployment": "web",
+        "severity": "critical",
+        "cluster": "p-mk2"
+      },
+      "annotations": {
+        "summary": "Deployment has not matched the expected number of replicas.",
+        "description": "Deployment storefront/web has not matched the expected number of replicas for longer than 15 minutes."
+      },
+      "startsAt": "2026-08-04T11:02:00.000Z",
+      "endsAt": "0001-01-01T00:00:00Z",
+      "generatorURL": "https://prometheus.c.p-mk2.sopho.tech/graph?g0.expr=kube_deployment_spec_replicas&g0.tab=1",
+      "fingerprint": "5f2c8e91a704bd36"
+    }
+  ]
+}

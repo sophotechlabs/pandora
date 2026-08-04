@@ -1,0 +1,41 @@
+{
+  "version": "4",
+  "groupKey": "{}/{severity=~\"critical|warning\"}:{alertname=\"NodeFilesystemAlmostOutOfSpace\", instance=\"p-mk1-node-01:9100\"}",
+  "truncatedAlerts": 0,
+  "status": "resolved",
+  "receiver": "pandora",
+  "groupLabels": {
+    "alertname": "NodeFilesystemAlmostOutOfSpace",
+    "instance": "p-mk1-node-01:9100"
+  },
+  "commonLabels": {
+    "alertname": "NodeFilesystemAlmostOutOfSpace",
+    "instance": "p-mk1-node-01:9100",
+    "severity": "warning",
+    "cluster": "p-mk1"
+  },
+  "commonAnnotations": {},
+  "externalURL": "https://alertmanager.c.p-mk1.sopho.tech",
+  "alerts": [
+    {
+      "status": "resolved",
+      "labels": {
+        "alertname": "NodeFilesystemAlmostOutOfSpace",
+        "instance": "p-mk1-node-01:9100",
+        "mountpoint": "/var",
+        "device": "/dev/md2",
+        "fstype": "ext4",
+        "severity": "warning",
+        "cluster": "p-mk1"
+      },
+      "annotations": {
+        "summary": "Filesystem has less than 10% space left.",
+        "description": "Filesystem on /dev/md2 at p-mk1-node-01:9100 has only 8.42% available space left."
+      },
+      "startsAt": "2026-08-03T22:05:00.000Z",
+      "endsAt": "2026-08-04T01:35:00.000Z",
+      "generatorURL": "https://prometheus.c.p-mk1.sopho.tech/graph?g0.expr=node_filesystem_avail_bytes&g0.tab=1",
+      "fingerprint": "d10a4e77b6c25913"
+    }
+  ]
+}

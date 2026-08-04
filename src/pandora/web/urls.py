@@ -1,0 +1,13 @@
+from django.contrib import admin
+from django.urls import include, path
+from django.views.generic import RedirectView
+
+from pandora.web.views import health
+
+urlpatterns = [
+    path("admin/", admin.site.urls),
+    path("health/", health, name="health"),
+    path("", include("pandora.ingest.urls")),
+    path("", include("django_prometheus.urls")),
+    path("", RedirectView.as_view(url="/admin/", permanent=False)),
+]

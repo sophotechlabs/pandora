@@ -1,0 +1,63 @@
+{
+  "version": "4",
+  "groupKey": "{}/{severity=~\"critical|warning\"}:{alertname=\"KubePodCrashLooping\", namespace=\"payments\"}",
+  "truncatedAlerts": 0,
+  "status": "firing",
+  "receiver": "pandora",
+  "groupLabels": {
+    "alertname": "KubePodCrashLooping",
+    "namespace": "payments"
+  },
+  "commonLabels": {
+    "alertname": "KubePodCrashLooping",
+    "namespace": "payments",
+    "severity": "critical",
+    "cluster": "p-mk1"
+  },
+  "commonAnnotations": {
+    "runbook_url": "https://runbooks.prometheus-operator.dev/runbooks/kubernetes/kubepodcrashlooping"
+  },
+  "externalURL": "https://alertmanager.c.p-mk1.sopho.tech",
+  "alerts": [
+    {
+      "status": "firing",
+      "labels": {
+        "alertname": "KubePodCrashLooping",
+        "namespace": "payments",
+        "pod": "ledger-7d9f4c8b6d-hk2mp",
+        "container": "ledger",
+        "severity": "critical",
+        "cluster": "p-mk1"
+      },
+      "annotations": {
+        "summary": "Pod is crash looping.",
+        "description": "Pod payments/ledger-7d9f4c8b6d-hk2mp (ledger) is in waiting state (reason: CrashLoopBackOff).",
+        "runbook_url": "https://runbooks.prometheus-operator.dev/runbooks/kubernetes/kubepodcrashlooping"
+      },
+      "startsAt": "2026-08-04T09:12:41.123Z",
+      "endsAt": "0001-01-01T00:00:00Z",
+      "generatorURL": "https://prometheus.c.p-mk1.sopho.tech/graph?g0.expr=max_over_time%28kube_pod_container_status_waiting_reason%7Breason%3D%22CrashLoopBackOff%22%7D%5B5m%5D%29+%3E%3D+1&g0.tab=1",
+      "fingerprint": "3c1f6a2b9d4e5087"
+    },
+    {
+      "status": "firing",
+      "labels": {
+        "alertname": "KubePodCrashLooping",
+        "namespace": "payments",
+        "pod": "ledger-7d9f4c8b6d-x4rtq",
+        "container": "ledger",
+        "severity": "critical",
+        "cluster": "p-mk1"
+      },
+      "annotations": {
+        "summary": "Pod is crash looping.",
+        "description": "Pod payments/ledger-7d9f4c8b6d-x4rtq (ledger) is in waiting state (reason: CrashLoopBackOff).",
+        "runbook_url": "https://runbooks.prometheus-operator.dev/runbooks/kubernetes/kubepodcrashlooping"
+      },
+      "startsAt": "2026-08-04T09:14:11.987Z",
+      "endsAt": "0001-01-01T00:00:00Z",
+      "generatorURL": "https://prometheus.c.p-mk1.sopho.tech/graph?g0.expr=max_over_time%28kube_pod_container_status_waiting_reason%7Breason%3D%22CrashLoopBackOff%22%7D%5B5m%5D%29+%3E%3D+1&g0.tab=1",
+      "fingerprint": "8b70e5d41c93a2f6"
+    }
+  ]
+}
