@@ -8,6 +8,7 @@ urlpatterns = [
     path("admin/", admin.site.urls),
     path("health/", health, name="health"),
     path("", include("pandora.ingest.urls")),
+    path("api/v1/", include("pandora.web.api")),
     path("", include("django_prometheus.urls")),
     path("", RedirectView.as_view(url="/admin/", permanent=False)),
 ]
