@@ -112,7 +112,7 @@ Every list field, plus `fingerprint` (the components behind the hash), `episodes
 
 ### `GET /api/v1/issues/<id>/events`
 
-The event payloads behind an issue, newest first, read through the `EventStore`. Parameters: `limit`, `cursor` (an event id) and `episode`. Answers 501 while the running database has no `EventStore` implementation.
+The event payloads behind an issue, newest first, read through the `EventStore`. Parameters: `limit`, `cursor` (an event id) and `episode`. A store that does not implement `fetch` answers 501, not 500.
 
 ```json
 {
