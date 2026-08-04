@@ -6,6 +6,8 @@ on:
 
 env:
   REGISTRY: zot.c.p-mk1.sopho.tech
+  COSIGN_VERSION: v3.1.1
+  COSIGN_SHA256: ae1ecd212663f3693ad9edf8b1a183900c9a52d3155ba6e354237f9a0f6463fc
 
 jobs:
   image:
@@ -15,7 +17,10 @@ jobs:
       options: -v /var/run/docker.sock:/var/run/docker.sock
     steps:
       - uses: actions/checkout@v4
-      - name: Build and push the pandora image to zot
+      - name: Build, push and sign the pandora image
+        env:
+          COSIGN_KEY: ${{ secrets.COSIGN_KEY }}
+          COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
         run: |
           set -euo pipefail
           version=$(python3 -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
@@ -23,7 +28,23 @@ jobs:
           latest="$REGISTRY/apps/pandora:latest"
           sha="$REGISTRY/apps/pandora:sha-${GITHUB_SHA:0:12}"
           docker build --network host --target prod -t "$image" -t "$latest" -t "$sha" .
-          docker push "$image"
+          docker push "$image" | tee /tmp/push.out
           docker push "$latest"
           docker push "$sha"
           echo "pushed $image, $latest and $sha"
+
+          if [ -z "${COSIGN_KEY:-}" ]
+          then
+            echo "no COSIGN_KEY secret configured, image published unsigned"
+            exit 0
+          fi
+          digest=$(grep -oE 'sha256:[0-9a-f]{64}' /tmp/push.out | tail -1)
+          [ -n "$digest" ] || { echo "no digest parsed from push output"; exit 1; }
+          curl -fsSL -o /tmp/cosign \
+            "https://github.com/sigstore/cosign/releases/download/${COSIGN_VERSION}/cosign-linux-amd64"
+          echo "${COSIGN_SHA256}  /tmp/cosign" | sha256sum -c -
+          chmod +x /tmp/cosign
+          /tmp/cosign sign -y --key env://COSIGN_KEY \
+            --use-signing-config=false --tlog-upload=false --new-bundle-format=false \
+            "$REGISTRY/apps/pandora@$digest"
+          echo "signed $REGISTRY/apps/pandora@$digest"
