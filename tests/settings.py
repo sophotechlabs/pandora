@@ -25,14 +25,6 @@ if _TEST_DATABASE_URL:
         },
     }
 
-    class EventsSqliteRouter:
-        def allow_migrate(self, db, app_label, **hints):
-            if db == "events_sqlite":
-                return app_label == "events"
-            return True
-
-    DATABASE_ROUTERS = [EventsSqliteRouter()]
-
 DEBUG = False
 SECRET_KEY = "test-secret-key-not-used-in-production"
 ALLOWED_HOSTS = ["testserver", "localhost"]

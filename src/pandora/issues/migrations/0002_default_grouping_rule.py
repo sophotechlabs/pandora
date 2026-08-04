@@ -14,7 +14,7 @@ DEFAULT_DENYLIST = [
 
 def seed_default_rule(apps, schema_editor):
     GroupingRule = apps.get_model("issues", "GroupingRule")
-    GroupingRule.objects.create(
+    GroupingRule.objects.using(schema_editor.connection.alias).create(
         priority=DEFAULT_PRIORITY,
         project=None,
         alertname_regex="",
@@ -26,7 +26,7 @@ def seed_default_rule(apps, schema_editor):
 
 def drop_default_rule(apps, schema_editor):
     GroupingRule = apps.get_model("issues", "GroupingRule")
-    GroupingRule.objects.filter(
+    GroupingRule.objects.using(schema_editor.connection.alias).filter(
         priority=DEFAULT_PRIORITY,
         project=None,
         alertname_regex="",
