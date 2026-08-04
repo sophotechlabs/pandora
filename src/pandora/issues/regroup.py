@@ -91,6 +91,8 @@ def _regroup_project(
             owned.setdefault(episode.issue_id, set()).add(group.digest)
 
     donors = {issue.pk: issue for issue in Issue.objects.filter(pk__in=before_ids)}
+    for issue in _colliding(project, groups, before_ids):
+        donors[issue.pk] = issue
     by_hash = {issue.fingerprint_hash: issue for issue in donors.values()}
     _park_identities(donors)
 
@@ -113,6 +115,17 @@ def _regroup_project(
 
     report.issues_after += len(claimed)
     _drop_orphans(report, before_ids - claimed)
+
+
+def _colliding(
+    project: Project, groups: list[_Group], before_ids: set[int]
+) -> list[Issue]:
+    digests = [group.digest for group in groups]
+    return list(
+        Issue.objects.filter(project=project, fingerprint_hash__in=digests).exclude(
+            pk__in=before_ids
+        )
+    )
 
 
 def _park_identities(donors: dict[int, Issue]) -> None:

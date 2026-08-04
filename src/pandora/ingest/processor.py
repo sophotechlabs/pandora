@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 
 from django.db import transaction
+from django.db.models import F
 from prometheus_client import Counter
 
 from pandora.core.models import Project, TokenSource
@@ -12,7 +13,7 @@ from pandora.ingest.models import EnvelopeState, ProcessedEvent, RawEnvelope
 from pandora.ingest.translators import am
 from pandora.ingest.translators import envelope as envelope_translator
 from pandora.issues import aggregates, lifecycle
-from pandora.issues.models import Episode, Issue, IssueActivity
+from pandora.issues.models import Episode, Issue, IssueActivity, SourceState
 
 ENVELOPES = Counter(
     "pandora_ingest_envelopes_total",
@@ -124,6 +125,9 @@ def _apply(envelope: RawEnvelope, occurrence: lifecycle.Occurrence) -> Event | N
         },
     )
 
+    if not episode_created and episode.issue_id != issue.pk:
+        _reassign_episode(episode, issue)
+
     issue_state = None
     if not issue_created:
         issue_state = _issue_state(issue)
@@ -192,6 +196,28 @@ def _apply_event(
         source=occurrence.source,
         environment=occurrence.environment,
     )
+
+
+def _reassign_episode(episode: Episode, issue: Issue) -> None:
+    previous_id = episode.issue_id
+    still_open = episode.ends_at is None
+    episode.issue = issue
+    episode.save(update_fields=["issue"])
+    log.info(
+        "episode %s moved from issue %s to %s after a grouping change",
+        episode.pk,
+        previous_id,
+        issue.pk,
+    )
+    if not still_open:
+        return
+    Issue.objects.filter(pk=previous_id, open_episode_count__gt=0).update(
+        open_episode_count=F("open_episode_count") - 1
+    )
+    Issue.objects.filter(pk=previous_id, open_episode_count=0).update(
+        source_state=SourceState.RESOLVED
+    )
+    issue.open_episode_count += 1
 
 
 def _claim(project: Project, sentry_id: str) -> bool:

@@ -649,3 +649,88 @@ def test_the_command_refuses_an_unknown_project(ingested):
     expected = "no project with slug 'nope'"
 
     assert result == expected
+
+
+# a grouping change must not strand an episode
+
+
+@pytest.fixture
+def regrouped_live(am_fixture, token, event_store):
+    helpers.deliver(am_fixture("firing_group"), token, event_store, RECEIVED_AT)
+    group_on_alertname_only()
+    helpers.deliver(am_fixture("firing_group"), token, event_store, RECEIVED_AT)
+    return models.Issue.objects.order_by("pk")
+
+
+def test_a_rule_change_moves_the_episode_to_its_new_issue(regrouped_live):
+    """Should follow the grouping, or the episode strands where nothing can reach it."""
+    result = [issue.episodes.count() for issue in regrouped_live]
+    expected = [0, 2]
+
+    assert result == expected
+
+
+def test_the_abandoned_issue_stops_claiming_to_be_firing(regrouped_live):
+    """Should not leave a phantom firing issue inflating the dashboard forever."""
+    old = regrouped_live[0]
+
+    result = (old.open_episode_count, old.source_state)
+    expected = (0, models.SourceState.RESOLVED)
+
+    assert result == expected
+
+
+def test_the_new_issue_owns_the_open_episodes(regrouped_live):
+    """Should carry the open count across with the episodes."""
+    new = regrouped_live[1]
+
+    result = (new.open_episode_count, new.source_state)
+    expected = (2, models.SourceState.FIRING)
+
+    assert result == expected
+
+
+def test_regroup_survives_an_issue_that_already_holds_the_target_digest(
+    regrouped_live, event_store
+):
+    """Should repair, not raise — this is the case the repair exists for."""
+    report = run(store=event_store)
+
+    assert report.episodes == 2
+
+
+def test_regroup_still_repairs_a_stranded_episode(am_fixture, token, event_store):
+    """Should move an episode left behind by an older build."""
+    helpers.deliver(am_fixture("firing_group"), token, event_store, RECEIVED_AT)
+    stranded = models.Issue.objects.get()
+    orphan = models.Issue.objects.create(
+        project=stranded.project,
+        fingerprint_hash="f" * 64,
+        title="orphan",
+        level=models.Level.ERROR,
+    )
+    models.Episode.objects.update(issue=orphan)
+
+    run(store=event_store)
+
+    result = models.Episode.objects.filter(issue=stranded).count()
+    expected = 2
+
+    assert result == expected
+
+
+def test_a_closed_episode_moves_without_touching_open_counts(
+    am_fixture, token, event_store
+):
+    """Should move a resolved episode too, and leave both open counts alone."""
+    helpers.deliver(am_fixture("firing_group"), token, event_store, RECEIVED_AT)
+    helpers.deliver(am_fixture("resolved_group"), token, event_store, RECEIVED_AT)
+    group_on_alertname_only()
+
+    helpers.deliver(am_fixture("resolved_group"), token, event_store, RECEIVED_AT)
+
+    issues = list(models.Issue.objects.order_by("pk"))
+    result = [(issue.episodes.count(), issue.open_episode_count) for issue in issues]
+    expected = [(0, 0), (2, 0)]
+
+    assert result == expected
