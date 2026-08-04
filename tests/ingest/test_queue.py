@@ -1,7 +1,9 @@
 import pytest
 from django import test
 
-from pandora.ingest import processor, queue
+from pandora.ingest import models as ingest_models
+from pandora.ingest import queue
+from tests.ingest import helpers
 
 # configuration
 
@@ -17,16 +19,29 @@ def test_queue_factory_builds_the_configured_queue():
 # publish tests
 
 
-def test_sync_queue_runs_the_consumer_inline():
+@pytest.mark.django_db
+def test_sync_queue_runs_the_consumer_inline(token, am_fixture):
     """Should call process_envelope in the caller's stack, not defer it."""
-    with pytest.raises(NotImplementedError) as error:
-        queue.SyncQueue().publish(17)
+    envelope = helpers.store_envelope(am_fixture("firing_group"), token)
 
-    frames = [frame.name for frame in error.traceback]
-    assert "process_envelope" in frames
+    queue.SyncQueue().publish(envelope.pk)
+    envelope.refresh_from_db()
+
+    result = envelope.state
+    expected = ingest_models.EnvelopeState.PENDING
+
+    assert result != expected
 
 
-def test_the_consumer_is_the_seam_phase_one_fills():
-    """Should raise NotImplementedError until the Phase 1 consumer lands."""
-    with pytest.raises(NotImplementedError):
-        processor.process_envelope(1)
+@pytest.mark.django_db
+def test_sync_queue_leaves_a_broken_payload_replayable(token):
+    """Should hand a failure back as a stored row, never as an exception."""
+    envelope = helpers.store_envelope({"version": "5", "alerts": []}, token)
+
+    queue.SyncQueue().publish(envelope.pk)
+    envelope.refresh_from_db()
+
+    result = envelope.state
+    expected = ingest_models.EnvelopeState.FAILED
+
+    assert result == expected

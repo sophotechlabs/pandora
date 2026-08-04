@@ -1,0 +1,571 @@
+import copy
+import datetime
+import io
+
+import pytest
+from django.core import management
+from django.core.management import base as management_base
+
+from pandora.core import models as core_models
+from pandora.issues import grouping, models, regroup
+from tests.ingest import helpers
+
+RECEIVED_AT = datetime.datetime(2026, 8, 4, 9, 15, tzinfo=datetime.UTC)
+
+pytestmark = pytest.mark.django_db
+
+
+@pytest.fixture
+def ingested(am_fixture, token):
+    helpers.deliver(am_fixture("firing_group"), token, received_at=RECEIVED_AT)
+    return models.Issue.objects.get()
+
+
+def warning_copy(payload):
+    other = copy.deepcopy(payload)
+    for index, alert in enumerate(other["alerts"]):
+        alert["labels"]["severity"] = "warning"
+        alert["fingerprint"] = f"aaaa{index:012d}"
+    return other
+
+
+def group_on_alertname_only():
+    models.GroupingRule.objects.create(
+        priority=10,
+        mode=models.GroupingMode.ALLOWLIST,
+        labels=["alertname"],
+    )
+
+
+def group_on_every_label():
+    models.GroupingRule.objects.update(labels=[])
+
+
+def run(**kwargs):
+    return regroup.regroup(**kwargs)
+
+
+# no-op
+
+
+def test_regrouping_unchanged_rules_writes_nothing(ingested):
+    """Should leave the database exactly as it was when nothing regroups."""
+    before = helpers.snapshot()
+
+    run()
+
+    result = helpers.snapshot()
+    expected = before
+
+    assert result == expected
+
+
+def test_regrouping_unchanged_rules_reports_no_movement(ingested):
+    """Should report a clean no-op rather than inventing churn."""
+    report = run()
+
+    result = (
+        report.issues_before,
+        report.issues_after,
+        report.episodes_moved,
+        report.issues_created,
+        report.issues_deleted,
+    )
+    expected = (1, 1, 0, 0, 0)
+
+    assert result == expected
+
+
+def test_regrouping_counts_what_it_walked(ingested):
+    """Should report the episode history it recomputed from."""
+    report = run()
+
+    result = (report.projects, report.episodes)
+    expected = (1, 2)
+
+    assert result == expected
+
+
+def test_a_project_with_no_episodes_is_left_alone(ingested):
+    """Should skip a project whose history is empty instead of failing."""
+    core_models.Project.objects.create(slug="empty", name="Empty")
+
+    report = run()
+
+    result = (report.projects, report.issues_before)
+    expected = (2, 1)
+
+    assert result == expected
+
+
+# renaming in place
+
+
+def test_a_wider_rule_renames_the_issue_in_place(ingested):
+    """Should keep the issue row when its whole episode set stays together."""
+    group_on_alertname_only()
+
+    run()
+
+    result = models.Issue.objects.count()
+    expected = 1
+
+    assert result == expected
+
+
+def test_a_rename_keeps_the_issue_primary_key(ingested):
+    """Should preserve activity, silences and triage by never recreating the row."""
+    group_on_alertname_only()
+
+    run()
+
+    result = models.Issue.objects.get().pk
+    expected = ingested.pk
+
+    assert result == expected
+
+
+def test_a_rename_rewrites_the_grouping_identity(ingested):
+    """Should store the fingerprint the new rule produces."""
+    group_on_alertname_only()
+
+    run()
+    issue = models.Issue.objects.get()
+
+    result = (issue.fingerprint, issue.grouping_labels, issue.culprit)
+    expected = (
+        ["alertname:KubePodCrashLooping"],
+        {"alertname": "KubePodCrashLooping"},
+        "alertname=KubePodCrashLooping",
+    )
+
+    assert result == expected
+
+
+def test_a_rename_carries_the_triage_state(ingested):
+    """Should not throw away an operator's decision when grouping changes."""
+    models.Issue.objects.update(triage_state=models.TriageState.ACKNOWLEDGED)
+    group_on_alertname_only()
+
+    report = run()
+
+    result = (models.Issue.objects.get().triage_state, report.triage_migrated)
+    expected = ("ack", 1)
+
+    assert result == expected
+
+
+def test_a_rename_keeps_the_human_title(ingested):
+    """Should keep the readable title — episodes carry labels, not annotations."""
+    group_on_alertname_only()
+
+    run()
+
+    result = models.Issue.objects.get().title
+    expected = ingested.title
+
+    assert result == expected
+
+
+def test_a_rename_is_recorded_on_the_issue(ingested):
+    """Should leave a trail explaining why an issue's identity changed."""
+    group_on_alertname_only()
+
+    run()
+
+    result = [
+        activity.kind for activity in models.IssueActivity.objects.order_by("kind")
+    ]
+    expected = ["created", "regrouped"]
+
+    assert result == expected
+
+
+# splitting
+
+
+def test_a_narrower_rule_splits_the_issue(ingested):
+    """Should give each pod its own issue when the rule stops hiding the label."""
+    group_on_every_label()
+
+    run()
+
+    result = models.Issue.objects.count()
+    expected = 2
+
+    assert result == expected
+
+
+def test_a_split_moves_every_episode(ingested):
+    """Should reassign each episode to the issue its labels now belong to."""
+    group_on_every_label()
+
+    report = run()
+
+    result = (report.episodes_moved, report.issues_created)
+    expected = (2, 2)
+
+    assert result == expected
+
+
+def test_a_split_deletes_the_issue_nothing_points_at(ingested):
+    """Should clean up the issue whose episodes all moved away."""
+    group_on_every_label()
+
+    report = run()
+
+    result = (report.issues_deleted, report.orphans)
+    expected = (1, [ingested.title])
+
+    assert result == expected
+
+
+def test_a_split_rebuilds_the_counters(ingested):
+    """Should recount every issue from the episodes it now owns."""
+    group_on_every_label()
+
+    run()
+
+    result = sorted(
+        (issue.event_count, issue.open_episode_count, issue.source_state)
+        for issue in models.Issue.objects.all()
+    )
+    expected = [(1, 1, "firing"), (1, 1, "firing")]
+
+    assert result == expected
+
+
+def test_a_split_rebuilds_the_aggregates(ingested):
+    """Should split the sparkline along with the issues."""
+    group_on_every_label()
+
+    run()
+
+    result = sorted(stat.count for stat in models.HourlyStat.objects.all())
+    expected = [1, 1]
+
+    assert result == expected
+
+
+def test_a_split_rebuilds_the_tag_distribution(ingested):
+    """Should leave each new issue holding only its own labels."""
+    group_on_every_label()
+
+    run()
+
+    result = sorted(stat.value for stat in models.TagStat.objects.filter(key="pod"))
+    expected = ["ledger-7d9f4c8b6d-hk2mp", "ledger-7d9f4c8b6d-x4rtq"]
+
+    assert result == expected
+
+
+def test_a_split_does_not_carry_triage_state(ingested):
+    """Should not spread one triage decision across several new issues."""
+    models.Issue.objects.update(triage_state=models.TriageState.ACKNOWLEDGED)
+    group_on_every_label()
+
+    report = run()
+
+    result = (
+        {issue.triage_state for issue in models.Issue.objects.all()},
+        report.triage_migrated,
+    )
+    expected = ({"new"}, 0)
+
+    assert result == expected
+
+
+def test_a_split_dates_each_issue_from_its_own_episode(ingested):
+    """Should rebuild first_seen and last_seen per issue, not copy the old span."""
+    group_on_every_label()
+
+    run()
+
+    result = sorted(issue.first_seen for issue in models.Issue.objects.all())
+    expected = sorted(episode.starts_at for episode in models.Episode.objects.all())
+
+    assert result == expected
+
+
+def test_a_split_of_resolved_episodes_leaves_resolved_issues(
+    am_fixture, token, ingested
+):
+    """Should rebuild source_state from the episodes, not from the old row."""
+    helpers.deliver(am_fixture("resolved_group"), token, received_at=RECEIVED_AT)
+    group_on_every_label()
+
+    run()
+
+    result = {issue.source_state for issue in models.Issue.objects.all()}
+    expected = {"resolved"}
+
+    assert result == expected
+
+
+def test_two_issues_can_swap_grouping_identities(project, ingested):
+    """Should survive a rebuild where one issue claims another's fingerprint."""
+    first, second = _swapped_pair(project)
+
+    run()
+
+    result = sorted(
+        (issue.pk, issue.episodes.get().am_fingerprint)
+        for issue in models.Issue.objects.filter(pk__in=[first.pk, second.pk])
+    )
+    expected = sorted([(first.pk, "eeee2"), (second.pk, "eeee1")])
+
+    assert result == expected
+
+
+def _swapped_pair(project):
+    first_labels = {"alertname": "Swap", "side": "left"}
+    second_labels = {"alertname": "Swap", "side": "right"}
+    first_hash = grouping.fingerprint_hash(
+        grouping.compute_fingerprint(grouping.default_rule(), first_labels)
+    )
+    second_hash = grouping.fingerprint_hash(
+        grouping.compute_fingerprint(grouping.default_rule(), second_labels)
+    )
+    first = models.Issue.objects.create(
+        project=project, fingerprint_hash=second_hash, title="left"
+    )
+    second = models.Issue.objects.create(
+        project=project, fingerprint_hash=first_hash, title="right"
+    )
+    models.Episode.objects.create(
+        project=project,
+        issue=first,
+        am_fingerprint="eeee1",
+        labels=first_labels,
+        starts_at=RECEIVED_AT,
+        last_delivery_at=RECEIVED_AT,
+    )
+    models.Episode.objects.create(
+        project=project,
+        issue=second,
+        am_fingerprint="eeee2",
+        labels=second_labels,
+        starts_at=RECEIVED_AT,
+        last_delivery_at=RECEIVED_AT,
+    )
+    return first, second
+
+
+# merging
+
+
+def test_a_wider_rule_merges_two_issues(am_fixture, token, ingested):
+    """Should fold two severities into one issue when severity stops grouping."""
+    helpers.deliver(
+        warning_copy(am_fixture("firing_group")), token, received_at=RECEIVED_AT
+    )
+    group_on_alertname_only()
+
+    run()
+
+    result = models.Issue.objects.count()
+    expected = 1
+
+    assert result == expected
+
+
+def test_a_merge_sums_the_counters(am_fixture, token, ingested):
+    """Should recount the merged issue from all four episodes."""
+    helpers.deliver(
+        warning_copy(am_fixture("firing_group")), token, received_at=RECEIVED_AT
+    )
+    group_on_alertname_only()
+
+    run()
+    issue = models.Issue.objects.get()
+
+    result = (issue.event_count, issue.open_episode_count, issue.episodes.count())
+    expected = (4, 4, 4)
+
+    assert result == expected
+
+
+def test_a_merge_removes_both_emptied_issues(am_fixture, token, ingested):
+    """Should leave no ghost issues behind once every episode has moved."""
+    helpers.deliver(
+        warning_copy(am_fixture("firing_group")), token, received_at=RECEIVED_AT
+    )
+    group_on_alertname_only()
+
+    report = run()
+
+    result = (
+        report.issues_before,
+        report.issues_after,
+        report.issues_created,
+        report.issues_deleted,
+    )
+    expected = (2, 1, 1, 2)
+
+    assert result == expected
+
+
+def test_a_merge_starts_the_joined_issue_untriaged(am_fixture, token, ingested):
+    """Should not carry one grouping's triage decision onto a different group."""
+    models.Issue.objects.update(triage_state=models.TriageState.IGNORED)
+    helpers.deliver(
+        warning_copy(am_fixture("firing_group")), token, received_at=RECEIVED_AT
+    )
+    group_on_alertname_only()
+
+    report = run()
+
+    result = (models.Issue.objects.get().triage_state, report.triage_migrated)
+    expected = ("new", 0)
+
+    assert result == expected
+
+
+# repeatability
+
+
+def test_regrouping_twice_changes_nothing_the_second_time(ingested):
+    """Should settle on a fixed point — the recovery tool has to be repeatable."""
+    group_on_every_label()
+    run()
+    before = helpers.snapshot()
+
+    report = run()
+
+    result = helpers.snapshot()
+    expected = before
+
+    assert result == expected
+    assert report.episodes_moved == 0
+
+
+# dry run
+
+
+def test_a_dry_run_writes_nothing(ingested):
+    """Should let an operator see the damage before doing it."""
+    group_on_every_label()
+    before = helpers.snapshot()
+
+    run(dry_run=True)
+
+    result = helpers.snapshot()
+    expected = before
+
+    assert result == expected
+
+
+def test_a_dry_run_reports_what_would_happen(ingested):
+    """Should report exactly the numbers the real run would produce."""
+    group_on_every_label()
+
+    dry = run(dry_run=True)
+    applied = run()
+
+    result = (dry.issues_created, dry.episodes_moved, dry.issues_deleted)
+    expected = (applied.issues_created, applied.episodes_moved, applied.issues_deleted)
+
+    assert result == expected
+
+
+# project scoping
+
+
+def test_one_project_can_be_rebuilt_alone(am_fixture, token, ingested):
+    """Should leave other projects untouched when a slug is given."""
+    other_project = core_models.Project.objects.create(slug="apps", name="Apps")
+    other_token = core_models.IngestToken.objects.create(
+        project=other_project,
+        name="apps",
+        token="apps-token",
+        environment="p-mk2",
+    )
+    helpers.deliver(am_fixture("truncated"), other_token, received_at=RECEIVED_AT)
+    group_on_every_label()
+
+    report = run(project=token.project)
+
+    result = (report.projects, report.issues_before)
+    expected = (1, 1)
+
+    assert result == expected
+
+
+def test_scoping_leaves_the_other_project_grouped_as_it_was(
+    am_fixture, token, ingested
+):
+    """Should not silently regroup a project the operator did not name."""
+    other_project = core_models.Project.objects.create(slug="apps", name="Apps")
+    other_token = core_models.IngestToken.objects.create(
+        project=other_project,
+        name="apps",
+        token="apps-token",
+        environment="p-mk2",
+    )
+    helpers.deliver(am_fixture("truncated"), other_token, received_at=RECEIVED_AT)
+    untouched = models.Issue.objects.get(project=other_project).fingerprint_hash
+    group_on_every_label()
+
+    run(project=token.project)
+
+    result = models.Issue.objects.get(project=other_project).fingerprint_hash
+    expected = untouched
+
+    assert result == expected
+
+
+# the command
+
+
+def test_the_command_reports_the_rebuild(ingested):
+    """Should tell the operator what it did, in one readable line."""
+    group_on_every_label()
+    out = io.StringIO()
+
+    management.call_command("regroup", stdout=out)
+
+    assert "regroup: rebuilt 1 issues into 2 from 2 episodes" in out.getvalue()
+
+
+def test_the_command_says_when_it_only_looked(ingested):
+    """Should never let a dry run read like an applied change."""
+    group_on_every_label()
+    out = io.StringIO()
+
+    management.call_command("regroup", "--dry-run", stdout=out)
+
+    result = models.Issue.objects.count()
+    expected = 1
+
+    assert "would rebuild" in out.getvalue()
+    assert result == expected
+
+
+def test_the_command_lists_the_issues_it_emptied(ingested):
+    """Should name what it removed so nothing disappears quietly."""
+    group_on_every_label()
+    out = io.StringIO()
+
+    management.call_command("regroup", stdout=out)
+
+    assert f"orphaned {ingested.title}" in out.getvalue()
+
+
+def test_the_command_can_target_one_project(ingested, token):
+    """Should accept the project slug an operator would type."""
+    out = io.StringIO()
+
+    management.call_command("regroup", "--project", token.project.slug, stdout=out)
+
+    assert "across 1 projects" in out.getvalue()
+
+
+def test_the_command_refuses_an_unknown_project(ingested):
+    """Should fail loudly on a typo rather than rebuilding everything."""
+    with pytest.raises(management_base.CommandError) as error:
+        management.call_command("regroup", "--project", "nope")
+
+    result = str(error.value)
+    expected = "no project with slug 'nope'"
+
+    assert result == expected
