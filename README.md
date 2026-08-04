@@ -36,13 +36,13 @@ just test-local   # pytest without docker (SQLite)
 | `/admin/` | the UI | live |
 | `/health/` | liveness/readiness | live |
 | `/metrics` | Prometheus | live |
-| `/ingest/am/` | Alertmanager webhook receiver (Bearer token) | route frozen, answers 501 |
+| `/ingest/am/` | Alertmanager webhook receiver (Bearer token) | live |
 | `/api/<project_id>/envelope/` | Sentry SDK envelope endpoint | route frozen, answers 501 |
 | `/api/v1/issues` | issue list, filtered and cursor-paged | live |
 | `/api/v1/issues/<id>` | one issue with its episodes and tag stats | live |
 | `/api/v1/issues/<id>/events` | the stored events of one issue | live |
 
-The two ingest routes exist from the first commit and answer 501 until their phase lands — the URL and auth scheme are what SDKs and Alertmanager configs hard-code, so they are pinned before anything is written behind them.
+Both ingest routes existed from the first commit and answered 501 until their phase landed — the URL and auth scheme are what SDKs and Alertmanager configs hard-code, so they were pinned before anything was written behind them. The Alertmanager door is live; the envelope door still answers 501.
 
 Pandora reimplements the Sentry ingest wire format from public protocol documentation so unmodified MIT-licensed Sentry SDKs can point at it. No Sentry server code is used. "Sentry-compatible" is a statement about the wire format, nothing more.
 
