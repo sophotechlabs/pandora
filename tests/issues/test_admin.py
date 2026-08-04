@@ -109,10 +109,17 @@ def test_the_project_join_is_declared_once():
     assert result == expected
 
 
-def test_the_three_triage_actions_are_offered():
-    """Should expose exactly the transitions a human owns."""
+def test_the_changelist_actions_are_offered():
+    """Should expose the transitions a human owns and the three silence windows."""
     result = admin.IssueAdmin.actions
-    expected = ("acknowledge", "resolve", "ignore")
+    expected = (
+        "acknowledge",
+        "resolve",
+        "ignore",
+        "silence_hour",
+        "silence_half_shift",
+        "silence_day",
+    )
 
     assert result == expected
 

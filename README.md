@@ -46,6 +46,30 @@ The two ingest routes exist from the first commit and answer 501 until their pha
 
 Pandora reimplements the Sentry ingest wire format from public protocol documentation so unmodified MIT-licensed Sentry SDKs can point at it. No Sentry server code is used. "Sentry-compatible" is a statement about the wire format, nothing more.
 
+## Alertmanager
+
+Webhooks are the fast path; they are not the whole truth. A delivery can be lost, and Alertmanager can stop reporting an alert without ever sending a resolve. `reconcile` is the correction:
+
+```sh
+python manage.py reconcile --loop 60
+```
+
+Each pass reads `GET /api/v2/alerts` (asking for silenced, inhibited and unprocessed alerts as well — a suppressed alert is still firing) and compares it with the episodes pandora holds open:
+
+- an alert with no open episode → the missed webhook is synthesised and replayed through the same envelope inbox and consumer the webhook path uses;
+- an open episode whose alert is absent → closed only after **three consecutive** misses, so an Alertmanager restart cannot manufacture a resolve. The counter lives in memory and resets when the process restarts, which errs towards keeping episodes open;
+- a `Watchdog` alert → `pandora_watchdog_last_seen_timestamp`, the dead-man's switch that watches the alert path itself.
+
+Scope comes from the Alertmanager ingest token — its project and environment. Pass `--project` and `--environment` when one pandora serves more than one cluster. `--metrics-port` exposes the gauge from the reconcile process, which has no web port of its own.
+
+Without `--loop` it runs a single pass and exits. Deploy it with `--loop`, not as a CronJob: the miss counter lives in the process, so a one-shot run catches up missed webhooks but can never reach a third consecutive miss. A database error ends the process rather than being swallowed — the restart brings a working connection back, which a wedged loop never would.
+
+Reconcile never writes issues directly. Everything it corrects goes through `RawEnvelope` and `process_envelope`, so counters stay exactly-once and a correction is as replayable as a delivery.
+
+### Silences
+
+The issue changelist can silence for 1h, 4h or 1d. Matchers are structured and exact — one `isEqual` matcher per retained grouping label, no regex — so a silence covers the issue and nothing else. An issue that kept no grouping labels is refused rather than turned into a silence that matches everything. The comment links back to the issue; set `PANDORA_BASE_URL` to make that link absolute. Each silence is recorded as a `SilenceLink` and shows in the issue's activity feed; the link list can lift a silence early, and `prune` drops links once they expire.
+
 ## JSON API
 
 Read-only and versioned from the first commit — `/api/v1/` is what consumers pin. Paths carry no trailing slash. One header authenticates:

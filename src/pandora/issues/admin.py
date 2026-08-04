@@ -9,6 +9,8 @@ from django.utils import timezone
 from django.utils.html import format_html
 from unfold.admin import ModelAdmin
 
+from pandora.am import client as am_client
+from pandora.am import silences
 from pandora.issues import components, detail, sparkline, triage
 from pandora.issues.models import (
     Episode,
@@ -39,6 +41,10 @@ TRIAGE_VERBS = {
     triage.RESOLVED: "Resolved",
     triage.IGNORED: "Ignored",
 }
+
+SILENCE_HOUR = timedelta(hours=1)
+SILENCE_HALF_SHIFT = timedelta(hours=4)
+SILENCE_DAY = timedelta(days=1)
 
 
 class TriageFilter(admin.SimpleListFilter):
@@ -115,7 +121,14 @@ class IssueAdmin(ModelAdmin):
     )
     search_fields = ("title", "culprit", "fingerprint_hash")
     list_select_related = ("project",)
-    actions = ("acknowledge", "resolve", "ignore")
+    actions = (
+        "acknowledge",
+        "resolve",
+        "ignore",
+        "silence_hour",
+        "silence_half_shift",
+        "silence_day",
+    )
     readonly_fields = (
         "project",
         "title",
@@ -272,6 +285,49 @@ class IssueAdmin(ModelAdmin):
     def ignore(self, request, queryset):
         self._retriage(request, queryset, triage.IGNORED)
 
+    @admin.action(description="Silence for 1 hour")
+    def silence_hour(self, request, queryset):
+        self._silence(request, queryset, SILENCE_HOUR, "1h")
+
+    @admin.action(description="Silence for 4 hours")
+    def silence_half_shift(self, request, queryset):
+        self._silence(request, queryset, SILENCE_HALF_SHIFT, "4h")
+
+    @admin.action(description="Silence for 1 day")
+    def silence_day(self, request, queryset):
+        self._silence(request, queryset, SILENCE_DAY, "1d")
+
+    def _silence(self, request, queryset, duration, label):
+        try:
+            client = am_client.from_settings()
+        except am_client.AlertmanagerError as error:
+            self.message_user(request, f"No silence sent — {error}", messages.ERROR)
+            return
+
+        actor = request.user.get_username()
+        silenced = 0
+        for issue in queryset:
+            if self._silence_one(request, issue, duration, actor, client):
+                silenced += 1
+        if silenced:
+            self.message_user(
+                request,
+                f"Silenced {silenced} issue(s) in Alertmanager for {label}",
+                messages.SUCCESS,
+            )
+
+    def _silence_one(self, request, issue, duration, actor, client):
+        try:
+            silences.silence_issue(issue, duration, actor=actor, client=client)
+        except (silences.SilenceError, am_client.AlertmanagerError) as error:
+            self.message_user(
+                request,
+                f"{issue.title} was not silenced — {error}",
+                messages.ERROR,
+            )
+            return False
+        return True
+
     def _retriage(self, request, queryset, target_state):
         now = timezone.now()
         actor = request.user.get_username()
@@ -391,7 +447,43 @@ class SilenceLinkAdmin(ModelAdmin):
     list_display = ("issue", "am_silence_id", "created_at", "expires_at", "expired")
     list_select_related = ("issue",)
     search_fields = ("am_silence_id",)
+    actions = ("lift",)
+
+    def has_add_permission(self, request):
+        return False
 
     @admin.display(description="Expired", boolean=True)
     def expired(self, obj):
         return obj.expires_at <= timezone.now()
+
+    @admin.action(description="Lift silence in Alertmanager")
+    def lift(self, request, queryset):
+        try:
+            client = am_client.from_settings()
+        except am_client.AlertmanagerError as error:
+            self.message_user(request, f"No silence lifted — {error}", messages.ERROR)
+            return
+
+        actor = request.user.get_username()
+        lifted = 0
+        for link in queryset.select_related("issue"):
+            if self._lift_one(request, link, actor, client):
+                lifted += 1
+        if lifted:
+            self.message_user(
+                request,
+                f"Lifted {lifted} silence(s) in Alertmanager",
+                messages.SUCCESS,
+            )
+
+    def _lift_one(self, request, link, actor, client):
+        try:
+            silences.expire_silence(link, actor=actor, client=client)
+        except am_client.AlertmanagerError as error:
+            self.message_user(
+                request,
+                f"{link.am_silence_id} was not lifted — {error}",
+                messages.ERROR,
+            )
+            return False
+        return True
