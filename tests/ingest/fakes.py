@@ -1,3 +1,4 @@
+import dataclasses
 from typing import ClassVar
 
 from pandora.ingest import processor
@@ -13,6 +14,15 @@ class RecordingEventStore:
 
     def insert(self, events):
         self.rows.extend(events)
+
+    def reassign(self, project_id, episode_ids, issue_id):
+        wanted = {str(episode_id) for episode_id in episode_ids}
+        moved = [row for row in self.rows if row.episode_id in wanted]
+        for row in moved:
+            self.rows[self.rows.index(row)] = dataclasses.replace(
+                row, issue_id=issue_id
+            )
+        return len(moved)
 
     def fetch(
         self, project_id, *, issue_id=None, episode_id=None, before=None, limit=100

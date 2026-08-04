@@ -6,6 +6,7 @@ from django.db import transaction
 from django.utils import timezone
 
 from pandora.core.models import Project
+from pandora.events.store import EventStore, get_store
 from pandora.issues import aggregates, grouping
 from pandora.issues.models import (
     ActivityKind,
@@ -25,6 +26,7 @@ class RegroupReport:
     issues_before: int = 0
     issues_after: int = 0
     episodes_moved: int = 0
+    events_moved: int = 0
     issues_created: int = 0
     issues_renamed: int = 0
     issues_deleted: int = 0
@@ -44,11 +46,17 @@ class _Rollback(Exception):
     pass
 
 
-def regroup(project: Project | None = None, dry_run: bool = False) -> RegroupReport:
+def regroup(
+    project: Project | None = None,
+    dry_run: bool = False,
+    store: EventStore | None = None,
+) -> RegroupReport:
     report = RegroupReport()
+    if store is None:
+        store = get_store()
     try:
         with transaction.atomic():
-            _run(report, project)
+            _run(report, project, store)
             if dry_run:
                 raise _Rollback
     except _Rollback:
@@ -56,15 +64,17 @@ def regroup(project: Project | None = None, dry_run: bool = False) -> RegroupRep
     return report
 
 
-def _run(report: RegroupReport, project: Project | None) -> None:
+def _run(report: RegroupReport, project: Project | None, store: EventStore) -> None:
     projects = Project.objects.all()
     if project is not None:
         projects = Project.objects.filter(pk=project.pk)
     for row in projects.order_by("pk"):
-        _regroup_project(report, row)
+        _regroup_project(report, row, store)
 
 
-def _regroup_project(report: RegroupReport, project: Project) -> None:
+def _regroup_project(
+    report: RegroupReport, project: Project, store: EventStore
+) -> None:
     episodes = list(Episode.objects.filter(project=project).order_by("starts_at", "pk"))
     report.projects += 1
     report.episodes += len(episodes)
@@ -94,6 +104,7 @@ def _regroup_project(report: RegroupReport, project: Project) -> None:
             by_hash=by_hash,
             owned=owned,
             claimed=claimed,
+            store=store,
         )
         claimed.add(issue.pk)
         _rebuild_issue(issue, group)
@@ -139,6 +150,7 @@ def _settle(
     by_hash: dict[str, Issue],
     owned: dict[int, set[str]],
     claimed: set[int],
+    store: EventStore,
 ) -> tuple[Issue, bool]:
     donor = donors[group.episodes[-1].issue_id]
     sources = {episode.issue_id for episode in group.episodes}
@@ -161,6 +173,9 @@ def _settle(
     if moved:
         Episode.objects.filter(pk__in=[episode.pk for episode in moved]).update(
             issue=target
+        )
+        report.events_moved += store.reassign(
+            project.pk, [str(episode.pk) for episode in moved], target.pk
         )
         report.episodes_moved += len(moved)
         changed = True

@@ -16,6 +16,10 @@ from pandora.events.types import Event
 class EventStore(Protocol):
     def insert(self, events: Sequence[Event]) -> None: ...
 
+    def reassign(
+        self, project_id: int, episode_ids: Sequence[str], issue_id: int
+    ) -> int: ...
+
     def fetch(
         self,
         project_id: int,

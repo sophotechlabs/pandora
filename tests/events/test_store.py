@@ -6,7 +6,7 @@ from django.core import exceptions
 
 from pandora.events import postgres_store, sqlite_store, store
 
-METHODS = ("insert", "fetch", "search", "prune", "ensure_partitions")
+METHODS = ("insert", "reassign", "fetch", "search", "prune", "ensure_partitions")
 IMPLEMENTATIONS = (sqlite_store.SqliteEventStore, postgres_store.PostgresEventStore)
 
 
@@ -18,8 +18,8 @@ class FakeConnection:
 # interface contract
 
 
-def test_the_protocol_pins_five_operations():
-    """Should expose exactly the five EventStore operations Phase 0 freezes."""
+def test_the_protocol_pins_its_operations():
+    """Should expose exactly the EventStore operations the phases agreed on."""
     result = sorted(name for name in vars(store.EventStore) if not name.startswith("_"))
     expected = sorted(METHODS)
 

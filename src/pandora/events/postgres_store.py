@@ -30,6 +30,13 @@ SELECT = (
     f"source, environment FROM {EVENTS_TABLE}"
 )
 
+REASSIGN = (
+    f"UPDATE {EVENTS_TABLE} SET issue_id = %s "
+    "WHERE project_id = %s AND episode_id IN ({placeholders})"
+)
+
+REASSIGN_CHUNK = 500
+
 PARTITIONS = (
     "SELECT c.relname, pg_get_expr(c.relpartbound, c.oid) "
     "FROM pg_class c "
@@ -116,6 +123,24 @@ class PostgresEventStore:
             return
         with self.connection.cursor() as cursor:
             cursor.executemany(INSERT, [_to_row(event) for event in events])
+
+    def reassign(
+        self, project_id: int, episode_ids: Sequence[str], issue_id: int
+    ) -> int:
+        wanted = [str(episode_id) for episode_id in episode_ids]
+        if not wanted:
+            return 0
+        changed = 0
+        with self.connection.cursor() as cursor:
+            for start in range(0, len(wanted), REASSIGN_CHUNK):
+                chunk = wanted[start : start + REASSIGN_CHUNK]
+                placeholders = ", ".join(["%s"] * len(chunk))
+                cursor.execute(
+                    REASSIGN.format(placeholders=placeholders),
+                    [issue_id, project_id, *chunk],
+                )
+                changed += cursor.rowcount
+        return changed
 
     def fetch(
         self,

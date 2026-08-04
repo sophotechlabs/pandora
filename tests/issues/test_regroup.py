@@ -7,6 +7,7 @@ from django.core import management
 from django.core.management import base as management_base
 
 from pandora.core import models as core_models
+from pandora.events import store as events_store
 from pandora.issues import grouping, models, regroup
 from tests.ingest import helpers
 
@@ -16,9 +17,19 @@ pytestmark = pytest.mark.django_db
 
 
 @pytest.fixture
-def ingested(am_fixture, token):
-    helpers.deliver(am_fixture("firing_group"), token, received_at=RECEIVED_AT)
+def event_store(db):
+    return events_store.get_store()
+
+
+@pytest.fixture
+def ingested(am_fixture, token, event_store):
+    helpers.deliver(am_fixture("firing_group"), token, event_store, RECEIVED_AT)
     return models.Issue.objects.get()
+
+
+def stored_pairs(event_store, project_id):
+    rows = event_store.fetch(project_id)
+    return sorted((row.episode_id, row.issue_id) for row in rows)
 
 
 def warning_copy(payload):
@@ -349,6 +360,75 @@ def _swapped_pair(project):
         last_delivery_at=RECEIVED_AT,
     )
     return first, second
+
+
+# stored events
+
+
+def test_a_split_sends_every_event_to_the_issue_its_episode_landed_on(
+    ingested, event_store
+):
+    """Should relink stored events so an issue's history follows its episodes."""
+    group_on_every_label()
+
+    regroup.regroup()
+
+    result = stored_pairs(event_store, ingested.project_id)
+    expected = sorted(
+        (str(episode.pk), episode.issue_id) for episode in models.Episode.objects.all()
+    )
+
+    assert result == expected
+
+
+def test_each_rebuilt_issue_can_read_its_own_events(ingested, event_store):
+    """Should answer the API's own query — fetch by issue id — after a rebuild."""
+    group_on_every_label()
+
+    regroup.regroup()
+
+    result = [
+        len(event_store.fetch(issue.project_id, issue_id=issue.pk))
+        for issue in models.Issue.objects.order_by("pk")
+    ]
+    expected = [1, 1]
+
+    assert result == expected
+
+
+def test_a_rebuild_reports_the_events_it_relinked(ingested, event_store):
+    """Should say how many stored rows moved, not only how many episodes did."""
+    group_on_every_label()
+
+    report = regroup.regroup()
+
+    result = report.events_moved
+    expected = 2
+
+    assert result == expected
+
+
+def test_a_no_op_rebuild_relinks_nothing(ingested, event_store):
+    """Should not touch the event store when no episode changes issue."""
+    report = regroup.regroup(store=event_store)
+
+    result = report.events_moved
+    expected = 0
+
+    assert result == expected
+
+
+def test_a_dry_run_leaves_the_stored_events_alone(ingested, event_store):
+    """Should roll the event store back with everything else."""
+    group_on_every_label()
+    before = stored_pairs(event_store, ingested.project_id)
+
+    regroup.regroup(dry_run=True)
+
+    result = stored_pairs(event_store, ingested.project_id)
+    expected = before
+
+    assert result == expected
 
 
 # merging

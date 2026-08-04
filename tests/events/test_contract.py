@@ -224,6 +224,141 @@ def test_fetch_returns_nothing_for_an_unknown_project(event_store, moment):
     assert result == expected
 
 
+# reassign
+
+
+def test_reassign_moves_an_episode_to_another_issue(event_store, moment):
+    """Should follow the episodes when regroup rebuilds the grouping."""
+    event_store.insert([support.make_event(0, moment, issue_id=10, episode_id="100")])
+
+    event_store.reassign(1, ["100"], 11)
+
+    result = support.ids(event_store.fetch(1, issue_id=11))
+    expected = [support.event_id(0)]
+    assert result == expected
+
+
+def test_reassign_leaves_the_old_issue_empty(event_store, moment):
+    """Should move the row, not copy it — the old grouping must go."""
+    event_store.insert([support.make_event(0, moment, issue_id=10, episode_id="100")])
+
+    event_store.reassign(1, ["100"], 11)
+
+    result = event_store.fetch(1, issue_id=10)
+    expected = []
+    assert result == expected
+
+
+def test_reassign_touches_only_the_episodes_it_was_given(event_store, moment):
+    """Should leave every episode the rebuild did not move where it was."""
+    event_store.insert(
+        [
+            support.make_event(0, moment, issue_id=10, episode_id="100"),
+            support.make_event(1, moment, issue_id=10, episode_id="101"),
+        ]
+    )
+
+    event_store.reassign(1, ["100"], 11)
+
+    result = support.ids(event_store.fetch(1, issue_id=10))
+    expected = [support.event_id(1)]
+    assert result == expected
+
+
+def test_reassign_moves_every_event_of_one_episode(event_store, moment):
+    """Should relink the whole episode — an open and its close travel together."""
+    event_store.insert(
+        [
+            support.make_event(0, moment, issue_id=10, episode_id="100"),
+            support.make_event(1, moment, issue_id=10, episode_id="100"),
+        ]
+    )
+
+    result = event_store.reassign(1, ["100"], 11)
+    expected = 2
+
+    assert result == expected
+
+
+def test_reassign_reports_how_many_rows_it_relinked(event_store, moment):
+    """Should report the row count so regroup can log what moved."""
+    event_store.insert(
+        [
+            support.make_event(0, moment, issue_id=10, episode_id="100"),
+            support.make_event(1, moment, issue_id=10, episode_id="101"),
+        ]
+    )
+
+    result = event_store.reassign(1, ["100", "101"], 11)
+    expected = 2
+
+    assert result == expected
+
+
+def test_reassign_is_scoped_to_one_project(event_store, moment):
+    """Should never relink another project's events, whatever the episode id."""
+    event_store.insert(
+        [
+            support.make_event(0, moment, project_id=1, episode_id="100"),
+            support.make_event(1, moment, project_id=2, episode_id="100"),
+        ]
+    )
+
+    event_store.reassign(1, ["100"], 11)
+
+    result = [event.issue_id for event in event_store.fetch(2)]
+    expected = [10]
+    assert result == expected
+
+
+def test_reassign_of_no_episodes_touches_nothing(event_store, moment):
+    """Should short-circuit an empty move rather than build an empty IN clause."""
+    event_store.insert([support.make_event(0, moment, issue_id=10)])
+
+    result = event_store.reassign(1, [], 11)
+    expected = 0
+
+    assert result == expected
+
+
+def test_reassign_ignores_an_unknown_episode(event_store, moment):
+    """Should report nothing moved rather than raise on a stale episode id."""
+    event_store.insert([support.make_event(0, moment, issue_id=10)])
+
+    result = event_store.reassign(1, ["nope"], 11)
+    expected = 0
+
+    assert result == expected
+
+
+def test_reassign_accepts_more_episodes_than_one_statement_holds(event_store, moment):
+    """Should chunk a wide rebuild instead of tripping the parameter limit."""
+    event_store.insert(
+        [
+            support.make_event(index, moment, issue_id=10, episode_id=str(index))
+            for index in range(3)
+        ]
+    )
+    episode_ids = [str(index) for index in range(1200)]
+
+    result = event_store.reassign(1, episode_ids, 11)
+    expected = 3
+
+    assert result == expected
+
+
+def test_reassign_is_idempotent(event_store, moment):
+    """Should be safe to run twice — a re-run of regroup must not drift."""
+    event_store.insert([support.make_event(0, moment, issue_id=10, episode_id="100")])
+
+    event_store.reassign(1, ["100"], 11)
+    event_store.reassign(1, ["100"], 11)
+
+    result = [event.issue_id for event in event_store.fetch(1)]
+    expected = [11]
+    assert result == expected
+
+
 # search
 
 

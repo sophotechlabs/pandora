@@ -49,6 +49,7 @@ class Command(BaseCommand):
             f"regroup: {report.issues_created} created, "
             f"{report.issues_renamed} regrouped in place, "
             f"{report.episodes_moved} episodes moved, "
+            f"{report.events_moved} stored events relinked, "
             f"{report.triage_migrated} triage states carried, "
             f"{report.issues_deleted} emptied issues removed"
         )
