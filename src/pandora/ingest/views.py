@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import gzip
 import json
 import logging
 import secrets
@@ -24,6 +23,7 @@ SENTRY_KEY_FIELD = "sentry_key"
 GZIP_ENCODINGS = ("gzip", "x-gzip")
 DEFLATE_ENCODING = "deflate"
 DECODE_ERRORS = (OSError, EOFError, zlib.error)
+AUTO_WBITS = 47
 
 log = logging.getLogger(__name__)
 
@@ -191,13 +191,15 @@ def _decoded(request: HttpRequest) -> bytes:
     encoding = request.headers.get("Content-Encoding", "").strip().lower()
     limit = settings.PANDORA_INGEST_MAX_BYTES
     if encoding in GZIP_ENCODINGS:
-        return _inflate(gzip.decompress(request.body), limit)
+        return _inflate(request.body, limit)
     if encoding == DEFLATE_ENCODING:
-        return _inflate(zlib.decompress(request.body), limit)
+        return _inflate(request.body, limit)
     return request.body
 
 
-def _inflate(body: bytes, limit: int) -> bytes:
+def _inflate(raw: bytes, limit: int) -> bytes:
+    machine = zlib.decompressobj(AUTO_WBITS)
+    body = machine.decompress(raw, limit + 1)
     if len(body) > limit:
         raise _TooLarge
     return body

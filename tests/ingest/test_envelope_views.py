@@ -393,3 +393,18 @@ def test_an_item_without_its_own_id_inherits_the_envelope_one(post, published):
     result = ingest_models.RawEnvelope.objects.get().payload["event_id"]
     expected = "c" * 32
     assert result == expected
+
+
+@pytest.mark.django_db
+@test.override_settings(PANDORA_INGEST_MAX_BYTES=8192)
+def test_a_compression_bomb_is_refused_without_inflating_it(post):
+    """Should stop at the cap while decompressing, not after."""
+    raw = default_body(message="x" * 5_000_000)
+    body = gzip.compress(raw)
+    assert len(body) < 8192 < len(raw)
+
+    response = post(body=body, headers={"Content-Encoding": "gzip"})
+
+    result = (response.status_code, ingest_models.RawEnvelope.objects.count())
+    expected = (http.HTTPStatus.REQUEST_ENTITY_TOO_LARGE, 0)
+    assert result == expected

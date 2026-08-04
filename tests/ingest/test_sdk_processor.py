@@ -314,13 +314,32 @@ def test_a_regression_records_the_state_it_came_from(project):
 
 
 @pytest.mark.django_db
-def test_an_event_older_than_the_resolution_does_not_regress(project):
-    """Should ignore a straggler that predates the triage decision."""
+def test_an_event_delivered_before_the_resolution_does_not_regress(project):
+    """Should ignore a straggler that reached pandora before the triage decision."""
     now = timezone.now()
+    deliver(project, received_at=now - datetime.timedelta(hours=2))
+    issue = issue_models.Issue.objects.get()
+    issue.triage_state = issue_models.TriageState.RESOLVED
+    issue.last_resolved_at = now
+    issue.save(update_fields=["triage_state", "last_resolved_at"])
+
     deliver(
         project,
-        event_payload(timestamp=(now - datetime.timedelta(hours=2)).isoformat()),
+        event_payload(event_id="c" * 32),
+        received_at=now - datetime.timedelta(hours=1),
     )
+
+    issue.refresh_from_db()
+    result = issue.triage_state
+    expected = issue_models.TriageState.RESOLVED
+    assert result == expected
+
+
+@pytest.mark.django_db
+def test_an_old_event_delivered_after_the_resolution_regresses(project):
+    """Should reopen on a late delivery — the client's own clock is not the gate."""
+    now = timezone.now()
+    deliver(project, received_at=now - datetime.timedelta(hours=2))
     issue = issue_models.Issue.objects.get()
     issue.triage_state = issue_models.TriageState.RESOLVED
     issue.last_resolved_at = now
@@ -328,13 +347,13 @@ def test_an_event_older_than_the_resolution_does_not_regress(project):
 
     payload = event_payload(
         event_id="c" * 32,
-        timestamp=(now - datetime.timedelta(hours=1)).isoformat(),
+        timestamp=(now - datetime.timedelta(hours=3)).isoformat(),
     )
-    deliver(project, payload)
+    deliver(project, payload, received_at=now + datetime.timedelta(minutes=5))
 
     issue.refresh_from_db()
     result = issue.triage_state
-    expected = issue_models.TriageState.RESOLVED
+    expected = issue_models.TriageState.NEW
     assert result == expected
 
 
@@ -408,4 +427,99 @@ def test_a_malformed_event_payload_fails_the_envelope(project):
     envelope.refresh_from_db()
     result = (envelope.state, "EnvelopeError" in envelope.error)
     expected = (ingest_models.EnvelopeState.FAILED, True)
+    assert result == expected
+
+
+# events the door used to swallow
+
+
+@pytest.mark.django_db
+def test_events_with_no_id_do_not_collapse_onto_one_claim(project):
+    """Should keep id-less events apart — one bad client must not mute itself."""
+    for message in ("first", "second", "third"):
+        deliver(project, {"message": message})
+
+    result = (
+        issue_models.Issue.objects.count(),
+        ingest_models.ProcessedEvent.objects.count(),
+    )
+    expected = (3, 3)
+    assert result == expected
+
+
+@pytest.mark.django_db
+def test_events_with_a_null_id_do_not_collapse_either(project):
+    """Should treat an explicit null id as absent, not as a shared key."""
+    for message in ("first", "second"):
+        deliver(project, {"event_id": None, "message": message})
+
+    result = issue_models.Issue.objects.count()
+    expected = 2
+    assert result == expected
+
+
+@pytest.mark.django_db
+def test_a_replayed_id_less_event_still_counts_once(project):
+    """Should keep the same envelope idempotent even without a client id."""
+    envelope = store_event(project, {"message": "boom"})
+    store = fakes.RecordingEventStore()
+    processor.process_envelope(envelope.pk, store=store)
+    envelope.state = ingest_models.EnvelopeState.PENDING
+    envelope.save(update_fields=["state"])
+    processor.process_envelope(envelope.pk, store=store)
+
+    issue = issue_models.Issue.objects.get()
+    result = (issue.event_count, len(store.rows))
+    expected = (1, 1)
+    assert result == expected
+
+
+@pytest.mark.django_db
+def test_an_overlong_title_is_capped_to_the_column(project):
+    """Should not let a long exception value reject the row on Postgres."""
+    payload = event_payload(
+        exception={"values": [{"type": "ValueError", "value": "x" * 2000}]}
+    )
+    deliver(project, payload)
+
+    issue = issue_models.Issue.objects.get()
+    result = len(issue.title)
+    expected = 500
+    assert result == expected
+
+
+@pytest.mark.django_db
+def test_an_overlong_environment_is_capped_to_the_column(project):
+    """Should not let a long environment reject the row on Postgres."""
+    deliver(project, event_payload(environment="e" * 400))
+
+    issue = issue_models.Issue.objects.get()
+    result = len(issue.environment)
+    expected = 100
+    assert result == expected
+
+
+@pytest.mark.django_db
+def test_an_overlong_culprit_is_capped_to_the_column(project):
+    """Should not let a deep module path reject the row on Postgres."""
+    payload = event_payload(
+        exception={
+            "values": [
+                {
+                    "type": "ValueError",
+                    "value": "bad",
+                    "stacktrace": {
+                        "frames": [
+                            {"module": "m" * 400, "function": "f" * 400, "in_app": True}
+                        ]
+                    },
+                }
+            ]
+        }
+    )
+    deliver(project, payload)
+
+    issue = issue_models.Issue.objects.get()
+    result = len(issue.culprit)
+    expected = 500
     assert result == expected

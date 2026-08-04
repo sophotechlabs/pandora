@@ -27,6 +27,9 @@ SENTRY_LEVELS = {
 }
 DEFAULT_PLACEHOLDER = "{{ default }}"
 UNKNOWN_TITLE = "Unknown event"
+TITLE_MAX = 500
+CULPRIT_MAX = 500
+ENVIRONMENT_MAX = 100
 ID_TIME_BYTES = 6
 ID_RANDOM_BYTES = 10
 TAG_VALUE_MAX = 200
@@ -106,8 +109,8 @@ def translate_event(
         am_fingerprint="",
         labels={},
         status=lifecycle.STATUS_FIRING,
-        title=title,
-        culprit=_culprit(exception),
+        title=title[:TITLE_MAX],
+        culprit=_culprit(exception)[:CULPRIT_MAX],
         level=_level(payload),
         message=_message(payload, title),
         starts_at=timestamp,
@@ -115,13 +118,16 @@ def translate_event(
         timestamp=received_at,
         tags=tags,
         extra=_extra(payload),
-        environment=_environment(payload, environment),
+        environment=_environment(payload, environment)[:ENVIRONMENT_MAX],
         source="sdk",
     )
 
 
 def sentry_event_id(payload: Mapping[str, Any], fallback: str = "") -> str:
-    value = str(payload.get("event_id", "")).strip()
+    raw = payload.get("event_id")
+    if raw is None:
+        return fallback
+    value = str(raw).strip()
     if value:
         return value
     return fallback

@@ -78,7 +78,10 @@ def _consume_event(envelope: RawEnvelope, store: EventStore) -> None:
         environment=envelope.environment,
         received_at=envelope.received_at,
     )
-    sentry_id = envelope_translator.sentry_event_id(envelope.payload)
+    sentry_id = envelope_translator.sentry_event_id(
+        envelope.payload,
+        fallback=f"envelope-{envelope.pk}",
+    )
     with transaction.atomic():
         event = _apply_event(envelope, occurrence, sentry_id)
         if event is not None:

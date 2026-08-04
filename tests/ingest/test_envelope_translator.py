@@ -858,3 +858,17 @@ def test_junk_between_frames_is_skipped(project):
     result = occurrence.culprit
     expected = "app in handler"
     assert result == expected
+
+
+def test_a_null_event_id_is_treated_as_absent():
+    """Should not read the string None as an id — that collapsed every id-less event."""
+    result = envelope.sentry_event_id({"event_id": None}, "fallback-id")
+    expected = "fallback-id"
+    assert result == expected
+
+
+def test_a_blank_event_id_is_treated_as_absent():
+    """Should fall back rather than claim the empty string as a dedup key."""
+    result = envelope.sentry_event_id({"event_id": "   "}, "fallback-id")
+    expected = "fallback-id"
+    assert result == expected
