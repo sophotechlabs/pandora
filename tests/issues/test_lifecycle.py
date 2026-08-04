@@ -603,3 +603,168 @@ def test_first_seen_stays_put_for_a_newer_episode():
     expected = None
 
     assert result == expected
+
+
+# the SDK door — events without episodes
+
+
+def test_a_first_sdk_event_opens_an_issue_and_counts():
+    """Should create the issue and count the event, with no episode involved."""
+    transition = lifecycle.apply_event(None, occurrence(source="sdk"))
+
+    result = (
+        transition.create_issue,
+        transition.count_occurrence,
+        transition.create_episode,
+        transition.close_episode,
+        transition.open_episode_delta,
+    )
+    expected = (True, True, False, False, 0)
+
+    assert result == expected
+
+
+def test_an_sdk_event_never_touches_the_firing_column():
+    """Should leave source_state alone — it is derived from episodes."""
+    transition = lifecycle.apply_event(None, occurrence(source="sdk"))
+
+    result = "source_state" in transition.issue_fields
+    expected = False
+
+    assert result == expected
+
+
+def test_a_first_sdk_event_records_the_creation():
+    """Should show the issue's birth in the activity feed."""
+    transition = lifecycle.apply_event(None, occurrence(source="sdk"))
+
+    result = [record.kind for record in transition.activities]
+    expected = ["created"]
+
+    assert result == expected
+
+
+def test_a_repeat_sdk_event_creates_nothing():
+    """Should count against the existing issue without recording an event."""
+    transition = lifecycle.apply_event(issue_state(), occurrence(source="sdk"))
+
+    result = (transition.create_issue, transition.activities)
+    expected = (False, ())
+
+    assert result == expected
+
+
+def test_an_sdk_event_moves_last_seen_to_arrival():
+    """Should track recency by when pandora saw it."""
+    transition = lifecycle.apply_event(issue_state(), occurrence(source="sdk"))
+
+    result = transition.issue_fields["last_seen"]
+    expected = DELIVERED_AT
+
+    assert result == expected
+
+
+def test_a_late_sdk_event_does_not_rewind_last_seen():
+    """Should keep the newest sighting when a delayed event arrives."""
+    newer = DELIVERED_AT + datetime.timedelta(hours=1)
+    transition = lifecycle.apply_event(
+        issue_state(last_seen=newer), occurrence(source="sdk")
+    )
+
+    result = transition.issue_fields["last_seen"]
+    expected = newer
+
+    assert result == expected
+
+
+def test_an_older_sdk_event_pulls_first_seen_back():
+    """Should widen the window when an older event turns up."""
+    older = FIRED_AT - datetime.timedelta(days=1)
+    transition = lifecycle.apply_event(
+        issue_state(), occurrence(source="sdk", starts_at=older)
+    )
+
+    result = transition.issue_fields["first_seen"]
+    expected = older
+
+    assert result == expected
+
+
+def test_a_newer_sdk_event_leaves_first_seen_alone():
+    """Should not move the issue's first sighting forward."""
+    transition = lifecycle.apply_event(
+        issue_state(first_seen=FIRED_AT - datetime.timedelta(days=1)),
+        occurrence(source="sdk"),
+    )
+
+    result = transition.issue_fields.get("first_seen")
+    expected = None
+
+    assert result == expected
+
+
+def test_an_sdk_event_on_a_resolved_issue_regresses_it():
+    """Should reopen an issue that somebody resolved when it happens again."""
+    transition = lifecycle.apply_event(
+        issue_state(triage_state="resolved"), occurrence(source="sdk")
+    )
+
+    result = (
+        transition.issue_fields["triage_state"],
+        [record.kind for record in transition.activities],
+    )
+    expected = ("new", ["regression"])
+
+    assert result == expected
+
+
+def test_an_sdk_regression_records_the_state_it_came_from():
+    """Should say what the issue was before it came back."""
+    transition = lifecycle.apply_event(
+        issue_state(triage_state="resolved"), occurrence(source="sdk")
+    )
+
+    result = transition.activities[0].data
+    expected = {"previous_triage_state": "resolved"}
+
+    assert result == expected
+
+
+def test_an_sdk_event_before_the_resolution_does_not_regress():
+    """Should ignore a straggler that predates the triage decision."""
+    resolved_at = FIRED_AT + datetime.timedelta(hours=2)
+    transition = lifecycle.apply_event(
+        issue_state(triage_state="resolved", last_resolved_at=resolved_at),
+        occurrence(source="sdk", starts_at=FIRED_AT),
+    )
+
+    result = transition.activities
+    expected = ()
+
+    assert result == expected
+
+
+def test_an_sdk_event_after_the_resolution_regresses():
+    """Should reopen when the event is newer than the resolution."""
+    resolved_at = FIRED_AT - datetime.timedelta(hours=2)
+    transition = lifecycle.apply_event(
+        issue_state(triage_state="resolved", last_resolved_at=resolved_at),
+        occurrence(source="sdk", starts_at=FIRED_AT),
+    )
+
+    result = [record.kind for record in transition.activities]
+    expected = ["regression"]
+
+    assert result == expected
+
+
+def test_an_acknowledged_issue_is_not_regressed_by_an_sdk_event():
+    """Should leave triage alone unless the issue was actually resolved."""
+    transition = lifecycle.apply_event(
+        issue_state(triage_state="ack"), occurrence(source="sdk")
+    )
+
+    result = (transition.activities, "triage_state" in transition.issue_fields)
+    expected = ((), False)
+
+    assert result == expected

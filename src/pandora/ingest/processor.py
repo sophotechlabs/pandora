@@ -5,10 +5,12 @@ import logging
 from django.db import transaction
 from prometheus_client import Counter
 
+from pandora.core.models import Project, TokenSource
 from pandora.events.store import EventStore, get_store
 from pandora.events.types import Event
-from pandora.ingest.models import EnvelopeState, RawEnvelope
+from pandora.ingest.models import EnvelopeState, ProcessedEvent, RawEnvelope
 from pandora.ingest.translators import am
+from pandora.ingest.translators import envelope as envelope_translator
 from pandora.issues import aggregates, lifecycle
 from pandora.issues.models import Episode, Issue, IssueActivity
 
@@ -48,6 +50,13 @@ def process_envelope(envelope_id: int, *, store: EventStore | None = None) -> No
 
 
 def _consume(envelope: RawEnvelope, store: EventStore) -> None:
+    if envelope.source == TokenSource.SDK:
+        _consume_event(envelope, store)
+        return
+    _consume_webhook(envelope, store)
+
+
+def _consume_webhook(envelope: RawEnvelope, store: EventStore) -> None:
     occurrences = am.parse_webhook(
         envelope.payload,
         envelope.project,
@@ -59,9 +68,28 @@ def _consume(envelope: RawEnvelope, store: EventStore) -> None:
         events = [event for event in applied if event is not None]
         if events:
             store.insert(events)
-        envelope.state = EnvelopeState.DONE
-        envelope.error = ""
-        envelope.save(update_fields=["state", "error"])
+        _finish(envelope)
+
+
+def _consume_event(envelope: RawEnvelope, store: EventStore) -> None:
+    occurrence = envelope_translator.translate_event(
+        envelope.payload,
+        envelope.project,
+        environment=envelope.environment,
+        received_at=envelope.received_at,
+    )
+    sentry_id = envelope_translator.sentry_event_id(envelope.payload)
+    with transaction.atomic():
+        event = _apply_event(envelope, occurrence, sentry_id)
+        if event is not None:
+            store.insert([event])
+        _finish(envelope)
+
+
+def _finish(envelope: RawEnvelope) -> None:
+    envelope.state = EnvelopeState.DONE
+    envelope.error = ""
+    envelope.save(update_fields=["state", "error"])
 
 
 def _fail(envelope: RawEnvelope, error: Exception) -> None:
@@ -121,6 +149,54 @@ def _apply(envelope: RawEnvelope, occurrence: lifecycle.Occurrence) -> Event | N
         source=occurrence.source,
         environment=occurrence.environment,
     )
+
+
+def _apply_event(
+    envelope: RawEnvelope,
+    occurrence: lifecycle.Occurrence,
+    sentry_id: str,
+) -> Event | None:
+    project = envelope.project
+    if not _claim(project, sentry_id):
+        OCCURRENCES.labels(source=occurrence.source, outcome="duplicate").inc()
+        return None
+
+    issue, issue_created = Issue.objects.select_for_update().get_or_create(
+        project=project,
+        fingerprint_hash=occurrence.fingerprint_hash,
+        defaults=lifecycle.new_issue_fields(occurrence),
+    )
+    issue_state = None
+    if not issue_created:
+        issue_state = _issue_state(issue)
+
+    transition = lifecycle.apply_event(issue_state, occurrence)
+    _write_issue(issue, transition, occurrence)
+    _record(issue, transition, occurrence)
+    OCCURRENCES.labels(source=occurrence.source, outcome="stored").inc()
+
+    return Event(
+        id=envelope_translator.event_id(project.pk, sentry_id, occurrence.starts_at),
+        project_id=project.pk,
+        issue_id=issue.pk,
+        episode_id=None,
+        timestamp=occurrence.starts_at,
+        level=occurrence.level,
+        message=occurrence.message,
+        fingerprint=list(occurrence.fingerprint),
+        tags=dict(occurrence.tags),
+        extra={**occurrence.extra, "event_id": sentry_id},
+        source=occurrence.source,
+        environment=occurrence.environment,
+    )
+
+
+def _claim(project: Project, sentry_id: str) -> bool:
+    _, created = ProcessedEvent.objects.get_or_create(
+        project=project,
+        event_id=sentry_id,
+    )
+    return created
 
 
 def _changed_episode(transition: lifecycle.Transition) -> bool:

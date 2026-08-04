@@ -81,12 +81,12 @@ def test_envelope_route_rejects_a_non_numeric_project():
 
 
 @pytest.mark.django_db
-def test_envelope_door_answers_501_until_phase_seven(client):
-    """Should answer 501 on the frozen SDK route rather than 404."""
+def test_envelope_door_rejects_an_unknown_dsn_key(client):
+    """Should answer 401 on the SDK route when no DSN key matches."""
     response = client.post("/api/7/envelope/", data=b"", content_type="text/plain")
 
     result = response.status_code
-    expected = http.HTTPStatus.NOT_IMPLEMENTED
+    expected = http.HTTPStatus.UNAUTHORIZED
     assert result == expected
 
 

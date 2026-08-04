@@ -116,6 +116,56 @@ def apply_occurrence(
     )
 
 
+def apply_event(
+    issue_state: IssueState | None,
+    occurrence: Occurrence,
+) -> Transition:
+    fields = _event_fields(issue_state, occurrence)
+    activities = _event_activities(issue_state, occurrence)
+    if _has_regression(activities):
+        fields["triage_state"] = TRIAGE_NEW
+
+    return Transition(
+        create_issue=issue_state is None,
+        count_occurrence=True,
+        issue_fields=fields,
+        activities=activities,
+    )
+
+
+def _event_fields(
+    issue_state: IssueState | None, occurrence: Occurrence
+) -> dict[str, Any]:
+    fields: dict[str, Any] = {"last_seen": occurrence.timestamp}
+    if issue_state is None:
+        fields["first_seen"] = occurrence.starts_at
+        return fields
+    if issue_state.last_seen > occurrence.timestamp:
+        fields["last_seen"] = issue_state.last_seen
+    if occurrence.starts_at < issue_state.first_seen:
+        fields["first_seen"] = occurrence.starts_at
+    return fields
+
+
+def _event_activities(
+    issue_state: IssueState | None, occurrence: Occurrence
+) -> tuple[ActivityRecord, ...]:
+    if issue_state is None:
+        return (ActivityRecord(kind=ACTIVITY_CREATED),)
+    if issue_state.triage_state != TRIAGE_RESOLVED:
+        return ()
+
+    regression = ActivityRecord(
+        kind=ACTIVITY_REGRESSION,
+        data={"previous_triage_state": issue_state.triage_state},
+    )
+    if issue_state.last_resolved_at is None:
+        return (regression,)
+    if occurrence.starts_at <= issue_state.last_resolved_at:
+        return ()
+    return (regression,)
+
+
 @dataclass(frozen=True)
 class _Move:
     create: bool
