@@ -1,0 +1,69 @@
+{% extends "admin/change_form.html" %}
+{% load i18n unfold %}
+{% block form_after %}
+  <div class="flex flex-col gap-4 mt-6">
+    <div class="grid grid-cols-1 gap-4 xl:grid-cols-2">
+      {% component "unfold/components/card.html" with title=_("Enrichment") %}
+        <div class="flex flex-col gap-2 text-sm">
+          {% for link in detail.links %}
+            <a class="text-primary-600 dark:text-primary-500"
+               href="{{ link.href }}"
+               rel="noopener"
+               target="_blank">{{ link.label }}</a>
+          {% empty %}
+            <p class="text-font-subtle-light dark:text-font-subtle-dark">{% trans "No enrichment URL templates configured" %}</p>
+          {% endfor %}
+        </div>
+      {% endcomponent %}
+      {% component "unfold/components/card.html" with title=_("Annotations") %}
+        <dl class="flex flex-col gap-2 text-sm">
+          {% for key, value in detail.annotations %}
+            <div class="flex flex-col">
+              <dt class="text-font-subtle-light dark:text-font-subtle-dark">{{ key }}</dt>
+              <dd>
+                {{ value }}
+              </dd>
+            </div>
+          {% empty %}
+            <p class="text-font-subtle-light dark:text-font-subtle-dark">{% trans "No annotations recorded" %}</p>
+          {% endfor %}
+        </dl>
+      {% endcomponent %}
+    </div>
+    {% component "unfold/components/card.html" with title=_("Episode timeline") %}
+      {% include "admin/dashboard/_table.html" with table=detail.timeline %}
+    {% endcomponent %}
+    <div class="grid grid-cols-1 gap-4 xl:grid-cols-2">
+      {% component "unfold/components/card.html" with title=_("Tag distribution") %}
+        <div class="flex flex-col gap-6">
+          {% for group in detail.tags %}
+            <div class="flex flex-col gap-3">
+              <h3 class="font-semibold text-font-important-light text-sm dark:text-font-important-dark">{{ group.key }}</h3>
+              {% for bar in group.bars %}
+                {% component "unfold/components/progress.html" with title=bar.label description=bar.count value=bar.percent %}
+                {% endcomponent %}
+              {% endfor %}
+            </div>
+          {% empty %}
+            <p class="text-font-subtle-light dark:text-font-subtle-dark text-sm">{% trans "No tags recorded" %}</p>
+          {% endfor %}
+        </div>
+      {% endcomponent %}
+      {% component "unfold/components/card.html" with title=_("Activity") %}
+        <div class="flex flex-col gap-3 text-sm">
+          {% for row in detail.activities %}
+            <div class="border-base-200 border-t dark:border-base-800 flex flex-row gap-2 items-center pt-3 first:border-0 first:pt-0">
+              {% component "unfold/helpers/label.html" with text=row.kind %}
+              {% endcomponent %}
+              <span class="text-font-subtle-light dark:text-font-subtle-dark">{{ row.at|date:"M d, H:i" }}</span>
+              <span>{{ row.actor|default:"pandora" }}</span>
+              <span class="ml-auto text-font-subtle-light dark:text-font-subtle-dark">{{ row.note }}</span>
+            </div>
+          {% empty %}
+            <p class="text-font-subtle-light dark:text-font-subtle-dark">{% trans "No activity recorded" %}</p>
+          {% endfor %}
+        </div>
+      {% endcomponent %}
+    </div>
+  </div>
+{% endblock %}

@@ -1,33 +1,311 @@
 from __future__ import annotations
 
-from django.contrib import admin
+from datetime import timedelta
+
+from django.contrib import admin, messages
+from django.db import transaction
+from django.db.models import OuterRef, Prefetch, Subquery
+from django.utils import timezone
+from django.utils.html import format_html
 from unfold.admin import ModelAdmin
 
+from pandora.issues import components, detail, sparkline, triage
 from pandora.issues.models import (
     Episode,
     GroupingRule,
+    HourlyStat,
     Issue,
     IssueActivity,
     SilenceLink,
+    SourceState,
+    TriageState,
 )
+
+SEEN_WINDOWS = (
+    ("1", "Last hour"),
+    ("24", "Last 24 hours"),
+    ("168", "Last 7 days"),
+    ("720", "Last 30 days"),
+)
+
+STATE_DOTS = {
+    SourceState.FIRING: ("#ef4444", "Firing"),
+    SourceState.RESOLVED: ("#22c55e", "Resolved"),
+}
+UNKNOWN_DOT = ("#9ca3af", "No source state")
+
+TRIAGE_VERBS = {
+    triage.ACKNOWLEDGED: "Acknowledged",
+    triage.RESOLVED: "Resolved",
+    triage.IGNORED: "Ignored",
+}
+
+
+class TriageFilter(admin.SimpleListFilter):
+    title = "triage"
+    parameter_name = "triage"
+
+    def lookups(self, request, model_admin):
+        return (("all", "Everything"), *TriageState.choices)
+
+    def choices(self, changelist):
+        value = self.value()
+        yield {
+            "selected": value is None,
+            "query_string": changelist.get_query_string(remove=[self.parameter_name]),
+            "display": "Open",
+        }
+        for lookup, label in self.lookup_choices:
+            yield {
+                "selected": value == str(lookup),
+                "query_string": changelist.get_query_string(
+                    {self.parameter_name: lookup}
+                ),
+                "display": label,
+            }
+
+    def queryset(self, request, queryset):
+        value = self.value()
+        if value == "all":
+            return queryset
+        if value in TriageState.values:
+            return queryset.filter(triage_state=value)
+        return queryset.filter(triage_state__in=triage.OPEN_STATES)
+
+
+class LastSeenFilter(admin.SimpleListFilter):
+    title = "last seen"
+    parameter_name = "seen"
+
+    def lookups(self, request, model_admin):
+        return SEEN_WINDOWS
+
+    def queryset(self, request, queryset):
+        value = self.value()
+        if value is None:
+            return queryset
+        if not value.isdigit():
+            return queryset
+        cutoff = timezone.now() - timedelta(hours=int(value))
+        return queryset.filter(last_seen__gte=cutoff)
 
 
 @admin.register(Issue)
 class IssueAdmin(ModelAdmin):
     list_display = (
-        "title",
-        "project",
-        "level",
-        "source_state",
-        "triage_state",
+        "state",
+        "issue_title",
+        "grouping",
+        "activity",
         "event_count",
-        "open_episode_count",
-        "first_seen",
-        "last_seen",
+        "duration",
+        "triage_state",
+        "project",
+        "first_seen_short",
+        "last_seen_short",
     )
-    list_filter = ("triage_state", "source_state", "level", "project", "environment")
+    list_display_links = ("issue_title",)
+    list_filter = (
+        TriageFilter,
+        "source_state",
+        "level",
+        "project",
+        "environment",
+        LastSeenFilter,
+    )
     search_fields = ("title", "culprit", "fingerprint_hash")
     list_select_related = ("project",)
+    actions = ("acknowledge", "resolve", "ignore")
+    readonly_fields = (
+        "project",
+        "title",
+        "culprit",
+        "level",
+        "environment",
+        "source_state",
+        "fingerprint_hash",
+        "fingerprint",
+        "grouping_labels",
+        "first_seen",
+        "last_seen",
+        "last_resolved_at",
+        "event_count",
+        "open_episode_count",
+    )
+    fieldsets = (
+        (
+            None,
+            {
+                "fields": (
+                    "title",
+                    "culprit",
+                    "level",
+                    "source_state",
+                    "triage_state",
+                )
+            },
+        ),
+        (
+            "Grouping",
+            {
+                "fields": (
+                    "project",
+                    "environment",
+                    "fingerprint_hash",
+                    "fingerprint",
+                    "grouping_labels",
+                )
+            },
+        ),
+        (
+            "Counters",
+            {
+                "fields": (
+                    "event_count",
+                    "open_episode_count",
+                    "first_seen",
+                    "last_seen",
+                    "last_resolved_at",
+                )
+            },
+        ),
+    )
+
+    def has_add_permission(self, request):
+        return False
+
+    def get_queryset(self, request):
+        now = timezone.now()
+        open_episodes = Episode.objects.filter(
+            issue=OuterRef("pk"), ends_at__isnull=True
+        ).order_by("starts_at")
+        latest_episodes = Episode.objects.filter(issue=OuterRef("pk")).order_by(
+            "-starts_at"
+        )
+        window_stats = HourlyStat.objects.filter(
+            hour__gte=sparkline.window_start(now)
+        ).order_by("hour")
+        return (
+            super()
+            .get_queryset(request)
+            .prefetch_related(
+                Prefetch(
+                    "hourly_stats",
+                    queryset=window_stats,
+                    to_attr="window_stats",
+                )
+            )
+            .annotate(
+                open_since=Subquery(open_episodes.values("starts_at")[:1]),
+                latest_start=Subquery(latest_episodes.values("starts_at")[:1]),
+                latest_end=Subquery(latest_episodes.values("ends_at")[:1]),
+            )
+        )
+
+    def change_view(self, request, object_id, form_url="", extra_context=None):
+        context = dict(extra_context or {})
+        issue = self.get_object(request, object_id)
+        if issue is not None:
+            context["detail"] = detail.build(issue)
+        return super().change_view(request, object_id, form_url, context)
+
+    @admin.display(description="", ordering="source_state")
+    def state(self, obj):
+        color, label = STATE_DOTS.get(obj.source_state, UNKNOWN_DOT)
+        return format_html(
+            '<svg width="10" height="10" viewBox="0 0 10 10" role="img"'
+            ' aria-label="{}"><title>{}</title>'
+            '<circle cx="5" cy="5" r="4" fill="{}"></circle></svg>',
+            label,
+            label,
+            color,
+        )
+
+    @admin.display(description="Issue", ordering="title")
+    def issue_title(self, obj):
+        return obj.title
+
+    @admin.display(description="Grouping")
+    def grouping(self, obj):
+        labels = obj.grouping_labels or {}
+        if not labels:
+            return obj.culprit or "—"
+        return " ".join(f"{key}={value}" for key, value in sorted(labels.items()))
+
+    @admin.display(description="7 days")
+    def activity(self, obj):
+        stats = getattr(obj, "window_stats", [])
+        counts = sparkline.buckets(
+            ((stat.hour, stat.count) for stat in stats),
+            timezone.now(),
+        )
+        return sparkline.render(counts)
+
+    @admin.display(description="Duration")
+    def duration(self, obj):
+        open_since = getattr(obj, "open_since", None)
+        latest_start = getattr(obj, "latest_start", None)
+        latest_end = getattr(obj, "latest_end", None)
+        if open_since is not None:
+            return components.format_duration(timezone.now() - open_since)
+        if latest_start is not None and latest_end is not None:
+            return components.format_duration(latest_end - latest_start)
+        return "—"
+
+    @admin.display(description="First seen", ordering="first_seen")
+    def first_seen_short(self, obj):
+        return components.format_stamp(obj.first_seen)
+
+    @admin.display(description="Last seen", ordering="last_seen")
+    def last_seen_short(self, obj):
+        return components.format_stamp(obj.last_seen)
+
+    @admin.action(description="Acknowledge")
+    def acknowledge(self, request, queryset):
+        self._retriage(request, queryset, triage.ACKNOWLEDGED)
+
+    @admin.action(description="Resolve")
+    def resolve(self, request, queryset):
+        self._retriage(request, queryset, triage.RESOLVED)
+
+    @admin.action(description="Ignore")
+    def ignore(self, request, queryset):
+        self._retriage(request, queryset, triage.IGNORED)
+
+    def _retriage(self, request, queryset, target_state):
+        now = timezone.now()
+        actor = request.user.get_username()
+        issues = list(queryset)
+        changed = 0
+        for issue in issues:
+            if self._apply(issue, target_state, actor, now):
+                changed += 1
+
+        self.message_user(
+            request,
+            f"{TRIAGE_VERBS[target_state]} {changed} issue(s),"
+            f" {len(issues) - changed} unchanged",
+            messages.SUCCESS,
+        )
+
+    def _apply(self, issue, target_state, actor, at):
+        plan = triage.plan_triage(issue.triage_state, target_state, at)
+        if not plan.changed:
+            return False
+
+        previous_state = issue.triage_state
+        with transaction.atomic():
+            for name, value in plan.issue_fields.items():
+                setattr(issue, name, value)
+            issue.save(update_fields=list(plan.issue_fields))
+            IssueActivity.objects.create(
+                issue=issue,
+                kind=plan.activity_kind,
+                actor=actor,
+                at=at,
+                data={"previous_triage_state": previous_state},
+            )
+        return True
 
 
 @admin.register(Episode)
@@ -38,39 +316,82 @@ class EpisodeAdmin(ModelAdmin):
         "environment",
         "starts_at",
         "ends_at",
+        "length",
         "delivery_count",
         "last_delivery_at",
     )
     list_filter = ("project", "environment")
-    list_select_related = ("issue",)
+    list_select_related = ("issue", "project")
+    search_fields = ("am_fingerprint",)
+    date_hierarchy = "starts_at"
 
     def has_add_permission(self, request):
         return False
 
     def has_change_permission(self, request, obj=None):
         return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+    @admin.display(description="Length")
+    def length(self, obj):
+        if obj.ends_at is None:
+            return components.format_duration(timezone.now() - obj.starts_at)
+        return components.format_duration(obj.ends_at - obj.starts_at)
 
 
 @admin.register(GroupingRule)
 class GroupingRuleAdmin(ModelAdmin):
-    list_display = ("priority", "project", "alertname_regex", "mode", "active")
+    list_display = (
+        "priority",
+        "scope",
+        "alertname_regex",
+        "mode",
+        "label_list",
+        "active",
+    )
     list_filter = ("mode", "active", "project")
+    list_select_related = ("project",)
+    ordering = ("priority", "id")
+
+    @admin.display(description="Project", ordering="project")
+    def scope(self, obj):
+        if obj.project is None:
+            return "all projects"
+        return obj.project.slug
+
+    @admin.display(description="Labels")
+    def label_list(self, obj):
+        labels = obj.labels or []
+        if not labels:
+            return "—"
+        return ", ".join(str(label) for label in labels)
 
 
 @admin.register(IssueActivity)
 class IssueActivityAdmin(ModelAdmin):
-    list_display = ("issue", "kind", "actor", "at")
+    list_display = ("at", "issue", "kind", "actor")
     list_filter = ("kind",)
     list_select_related = ("issue",)
+    date_hierarchy = "at"
 
     def has_add_permission(self, request):
         return False
 
     def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
         return False
 
 
 @admin.register(SilenceLink)
 class SilenceLinkAdmin(ModelAdmin):
-    list_display = ("issue", "am_silence_id", "created_at", "expires_at")
+    list_display = ("issue", "am_silence_id", "created_at", "expires_at", "expired")
     list_select_related = ("issue",)
+    search_fields = ("am_silence_id",)
+
+    @admin.display(description="Expired", boolean=True)
+    def expired(self, obj):
+        return obj.expires_at <= timezone.now()

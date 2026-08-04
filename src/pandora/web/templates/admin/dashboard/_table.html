@@ -1,0 +1,39 @@
+{% load unfold %}
+<table class="w-full text-sm">
+  <thead>
+    <tr class="text-font-important-light dark:text-font-important-dark">
+      {% for column in table.columns %}
+        <th class="font-semibold pb-2 pr-3 last:pr-0
+                   {% if column.numeric %}text-right{% else %}text-left{% endif %}">{{ column.label }}</th>
+      {% endfor %}
+    </tr>
+  </thead>
+  <tbody>
+    {% for row in table.rows %}
+      <tr class="border-t border-base-200 dark:border-base-800">
+        {% for cell in row %}
+          {% with column=table.columns|index:forloop.counter0 %}
+            <td class="py-2 pr-3 last:pr-0
+                       {% if column.numeric %}text-right whitespace-nowrap{% endif %}">
+              {% if cell.variant %}
+                {% component "unfold/helpers/label.html" with variant=cell.variant text=cell.text %}
+                {% endcomponent %}
+              {% elif cell.href %}
+                <a class="text-primary-600 dark:text-primary-500"
+                   href="{{ cell.href }}"
+                   {% if cell.external %}rel="noopener" target="_blank"{% endif %}>{{ cell.text }}</a>
+              {% else %}
+                {{ cell.text|default:"—" }}
+              {% endif %}
+            </td>
+          {% endwith %}
+        {% endfor %}
+      </tr>
+    {% empty %}
+      <tr>
+        <td class="py-2 text-font-subtle-light dark:text-font-subtle-dark"
+            colspan="{{ table.column_count }}">{{ table.empty_message }}</td>
+      </tr>
+    {% endfor %}
+  </tbody>
+</table>
