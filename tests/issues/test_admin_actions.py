@@ -231,3 +231,51 @@ def test_a_resolved_issue_leaves_the_default_view(admin_client, project):
 
     assert result == expected
     assert models.Issue.objects.count() == 1
+
+
+# the change form, not just the changelist actions
+
+
+def change_form(client, issue, **fields):
+    payload = {"triage_state": issue.triage_state}
+    payload.update(fields)
+    return client.post(f"{CHANGELIST}{issue.pk}/change/", payload)
+
+
+def test_resolving_from_the_change_form_stamps_the_resolution(admin_client, project):
+    """Should set last_resolved_at, or the next episode fires a false regression."""
+    issue = make_issue(project, "TargetDown")
+
+    change_form(admin_client, issue, triage_state=models.TriageState.RESOLVED)
+
+    issue.refresh_from_db()
+    result = (issue.triage_state, issue.last_resolved_at)
+    expected = (models.TriageState.RESOLVED, timezone.now())
+
+    assert result == expected
+
+
+def test_resolving_from_the_change_form_records_an_activity(admin_client, project):
+    """Should leave the same audit trail the changelist action leaves."""
+    issue = make_issue(project, "TargetDown")
+
+    change_form(admin_client, issue, triage_state=models.TriageState.RESOLVED)
+
+    result = [(activity.kind, activity.data) for activity in issue.activities.all()]
+    expected = [("resolved", {"previous_triage_state": "new"})]
+
+    assert result == expected
+
+
+def test_saving_the_change_form_without_a_triage_change_records_nothing(
+    admin_client, project
+):
+    """Should not manufacture an activity row for an unrelated save."""
+    issue = make_issue(project, "TargetDown")
+
+    change_form(admin_client, issue)
+
+    result = issue.activities.count()
+    expected = 0
+
+    assert result == expected

@@ -161,7 +161,7 @@ def _event_activities(
     )
     if issue_state.last_resolved_at is None:
         return (regression,)
-    if occurrence.starts_at <= issue_state.last_resolved_at:
+    if occurrence.timestamp <= issue_state.last_resolved_at:
         return ()
     return (regression,)
 
@@ -234,4 +234,4 @@ def _regressed(
         return False
     if issue_state.last_resolved_at is None:
         return True
-    return occurrence.starts_at > issue_state.last_resolved_at
+    return occurrence.timestamp > issue_state.last_resolved_at

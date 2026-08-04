@@ -344,6 +344,15 @@ class IssueAdmin(ModelAdmin):
             messages.SUCCESS,
         )
 
+    def save_model(self, request, obj, form, change):
+        if "triage_state" not in form.changed_data:
+            super().save_model(request, obj, form, change)
+            return
+
+        target_state = obj.triage_state
+        obj.triage_state = form.initial.get("triage_state", "")
+        self._apply(obj, target_state, request.user.get_username(), timezone.now())
+
     def _apply(self, issue, target_state, actor, at):
         plan = triage.plan_triage(issue.triage_state, target_state, at)
         if not plan.changed:

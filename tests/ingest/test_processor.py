@@ -439,15 +439,36 @@ def test_a_repeat_of_the_old_episode_never_reopens_the_issue(
     assert result == expected
 
 
-def test_replaying_an_episode_older_than_the_resolution_never_reopens_it(
+def test_replaying_an_old_envelope_never_reopens_a_resolved_issue(
     am_fixture, token, store, triaged
 ):
     """Should not undo a triage decision when an old envelope is replayed."""
-    helpers.deliver(am_fixture("firing_group"), token, store, LATER)
+    envelope = helpers.store_envelope(am_fixture("firing_group"), token, RECEIVED_AT)
+    processor.process_envelope(envelope.pk, store=store)
+    envelope.state = ingest_models.EnvelopeState.PENDING
+    envelope.save(update_fields=["state"])
+    processor.process_envelope(envelope.pk, store=store)
     triaged.refresh_from_db()
 
     result = triaged.triage_state
     expected = "resolved"
+
+    assert result == expected
+
+
+def test_a_late_renotification_of_a_still_firing_alert_regresses_it(
+    am_fixture, token, store, triaged
+):
+    """Should notice a resolved issue is still firing, even with the original startsAt.
+
+    Prometheus re-notifies with the alert's own start time, which predates the
+    operator's triage. Gating on that start time hid a live alert from the board.
+    """
+    helpers.deliver(am_fixture("firing_group"), token, store, LATER)
+    triaged.refresh_from_db()
+
+    result = (triaged.triage_state, triaged.source_state)
+    expected = ("new", "firing")
 
     assert result == expected
 

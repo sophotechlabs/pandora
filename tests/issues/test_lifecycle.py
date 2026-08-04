@@ -503,7 +503,7 @@ def test_a_repeat_delivery_never_regresses_a_resolved_issue():
     assert transition.activities == ()
 
 
-def test_an_episode_that_started_before_the_resolution_does_not_regress():
+def test_an_episode_delivered_before_the_resolution_does_not_regress():
     """Should ignore a replayed old episode instead of undoing a triage decision."""
     state = issue_state(
         triage_state="resolved",
@@ -519,8 +519,8 @@ def test_an_episode_that_started_before_the_resolution_does_not_regress():
     assert result == expected
 
 
-def test_an_episode_that_started_after_the_resolution_regresses():
-    """Should regress on a genuinely new episode after the issue was resolved."""
+def test_an_episode_delivered_after_the_resolution_regresses():
+    """Should regress on an episode that arrives after the issue was resolved."""
     state = issue_state(
         triage_state="resolved",
         open_episode_count=0,
@@ -730,12 +730,12 @@ def test_an_sdk_regression_records_the_state_it_came_from():
     assert result == expected
 
 
-def test_an_sdk_event_before_the_resolution_does_not_regress():
+def test_an_sdk_event_delivered_before_the_resolution_does_not_regress():
     """Should ignore a straggler that predates the triage decision."""
-    resolved_at = FIRED_AT + datetime.timedelta(hours=2)
+    resolved_at = DELIVERED_AT + datetime.timedelta(hours=2)
     transition = lifecycle.apply_event(
         issue_state(triage_state="resolved", last_resolved_at=resolved_at),
-        occurrence(source="sdk", starts_at=FIRED_AT),
+        occurrence(source="sdk", timestamp=DELIVERED_AT),
     )
 
     result = transition.activities
@@ -744,12 +744,12 @@ def test_an_sdk_event_before_the_resolution_does_not_regress():
     assert result == expected
 
 
-def test_an_sdk_event_after_the_resolution_regresses():
+def test_an_sdk_event_delivered_after_the_resolution_regresses():
     """Should reopen when the event is newer than the resolution."""
-    resolved_at = FIRED_AT - datetime.timedelta(hours=2)
+    resolved_at = DELIVERED_AT - datetime.timedelta(hours=2)
     transition = lifecycle.apply_event(
         issue_state(triage_state="resolved", last_resolved_at=resolved_at),
-        occurrence(source="sdk", starts_at=FIRED_AT),
+        occurrence(source="sdk", timestamp=DELIVERED_AT, starts_at=FIRED_AT),
     )
 
     result = [record.kind for record in transition.activities]
