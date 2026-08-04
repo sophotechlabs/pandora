@@ -3,6 +3,7 @@ import http
 import inspect
 
 import pytest
+from django.utils import timezone
 
 from pandora.events import store as event_store
 from pandora.events import types as event_types
@@ -10,7 +11,9 @@ from pandora.issues import models as issue_models
 from pandora.web import api
 from tests.web import fakes
 
-METHODS = ("insert", "fetch", "search", "prune", "ensure_partitions")
+METHODS = tuple(
+    sorted(name for name in vars(event_store.EventStore) if not name.startswith("_"))
+)
 
 
 def build_event(index, project_id, issue_id, episode_id=None):
@@ -305,4 +308,174 @@ def test_a_store_without_a_body_answers_501(client, auth, issue, unbuilt_store):
         http.HTTPStatus.NOT_IMPLEMENTED,
         {"detail": "event store is not implemented for this database yet"},
     )
+    assert result == expected
+
+
+# the live store of this backend
+
+
+def build_live_event(index, project_id, issue_id, moment, episode_id=None):
+    return event_types.Event(
+        id=f"01K{index:023d}",
+        project_id=project_id,
+        timestamp=moment + datetime.timedelta(minutes=index),
+        level="error",
+        message=f"live occurrence {index}",
+        issue_id=issue_id,
+        episode_id=episode_id,
+        fingerprint=["alertname:TargetDown"],
+        tags={"namespace": "monitoring"},
+        extra={"generatorURL": "https://example.test/graph"},
+        source="am",
+        environment="p-mk1",
+    )
+
+
+@pytest.fixture
+def moment():
+    now = timezone.now().replace(second=0, microsecond=0)
+    return now - datetime.timedelta(hours=1)
+
+
+@pytest.fixture
+def real_store(db):
+    return event_store.get_store()
+
+
+@pytest.fixture
+def live_events(real_store, project, issue, episode, moment):
+    events = [
+        build_live_event(
+            index,
+            project.pk,
+            issue.pk,
+            moment,
+            episode_id=str(episode.pk),
+        )
+        for index in range(1, 6)
+    ]
+    real_store.insert(events)
+    return events
+
+
+def test_the_endpoint_serves_what_the_live_store_holds(
+    client, auth, issue, live_events
+):
+    """Should read through the real EventStore of this backend, newest first."""
+    response = client.get(events_url(issue.pk), headers=auth)
+
+    result = [row["id"] for row in response.json()["results"]]
+    expected = [event.id for event in reversed(live_events)]
+
+    assert result == expected
+
+
+def test_a_live_event_serialises_to_the_documented_shape(
+    client, auth, issue, episode, live_events
+):
+    """Should render a row that made the round trip through the database unchanged."""
+    newest = live_events[-1]
+
+    response = client.get(events_url(issue.pk), {"limit": "1"}, headers=auth)
+
+    result = response.json()["results"][0]
+    expected = {
+        "id": newest.id,
+        "project_id": issue.project_id,
+        "timestamp": newest.timestamp.astimezone(datetime.UTC).strftime(
+            "%Y-%m-%dT%H:%M:%SZ"
+        ),
+        "level": "error",
+        "message": "live occurrence 5",
+        "issue_id": issue.pk,
+        "episode_id": str(episode.pk),
+        "fingerprint": ["alertname:TargetDown"],
+        "tags": {"namespace": "monitoring"},
+        "extra": {"generatorURL": "https://example.test/graph"},
+        "source": "am",
+        "environment": "p-mk1",
+    }
+
+    assert result == expected
+
+
+def test_walking_the_live_cursor_covers_every_event_once(
+    client, auth, issue, live_events
+):
+    """Should page a real store to exhaustion with no event repeated or skipped."""
+    seen = []
+    cursor = None
+    for _ in range(3):
+        query = {"limit": "2"}
+        if cursor is not None:
+            query["cursor"] = cursor
+        payload = client.get(events_url(issue.pk), query, headers=auth).json()
+        seen.extend(row["id"] for row in payload["results"])
+        cursor = payload["next_cursor"]
+
+    result = (seen, cursor)
+    expected = ([event.id for event in reversed(live_events)], None)
+
+    assert result == expected
+
+
+def test_the_live_episode_filter_reaches_the_stored_rows(
+    client, auth, issue, episode, live_events
+):
+    """Should push the episode filter down into the real store's own query."""
+    other = issue_models.Episode.objects.create(
+        project=issue.project,
+        issue=issue,
+        am_fingerprint="00000000000000ff",
+        starts_at=episode.starts_at - datetime.timedelta(hours=1),
+    )
+    stray = build_live_event(
+        9,
+        issue.project_id,
+        issue.pk,
+        live_events[0].timestamp,
+        episode_id=str(other.pk),
+    )
+    event_store.get_store().insert([stray])
+
+    response = client.get(
+        events_url(issue.pk), {"episode": str(other.pk)}, headers=auth
+    )
+
+    result = [row["episode_id"] for row in response.json()["results"]]
+    expected = [str(other.pk)]
+
+    assert result == expected
+
+
+def test_a_live_event_of_another_issue_stays_out(client, auth, issue, live_events):
+    """Should scope the real query by issue id, not by project alone."""
+    other = issue_models.Issue.objects.create(
+        project=issue.project,
+        fingerprint_hash="2" * 64,
+        title="a neighbouring issue",
+    )
+    stray = build_live_event(9, issue.project_id, other.pk, live_events[0].timestamp)
+    event_store.get_store().insert([stray])
+
+    response = client.get(events_url(issue.pk), headers=auth)
+
+    result = {row["issue_id"] for row in response.json()["results"]}
+    expected = {issue.pk}
+
+    assert result == expected
+
+
+def test_a_live_event_of_another_project_stays_out(
+    client, auth, issue, other_project, live_events
+):
+    """Should keep another project's row out even when it names this issue id."""
+    stray = build_live_event(9, other_project.pk, issue.pk, live_events[0].timestamp)
+    event_store.get_store().insert([stray])
+
+    response = client.get(events_url(issue.pk), headers=auth)
+
+    result = {row["project_id"] for row in response.json()["results"]}
+    expected = {issue.project_id}
+
     assert result == expected

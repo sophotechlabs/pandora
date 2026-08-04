@@ -1,3 +1,6 @@
+import dataclasses
+
+
 class FakeEventStore:
     def __init__(self, events=()):
         self.events = list(events)
@@ -5,6 +8,18 @@ class FakeEventStore:
 
     def insert(self, events):
         self.events.extend(events)
+
+    def reassign(self, project_id, episode_ids, issue_id):
+        wanted = {str(episode_id) for episode_id in episode_ids}
+        changed = 0
+        for index, event in enumerate(self.events):
+            if event.project_id != project_id:
+                continue
+            if event.episode_id not in wanted:
+                continue
+            self.events[index] = dataclasses.replace(event, issue_id=issue_id)
+            changed += 1
+        return changed
 
     def fetch(
         self, project_id, *, issue_id=None, episode_id=None, before=None, limit=100
@@ -43,6 +58,9 @@ class UnbuiltEventStore:
         self.calls = []
 
     def insert(self, events):
+        raise NotImplementedError
+
+    def reassign(self, project_id, episode_ids, issue_id):
         raise NotImplementedError
 
     def fetch(
