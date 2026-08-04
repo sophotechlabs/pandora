@@ -58,18 +58,18 @@ def _consume(envelope: RawEnvelope, store: EventStore) -> None:
 
 
 def _consume_webhook(envelope: RawEnvelope, store: EventStore) -> None:
-    occurrences = am.parse_webhook(
+    parsed = am.parse_group(
         envelope.payload,
         envelope.project,
         environment=envelope.environment,
         received_at=envelope.received_at,
     )
     with transaction.atomic():
-        applied = [_apply(envelope, occurrence) for occurrence in occurrences]
+        applied = [_apply(envelope, occurrence) for occurrence in parsed.occurrences]
         events = [event for event in applied if event is not None]
         if events:
             store.insert(events)
-        _finish(envelope)
+        _finish(envelope, rejected=parsed.rejected)
 
 
 def _consume_event(envelope: RawEnvelope, store: EventStore) -> None:
@@ -90,9 +90,12 @@ def _consume_event(envelope: RawEnvelope, store: EventStore) -> None:
         _finish(envelope)
 
 
-def _finish(envelope: RawEnvelope) -> None:
+def _finish(envelope: RawEnvelope, rejected: list[str] | None = None) -> None:
     envelope.state = EnvelopeState.DONE
     envelope.error = ""
+    if rejected:
+        envelope.error = "; ".join(rejected)[:ERROR_MAX]
+        ENVELOPES.labels(source=envelope.source, state="rejected").inc()
     envelope.save(update_fields=["state", "error"])
 
 
@@ -108,6 +111,7 @@ def _apply(envelope: RawEnvelope, occurrence: lifecycle.Occurrence) -> Event | N
     project = envelope.project
     issue, issue_created = Issue.objects.select_for_update().get_or_create(
         project=project,
+        environment=occurrence.environment,
         fingerprint_hash=occurrence.fingerprint_hash,
         defaults=lifecycle.new_issue_fields(occurrence),
     )
@@ -170,6 +174,7 @@ def _apply_event(
 
     issue, issue_created = Issue.objects.select_for_update().get_or_create(
         project=project,
+        environment=occurrence.environment,
         fingerprint_hash=occurrence.fingerprint_hash,
         defaults=lifecycle.new_issue_fields(occurrence),
     )

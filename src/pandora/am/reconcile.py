@@ -11,7 +11,7 @@ from prometheus_client import Counter, Gauge
 
 from pandora.am import client as am_client
 from pandora.core.models import IngestToken, Project, TokenScope, TokenSource
-from pandora.ingest.models import EnvelopeState, RawEnvelope
+from pandora.ingest.models import RawEnvelope
 from pandora.ingest.queue import get_queue
 from pandora.issues.models import Episode
 
@@ -202,7 +202,7 @@ class Reconciler:
         )
         get_queue().publish(envelope.pk)
         envelope.refresh_from_db()
-        if envelope.state == EnvelopeState.FAILED:
+        if envelope.error:
             log.error(
                 "reconcile envelope %s did not apply: %s",
                 envelope.pk,

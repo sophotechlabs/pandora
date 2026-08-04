@@ -493,3 +493,71 @@ def test_an_issue_belongs_to_the_project_that_owns_the_token(firing, token):
     expected = token.project_id
 
     assert result == expected
+
+
+# one bad alert must not take its group down
+
+
+def bad_sibling(payload):
+    other = copy.deepcopy(payload)
+    other["alerts"].insert(0, {"status": "firing", "fingerprint": ""})
+    return other
+
+
+def test_a_bad_alert_does_not_discard_its_siblings(am_fixture, token, store):
+    """Should record the good alerts — one bad sibling used to drop the whole POST."""
+    helpers.deliver(bad_sibling(am_fixture("firing_group")), token, store, RECEIVED_AT)
+
+    result = issue_models.Episode.objects.count()
+    expected = 2
+
+    assert result == expected
+
+
+def test_the_envelope_still_finishes_when_one_alert_is_unusable(
+    am_fixture, token, store
+):
+    """Should not fail a whole envelope over one alert nothing can parse."""
+    envelope = helpers.deliver(
+        bad_sibling(am_fixture("firing_group")), token, store, RECEIVED_AT
+    )
+
+    result = envelope.state
+    expected = ingest_models.EnvelopeState.DONE
+
+    assert result == expected
+
+
+def test_the_rejected_alert_is_recorded_on_the_envelope(am_fixture, token, store):
+    """Should say what was dropped, so it is not silent."""
+    envelope = helpers.deliver(
+        bad_sibling(am_fixture("firing_group")), token, store, RECEIVED_AT
+    )
+
+    result = envelope.error
+    expected = "alert 0: alert carries no fingerprint"
+
+    assert result == expected
+
+
+# two environments in one project
+
+
+def other_environment(payload):
+    other = copy.deepcopy(payload)
+    for alert in other["alerts"]:
+        alert["labels"]["cluster"] = "p-mk1"
+    return other
+
+
+def test_two_environments_do_not_collapse_into_one_issue(am_fixture, token, store):
+    """Should keep p-mk2's copy of an alert apart from p-mk1's in a shared project."""
+    helpers.deliver(am_fixture("firing_group"), token, store, RECEIVED_AT)
+    envelope = helpers.store_envelope(am_fixture("firing_group"), token, RECEIVED_AT)
+    ingest_models.RawEnvelope.objects.filter(pk=envelope.pk).update(environment="p-mk2")
+    processor.process_envelope(envelope.pk, store=store)
+
+    result = sorted(issue_models.Issue.objects.values_list("environment", flat=True))
+    expected = ["p-mk1", "p-mk2"]
+
+    assert result == expected

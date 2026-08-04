@@ -308,15 +308,19 @@ def test_an_alert_without_a_start_is_not_caught_up(alertmanager, reconciler, mom
 def test_an_envelope_the_consumer_rejects_is_logged(
     alertmanager, reconciler, moment, caplog
 ):
-    """Should leave the failure replayable and say so, not fail the pass silently."""
+    """Should record the unusable alert and open no episode for it."""
     alertmanager.alerts = [target_down(moment, starts_at="whenever")]
 
     reconciler.run_once(moment)
 
     envelope = ingest_models.RawEnvelope.objects.get()
 
-    result = (envelope.state, issue_models.Episode.objects.exists())
-    expected = (ingest_models.EnvelopeState.FAILED, False)
+    result = (envelope.state, envelope.error, issue_models.Episode.objects.exists())
+    expected = (
+        ingest_models.EnvelopeState.DONE,
+        "alert 0: alert carries no startsAt",
+        False,
+    )
 
     assert result == expected
     assert "did not apply" in caplog.text

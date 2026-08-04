@@ -29,12 +29,25 @@ pytestmark = pytest.mark.django_db
 @pytest.fixture
 def parse(project, token):
     def run(payload, received_at=RECEIVED_AT):
-        return am.parse_webhook(
+        return am.parse_group(
             payload,
             project,
             environment=token.environment,
             received_at=received_at,
-        )
+        ).occurrences
+
+    return run
+
+
+@pytest.fixture
+def reject(project, token):
+    def run(payload, received_at=RECEIVED_AT):
+        return am.parse_group(
+            payload,
+            project,
+            environment=token.environment,
+            received_at=received_at,
+        ).rejected
 
     return run
 
@@ -116,53 +129,61 @@ def test_an_empty_alert_list_is_not_an_error(parse):
 # per-alert validation
 
 
-def test_an_alert_that_is_not_an_object_fails_loudly(parse):
+def test_an_alert_that_is_not_an_object_is_rejected(reject):
     """Should reject a string where an alert object belongs."""
     payload = alert_payload()
     payload["alerts"] = ["firing"]
 
-    with pytest.raises(am.PayloadError) as error:
-        parse(payload)
-
-    result = str(error.value)
-    expected = "alert is not a JSON object"
+    result = reject(payload)
+    expected = ["alert 0: alert is not a JSON object"]
     assert result == expected
 
 
-def test_an_unknown_alert_status_fails_loudly(parse):
+def test_an_unknown_alert_status_is_rejected(reject):
     """Should reject a status the episode rules have no meaning for."""
-    with pytest.raises(am.PayloadError) as error:
-        parse(alert_payload(status="pending"))
-
-    result = str(error.value)
-    expected = "unsupported alert status 'pending'"
+    result = reject(alert_payload(status="pending"))
+    expected = ["alert 0: unsupported alert status 'pending'"]
     assert result == expected
 
 
-def test_an_alert_without_a_fingerprint_fails_loudly(parse):
+def test_an_alert_without_a_fingerprint_is_rejected(reject):
     """Should refuse an alert with no episode identity to key on."""
-    with pytest.raises(am.PayloadError) as error:
-        parse(alert_payload(fingerprint=""))
-
-    result = str(error.value)
-    expected = "alert carries no fingerprint"
+    result = reject(alert_payload(fingerprint=""))
+    expected = ["alert 0: alert carries no fingerprint"]
     assert result == expected
 
 
-def test_an_alert_without_a_start_fails_loudly(parse):
+def test_an_alert_without_a_start_is_rejected(reject):
     """Should refuse an alert with no start — episode identity needs it."""
-    with pytest.raises(am.PayloadError) as error:
-        parse(alert_payload(startsAt="0001-01-01T00:00:00Z"))
-
-    result = str(error.value)
-    expected = "alert carries no startsAt"
+    result = reject(alert_payload(startsAt="0001-01-01T00:00:00Z"))
+    expected = ["alert 0: alert carries no startsAt"]
     assert result == expected
 
 
-def test_an_unparsable_start_fails_loudly(parse):
+def test_an_unparsable_start_is_rejected(reject):
     """Should refuse a start timestamp that is not a timestamp."""
+    result = reject(alert_payload(startsAt="yesterday"))
+    expected = ["alert 0: alert carries no startsAt"]
+    assert result == expected
+
+
+def test_a_bad_alert_never_discards_its_siblings(parse, reject, am_fixture):
+    """Should keep the group — one unusable alert used to drop every alert with it."""
+    payload = am_fixture("firing_group")
+    payload["alerts"].insert(0, "not an alert")
+
+    result = (len(parse(payload)), len(reject(payload)))
+    expected = (2, 1)
+    assert result == expected
+
+
+def test_a_wrong_payload_version_still_fails_the_whole_group(parse):
+    """Should stay loud on version drift, which the plan pins as fail-fast."""
+    payload = alert_payload()
+    payload["version"] = "5"
+
     with pytest.raises(am.PayloadError):
-        parse(alert_payload(startsAt="yesterday"))
+        parse(payload)
 
 
 # golden translation
@@ -552,7 +573,7 @@ def test_the_delivery_clock_defaults_to_now(parse, project):
     """Should stamp the delivery time itself when no envelope time is given."""
     before = datetime.datetime.now(datetime.UTC)
 
-    occurrences = am.parse_webhook(alert_payload(), project, received_at=None)
+    occurrences = am.parse_group(alert_payload(), project, received_at=None).occurrences
 
     result = occurrences[0].timestamp >= before
     expected = True

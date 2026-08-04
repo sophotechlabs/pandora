@@ -121,14 +121,33 @@ def test_episode_defaults_to_one_open_delivery(project, issue):
 # uniqueness
 
 
-def test_the_fingerprint_is_unique_within_a_project(issue):
-    """Should refuse a second issue with the same fingerprint in one project."""
+def test_the_fingerprint_is_unique_within_a_project_and_environment(issue):
+    """Should refuse a second issue with the same fingerprint in one environment."""
     with pytest.raises(db.IntegrityError):
         models.Issue.objects.create(
             project=issue.project,
+            environment=issue.environment,
             fingerprint_hash=issue.fingerprint_hash,
             title="a different title over the same fingerprint",
         )
+
+
+def test_two_environments_never_collapse_into_one_issue(issue):
+    """Should keep two clusters apart when they share a project and a fingerprint."""
+    twin = models.Issue.objects.create(
+        project=issue.project,
+        environment="p-mk2",
+        fingerprint_hash=issue.fingerprint_hash,
+        title=issue.title,
+    )
+
+    result = models.Issue.objects.filter(
+        fingerprint_hash=issue.fingerprint_hash
+    ).count()
+    expected = 2
+
+    assert result == expected
+    assert twin.pk != issue.pk
 
 
 def test_an_episode_is_identified_by_fingerprint_and_start(episode):

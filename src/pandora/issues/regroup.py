@@ -37,9 +37,14 @@ class RegroupReport:
 @dataclass
 class _Group:
     digest: str
+    environment: str
     fingerprint: list[str]
     grouping_labels: dict[str, str]
     episodes: list[Episode]
+
+    @property
+    def key(self) -> tuple[str, str]:
+        return (self.environment, self.digest)
 
 
 class _Rollback(Exception):
@@ -85,15 +90,17 @@ def _regroup_project(
     before_ids = {episode.issue_id for episode in episodes}
     report.issues_before += len(before_ids)
 
-    owned: dict[int, set[str]] = {}
+    owned: dict[int, set[tuple[str, str]]] = {}
     for group in groups:
         for episode in group.episodes:
-            owned.setdefault(episode.issue_id, set()).add(group.digest)
+            owned.setdefault(episode.issue_id, set()).add(group.key)
 
     donors = {issue.pk: issue for issue in Issue.objects.filter(pk__in=before_ids)}
     for issue in _colliding(project, groups, before_ids):
         donors[issue.pk] = issue
-    by_hash = {issue.fingerprint_hash: issue for issue in donors.values()}
+    by_hash = {
+        (issue.environment, issue.fingerprint_hash): issue for issue in donors.values()
+    }
     _park_identities(donors)
 
     claimed: set[int] = set()
@@ -137,21 +144,23 @@ def _park_identities(donors: dict[int, Issue]) -> None:
 
 def _groups(project: Project, episodes: list[Episode]) -> list[_Group]:
     rules = grouping.load_rules(project)
-    found: dict[str, _Group] = {}
+    found: dict[tuple[str, str], _Group] = {}
     for episode in episodes:
         alertname = episode.labels.get(grouping.ALERTNAME, "")
         rule = grouping.match_rule(alertname, rules)
         fingerprint = grouping.compute_fingerprint(rule, episode.labels)
         digest = grouping.fingerprint_hash(fingerprint)
-        if digest not in found:
-            found[digest] = _Group(
+        key = (episode.environment, digest)
+        if key not in found:
+            found[key] = _Group(
                 digest=digest,
+                environment=episode.environment,
                 fingerprint=fingerprint,
                 grouping_labels=grouping.surviving_labels(rule, episode.labels),
                 episodes=[],
             )
-        found[digest].episodes.append(episode)
-    return [found[digest] for digest in sorted(found)]
+        found[key].episodes.append(episode)
+    return [found[key] for key in sorted(found)]
 
 
 def _settle(
@@ -160,15 +169,15 @@ def _settle(
     group: _Group,
     *,
     donors: dict[int, Issue],
-    by_hash: dict[str, Issue],
-    owned: dict[int, set[str]],
+    by_hash: dict[tuple[str, str], Issue],
+    owned: dict[int, set[tuple[str, str]]],
     claimed: set[int],
     store: EventStore,
 ) -> tuple[Issue, bool]:
     donor = donors[group.episodes[-1].issue_id]
     sources = {episode.issue_id for episode in group.episodes}
-    one_to_one = len(sources) == 1 and owned[donor.pk] == {group.digest}
-    holder = by_hash.get(group.digest)
+    one_to_one = len(sources) == 1 and owned[donor.pk] == {group.key}
+    holder = by_hash.get(group.key)
 
     changed = False
     if holder is not None and holder.pk not in claimed:
@@ -203,6 +212,7 @@ def _create_issue(
     report.issues_created += 1
     issue = Issue(
         project=project,
+        environment=group.environment,
         fingerprint_hash=group.digest,
         title=donor.title,
         level=donor.level,

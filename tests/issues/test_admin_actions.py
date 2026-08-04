@@ -279,3 +279,38 @@ def test_saving_the_change_form_without_a_triage_change_records_nothing(
     expected = 0
 
     assert result == expected
+
+
+# grouping rules do not apply retroactively
+
+
+RULES = "/admin/issues/groupingrule/"
+
+
+def test_saving_a_rule_warns_that_it_is_not_retroactive(admin_client, project):
+    """Should say so in the UI — editing a rule used to silently do nothing."""
+    response = admin_client.post(
+        f"{RULES}add/",
+        {"priority": "10", "mode": models.GroupingMode.DENYLIST, "labels": "[]"},
+        follow=True,
+    )
+
+    result = [str(message) for message in response.context["messages"]]
+
+    assert any("keep their old grouping" in message for message in result)
+
+
+def test_the_rule_list_offers_a_regroup_action(admin_client, project):
+    """Should let the operator apply a rule change from where they made it."""
+    rule = models.GroupingRule.objects.create(priority=10, labels=[])
+    payload = {
+        "action": "regroup_now",
+        "_selected_action": [str(rule.pk)],
+        "index": "0",
+    }
+
+    response = admin_client.post(RULES, payload, follow=True)
+
+    result = [str(message) for message in response.context["messages"]]
+
+    assert any("Regrouped" in message for message in result)

@@ -11,7 +11,7 @@ from unfold.admin import ModelAdmin
 
 from pandora.am import client as am_client
 from pandora.am import silences
-from pandora.issues import components, detail, sparkline, triage
+from pandora.issues import components, detail, regroup, sparkline, triage
 from pandora.issues.models import (
     Episode,
     GroupingRule,
@@ -419,6 +419,28 @@ class GroupingRuleAdmin(ModelAdmin):
     list_filter = ("mode", "active", "project")
     list_select_related = ("project",)
     ordering = ("priority", "id")
+    actions = ("regroup_now",)
+
+    def save_model(self, request, obj, form, change):
+        super().save_model(request, obj, form, change)
+        self.message_user(
+            request,
+            "Saved. Existing issues keep their old grouping until you run"
+            " Regroup — new occurrences use this rule immediately.",
+            messages.WARNING,
+        )
+
+    @admin.action(description="Regroup existing issues with these rules")
+    def regroup_now(self, request, queryset):
+        report = regroup.regroup()
+        self.message_user(
+            request,
+            f"Regrouped {report.episodes} episode(s):"
+            f" {report.issues_created} issue(s) created,"
+            f" {report.episodes_moved} moved,"
+            f" {report.issues_deleted} removed",
+            messages.SUCCESS,
+        )
 
     @admin.display(description="Project", ordering="project")
     def scope(self, obj):

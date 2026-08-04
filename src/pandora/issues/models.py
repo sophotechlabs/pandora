@@ -83,7 +83,7 @@ class Issue(models.Model):
     class Meta:
         constraints = [
             models.UniqueConstraint(
-                fields=["project", "fingerprint_hash"],
+                fields=["project", "environment", "fingerprint_hash"],
                 name="issues_issue_fingerprint_uq",
             ),
         ]

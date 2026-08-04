@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import logging
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
@@ -39,6 +40,12 @@ class PayloadError(ValueError):
     pass
 
 
+@dataclass(frozen=True)
+class ParsedGroup:
+    occurrences: list[lifecycle.Occurrence] = field(default_factory=list)
+    rejected: list[str] = field(default_factory=list)
+
+
 def validate(payload: Any) -> None:
     if not isinstance(payload, Mapping):
         raise PayloadError("payload is not a JSON object")
@@ -49,22 +56,35 @@ def validate(payload: Any) -> None:
         raise PayloadError("payload carries no alerts list")
 
 
-def parse_webhook(
+def parse_group(
     payload: Any,
     project: Project,
     *,
     environment: str = "",
     received_at: datetime | None = None,
-) -> list[lifecycle.Occurrence]:
+) -> ParsedGroup:
     validate(payload)
     if received_at is None:
         received_at = timezone.now()
     _log_truncation(payload)
     rules = grouping.load_rules(project)
-    return [
-        _occurrence(alert, payload, rules, environment, received_at)
-        for alert in payload["alerts"]
-    ]
+
+    occurrences = []
+    rejected = []
+    for index, alert in enumerate(payload["alerts"]):
+        try:
+            occurrences.append(
+                _occurrence(alert, payload, rules, environment, received_at)
+            )
+        except PayloadError as error:
+            rejected.append(f"alert {index}: {error}")
+            log.warning(
+                "alertmanager alert %s in group %s was unusable: %s",
+                index,
+                payload.get("groupKey", ""),
+                error,
+            )
+    return ParsedGroup(occurrences=occurrences, rejected=rejected)
 
 
 def event_id(project_id: int, occurrence: lifecycle.Occurrence) -> str:
