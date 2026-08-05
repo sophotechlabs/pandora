@@ -1,3 +1,5 @@
+import os
+
 logconfig_dict = {
     "version": 1,
     "disable_existing_loggers": False,
@@ -16,3 +18,11 @@ logconfig_dict = {
         },
     },
 }
+
+
+def child_exit(server, worker):
+    if not os.environ.get("PROMETHEUS_MULTIPROC_DIR"):
+        return
+    from prometheus_client import multiprocess
+
+    multiprocess.mark_process_dead(worker.pid)
