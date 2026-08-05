@@ -227,18 +227,16 @@ def test_the_changelist_index_matches_the_default_ordering():
 
 
 def test_open_episodes_get_a_partial_index():
-    """Should index only open episodes — the reconcile loop's lookup."""
+    """Should index open episodes for both lookups — reconcile's and the changelist's."""
     partial = [
         index for index in models.Episode._meta.indexes if index.condition is not None
     ]
+    condition = str(db.models.Q(ends_at__isnull=True))
 
     result = [(index.name, index.fields, str(index.condition)) for index in partial]
     expected = [
-        (
-            "issues_episode_open",
-            ["project", "am_fingerprint"],
-            str(db.models.Q(ends_at__isnull=True)),
-        )
+        ("issues_episode_open", ["project", "am_fingerprint"], condition),
+        ("issues_episode_issue_open", ["issue", "starts_at"], condition),
     ]
     assert result == expected
 

@@ -1,6 +1,9 @@
 import datetime
 
 import pytest
+from django import db
+from django import test as django_test
+from django.utils import timezone
 
 from pandora.issues import aggregates, models
 
@@ -303,5 +306,45 @@ def test_a_rebuild_keeps_the_most_frequent_values(issue):
 
     result = issue.tag_stats.get(key="pod", value="pod-0000").count
     expected = 2
+
+    assert result == expected
+
+
+def test_counting_one_occurrence_stays_a_handful_of_statements(project, issue):
+    """Should batch the tag writes — this was one update per label, plus a count."""
+    tags = {f"label{index}": f"value{index}" for index in range(12)}
+
+    with django_test.utils.CaptureQueriesContext(db.connection) as captured:
+        aggregates.count_occurrence(issue, timezone.now(), tags)
+
+    result = len(captured) <= 6
+    expected = True
+
+    assert result == expected, f"{len(captured)} statements for 12 tags"
+
+
+def test_a_batched_first_sighting_still_counts_every_tag(project, issue):
+    """Should not lose a tag to batching."""
+    tags = {f"label{index}": f"value{index}" for index in range(12)}
+
+    aggregates.count_occurrence(issue, timezone.now(), tags)
+
+    result = models.TagStat.objects.filter(issue=issue).count()
+    expected = 12
+
+    assert result == expected
+
+
+def test_a_batched_repeat_increments_rather_than_duplicates(project, issue):
+    """Should increment the rows it already wrote on the second occurrence."""
+    tags = {"pod": "ledger-1", "namespace": "payments"}
+
+    aggregates.count_occurrence(issue, timezone.now(), tags)
+    aggregates.count_occurrence(issue, timezone.now(), tags)
+
+    result = sorted(
+        models.TagStat.objects.filter(issue=issue).values_list("key", "count")
+    )
+    expected = [("namespace", 2), ("pod", 2)]
 
     assert result == expected

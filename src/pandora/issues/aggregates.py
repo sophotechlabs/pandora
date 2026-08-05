@@ -26,8 +26,7 @@ def hour_of(moment: datetime) -> datetime:
 
 def count_occurrence(issue: Issue, moment: datetime, tags: Mapping[str, str]) -> None:
     _bump_hour(issue, hour_of(moment))
-    for key, value in tags.items():
-        _bump_tag(issue, key[:KEY_MAX], value[:VALUE_MAX])
+    _bump_tags(issue, [(k[:KEY_MAX], v[:VALUE_MAX]) for k, v in tags.items()])
 
 
 def rebuild(issue: Issue, episodes: Iterable[Episode]) -> None:
@@ -76,14 +75,54 @@ def _bump_hour(issue: Issue, hour: datetime) -> None:
     HourlyStat.objects.create(issue=issue, hour=hour, count=1)
 
 
-def _bump_tag(issue: Issue, key: str, value: str) -> None:
-    if _increment(TagStat.objects.filter(issue=issue, key=key, value=value)):
+def _bump_tags(issue: Issue, pairs: list[tuple[str, str]]) -> None:
+    if not pairs:
         return
-    if TagStat.objects.filter(issue=issue, key=key).count() >= TAG_VALUE_CAP:
-        value = TAG_OVERFLOW_VALUE
-        if _increment(TagStat.objects.filter(issue=issue, key=key, value=value)):
-            return
-    TagStat.objects.create(issue=issue, key=key, value=value, count=1)
+
+    keys = {key for key, _ in pairs}
+    known = list(
+        TagStat.objects.filter(issue=issue, key__in=keys).values_list(
+            "pk", "key", "value"
+        )
+    )
+    by_pair = {(key, value): pk for pk, key, value in known}
+    per_key = Counter(key for _, key, _ in known)
+
+    hits: list[int] = []
+    fresh: Counter[tuple[str, str]] = Counter()
+    for key, value in pairs:
+        target = _tag_target(key, value, by_pair, per_key)
+        known_pk = by_pair.get(target)
+        if known_pk is not None:
+            hits.append(known_pk)
+            continue
+        if not fresh[target]:
+            per_key[key] += 1
+        fresh[target] += 1
+
+    if hits:
+        TagStat.objects.filter(pk__in=hits).update(count=F("count") + 1)
+    if fresh:
+        TagStat.objects.bulk_create(
+            [
+                TagStat(issue=issue, key=key, value=value, count=count)
+                for (key, value), count in sorted(fresh.items())
+            ],
+            ignore_conflicts=True,
+        )
+
+
+def _tag_target(
+    key: str,
+    value: str,
+    by_pair: dict[tuple[str, str], int],
+    per_key: Counter[str],
+) -> tuple[str, str]:
+    if (key, value) in by_pair:
+        return (key, value)
+    if per_key[key] >= TAG_VALUE_CAP:
+        return (key, TAG_OVERFLOW_VALUE)
+    return (key, value)
 
 
 def _increment(rows: QuerySet[Any]) -> bool:

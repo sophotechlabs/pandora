@@ -139,6 +139,11 @@ class Episode(models.Model):
                 condition=models.Q(ends_at__isnull=True),
                 name="issues_episode_open",
             ),
+            models.Index(
+                fields=["issue", "starts_at"],
+                condition=models.Q(ends_at__isnull=True),
+                name="issues_episode_issue_open",
+            ),
         ]
         ordering = ("-starts_at",)
 
