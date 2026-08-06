@@ -156,6 +156,22 @@ def test_postgres_gets_no_sqlite_options(load_settings):
     assert result == expected
 
 
+def test_a_persistent_connection_is_health_checked(load_settings):
+    """Should revalidate a pooled connection, or every request after a database
+    restart fails until the connection ages out."""
+    settings = load_settings(
+        DATABASE_URL="postgres://pandora:pandora@db:5432/pandora",
+    )
+
+    result = (
+        settings.DATABASES["default"]["CONN_MAX_AGE"],
+        settings.DATABASES["default"]["CONN_HEALTH_CHECKS"],
+    )
+    expected = (600, True)
+
+    assert result == expected
+
+
 def test_debug_falls_back_to_a_local_sqlite_file(load_settings):
     """Should run with no configuration at all in DEBUG."""
     settings = load_settings(

@@ -123,7 +123,13 @@ SQLITE_OPTIONS = {
 
 _DATABASE_URL = os.environ.get("DATABASE_URL", "").strip()
 if _DATABASE_URL:
-    DATABASES = {"default": dj_database_url.parse(_DATABASE_URL, conn_max_age=600)}
+    DATABASES = {
+        "default": dj_database_url.parse(
+            _DATABASE_URL,
+            conn_max_age=600,
+            conn_health_checks=True,
+        )
+    }
 elif DEBUG:
     DATABASES = {
         "default": {
