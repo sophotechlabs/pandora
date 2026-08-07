@@ -31,10 +31,28 @@ def test_the_default_rule_drops_the_per_instance_labels():
 
     result = sorted(rule.labels)
     expected = sorted(
-        ["pod", "instance", "container", "endpoint", "replicaset", "uid", "node"]
+        [
+            "pod",
+            "instance",
+            "container",
+            "endpoint",
+            "replicaset",
+            "uid",
+            "node",
+            "job_name",
+        ]
     )
 
     assert result == expected
+
+
+def test_the_default_rule_drops_the_kube_job_run_name():
+    """Should hide job_name — every CronJob run carries a fresh one."""
+    rule = models.GroupingRule.objects.get()
+
+    result = "job_name" in rule.labels
+
+    assert result is True
 
 
 def test_the_default_rule_matches_every_project_and_alertname():

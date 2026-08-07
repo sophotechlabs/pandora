@@ -20,6 +20,21 @@ GROUPED = {
     "severity": "critical",
     "cluster": "p-mk1",
 }
+KUBE_JOB_FAILED = {
+    "alertname": "KubeJobFailed",
+    "cluster": "p-mk1",
+    "condition": "true",
+    "container": "kube-state-metrics",
+    "endpoint": "http",
+    "instance": "10.42.0.31:8080",
+    "job": "kube-state-metrics",
+    "job_name": "pandora-replay-29766737",
+    "namespace": "pandora",
+    "pod": "kube-state-metrics-6d8f4c9b7d-2xkzq",
+    "prometheus": "monitoring/kube-prometheus-stack",
+    "service": "kube-state-metrics",
+    "severity": "warning",
+}
 
 
 def denylist(*labels):
@@ -288,6 +303,24 @@ def test_two_label_sets_that_differ_only_in_denied_labels_share_an_issue():
     expected = grouping.fingerprint_hash(grouping.compute_fingerprint(rule, LABELS))
 
     assert result == expected
+
+
+def test_two_failed_runs_of_one_cronjob_share_an_issue():
+    """Should hide job_name — a fresh run name per failure minted a new issue."""
+    later_run = {**KUBE_JOB_FAILED, "job_name": "pandora-replay-29766797"}
+    rule = grouping.default_rule()
+
+    result = grouping.compute_fingerprint(rule, later_run)
+    expected = grouping.compute_fingerprint(rule, KUBE_JOB_FAILED)
+
+    assert result == expected
+
+
+def test_the_cronjob_run_name_never_reaches_the_grouping_labels():
+    """Should keep the run name out of the identity the silence matchers use."""
+    result = grouping.surviving_labels(grouping.default_rule(), KUBE_JOB_FAILED)
+
+    assert "job_name" not in result
 
 
 def test_a_different_severity_is_a_different_issue():

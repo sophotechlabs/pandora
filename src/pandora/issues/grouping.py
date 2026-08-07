@@ -16,6 +16,7 @@ DEFAULT_DENY_LABELS = (
     "container",
     "endpoint",
     "instance",
+    "job_name",
     "node",
     "pod",
     "replicaset",
