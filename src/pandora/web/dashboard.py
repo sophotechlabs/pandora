@@ -9,6 +9,7 @@ from django.http import HttpRequest
 from django.urls import reverse
 from django.utils import timezone
 
+from pandora.ingest.models import EnvelopeState, RawEnvelope
 from pandora.issues import components, triage
 from pandora.issues.models import (
     ActivityKind,
@@ -31,6 +32,9 @@ TOP_ISSUE_COLUMNS = (
 )
 
 
+INGEST_WINDOW = timedelta(hours=1)
+
+
 @dataclass(frozen=True)
 class Dashboard:
     kpis: tuple[components.Kpi, ...]
@@ -43,7 +47,7 @@ def dashboard_callback(
 ) -> dict[str, Any]:
     now = timezone.now()
     context["dashboard"] = Dashboard(
-        kpis=_kpis(now),
+        kpis=_kpis(now) + _ingest_kpis(now),
         tables={"issues": _top_issues()},
     )
     return context
@@ -88,6 +92,36 @@ def _kpis(now: datetime) -> tuple[components.Kpi, ...]:
             label="Untriaged",
             value=untriaged,
             hint=f"{acknowledged} acknowledged",
+        ),
+    )
+
+
+def _ingest_kpis(now: datetime) -> tuple[components.Kpi, ...]:
+    failed = RawEnvelope.objects.filter(state=EnvelopeState.FAILED).count()
+    pending = RawEnvelope.objects.filter(state=EnvelopeState.PENDING).count()
+    latest = (
+        RawEnvelope.objects.filter(state=EnvelopeState.DONE)
+        .order_by("-received_at")
+        .values_list("received_at", flat=True)
+        .first()
+    )
+
+    hint = "nothing ingested yet"
+    if latest is not None:
+        hint = f"last accepted {components.format_stamp(latest)}"
+
+    recent = RawEnvelope.objects.filter(received_at__gte=now - INGEST_WINDOW).count()
+
+    return (
+        components.Kpi(
+            label="Ingest backlog",
+            value=failed + pending,
+            hint=f"{failed} failed, {pending} pending — replay clears these",
+        ),
+        components.Kpi(
+            label="Envelopes in the last hour",
+            value=recent,
+            hint=hint,
         ),
     )
 

@@ -25,6 +25,7 @@ DEFAULT_LIMIT = 50
 MAX_LIMIT = 200
 DETAIL_EPISODE_LIMIT = 20
 DETAIL_TAG_LIMIT = 500
+SEARCH_WINDOW = datetime.timedelta(days=7)
 SAFE_METHODS = ("GET", "HEAD")
 
 
@@ -156,6 +157,19 @@ def parse_episode(params: QueryDict) -> str | None:
     if not raw:
         return None
     return raw
+
+
+def parse_tags(params: QueryDict) -> dict[str, str]:
+    tags = {}
+    for raw in params.getlist("tag"):
+        key, separator, value = raw.partition(":")
+        if not separator:
+            raise ApiError(
+                HTTPStatus.BAD_REQUEST,
+                f"tag {raw!r} is not in key:value form",
+            )
+        tags[key.strip()] = value.strip()
+    return tags
 
 
 def issue_queryset(token: IngestToken, params: QueryDict) -> QuerySet[Issue]:
@@ -314,8 +328,34 @@ def issue_events(
     }
 
 
+@api_view
+def events_search(request: HttpRequest, token: IngestToken) -> dict[str, Any]:
+    tags = parse_tags(request.GET)
+    until = timezone.now()
+    since = until - SEARCH_WINDOW
+    raw_since = request.GET.get("since", "").strip()
+    if raw_since:
+        since = parse_timestamp(raw_since, "since is not an ISO 8601 timestamp")
+    raw_until = request.GET.get("until", "").strip()
+    if raw_until:
+        until = parse_timestamp(raw_until, "until is not an ISO 8601 timestamp")
+    if since > until:
+        raise ApiError(HTTPStatus.BAD_REQUEST, "since is after until")
+
+    limit = parse_limit(request.GET)
+    try:
+        found = get_store().search(token.project_id, tags, since, until, limit)
+    except NotImplementedError as error:
+        raise ApiError(
+            HTTPStatus.NOT_IMPLEMENTED,
+            "event store is not implemented for this database yet",
+        ) from error
+    return {"results": [serialize_event(event) for event in found]}
+
+
 urlpatterns = [
     path("issues", issues, name="api-v1-issues"),
     path("issues/<int:issue_id>", issue_detail, name="api-v1-issue"),
     path("issues/<int:issue_id>/events", issue_events, name="api-v1-issue-events"),
+    path("events", events_search, name="api-v1-events"),
 ]

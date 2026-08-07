@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import hashlib
 import json
+import secrets
 from collections import Counter
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Any
 
-from django.core.management.base import BaseCommand
+from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
 from django.utils import timezone
 
@@ -18,6 +19,7 @@ from pandora.core.models import (
     TokenScope,
     TokenSource,
 )
+from pandora.ingest.models import RawEnvelope
 from pandora.issues.models import (
     ActivityKind,
     Episode,
@@ -374,7 +376,7 @@ def _seed_projects(now: datetime) -> dict[str, Project]:
         IngestToken.objects.create(
             project=project,
             name=f"{environment} alertmanager",
-            token=f"demo-am-{slug}",
+            token=f"demo-am-{slug}-{secrets.token_urlsafe(24)}",
             source=TokenSource.AM,
             scope=TokenScope.INGEST,
             environment=environment,
@@ -383,7 +385,7 @@ def _seed_projects(now: datetime) -> dict[str, Project]:
         IngestToken.objects.create(
             project=project,
             name=f"{environment} api reader",
-            token=f"demo-read-{slug}",
+            token=f"demo-read-{slug}-{secrets.token_urlsafe(24)}",
             source=TokenSource.SDK,
             scope=TokenScope.READ,
             environment=environment,
@@ -398,11 +400,39 @@ def _seed_projects(now: datetime) -> dict[str, Project]:
     return projects
 
 
+DEMO_SLUGS = [slug for slug, _, _ in DEMO_PROJECTS]
+
+
+def _real_data_exists() -> bool:
+    if Project.objects.exclude(slug__in=DEMO_SLUGS).exists():
+        return True
+    return RawEnvelope.objects.exists()
+
+
 class Command(BaseCommand):
     help = "Replace the demo projects with a deterministic set of issues and episodes"
 
+    def add_arguments(self, parser: Any) -> None:
+        parser.add_argument(
+            "--force",
+            action="store_true",
+            help="seed even though the database already holds real data",
+        )
+
+    def _guard(self, force: bool) -> None:
+        if force:
+            return
+        if not _real_data_exists():
+            return
+        raise CommandError(
+            "this database already holds real projects or ingested envelopes —"
+            " seed_demo replaces the demo projects and is meant for a scratch"
+            " database. Pass --force if you are certain."
+        )
+
     @transaction.atomic
     def handle(self, *args: Any, **options: Any) -> None:
+        self._guard(options["force"])
         now = timezone.now().replace(minute=0, second=0, microsecond=0)
         Project.objects.filter(slug__in=[slug for slug, _, _ in DEMO_PROJECTS]).delete()
         projects = _seed_projects(now)

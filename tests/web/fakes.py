@@ -44,7 +44,12 @@ class FakeEventStore:
         return found[:limit]
 
     def search(self, project_id, tags, since, until, limit=100):
-        return []
+        found = [event for event in self.events if event.project_id == project_id]
+        found = [event for event in found if since <= event.timestamp <= until]
+        for key, value in tags.items():
+            found = [event for event in found if event.tags.get(key) == value]
+        found.sort(key=lambda event: event.timestamp, reverse=True)
+        return found[:limit]
 
     def prune(self, before):
         return 0

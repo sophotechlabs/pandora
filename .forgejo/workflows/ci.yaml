@@ -35,7 +35,9 @@ jobs:
         env:
           DJANGO_DEBUG: "True"
           DATABASE_URL: postgres://pandora:pandora@postgres:5432/pandora
-        run: uv run python manage.py lintmigrations
+        run: |
+          uv run python manage.py makemigrations --check --dry-run
+          uv run python manage.py lintmigrations
       - name: Dependency CVEs
         run: uv run pip-audit --skip-editable
       - name: Tests (SQLite)

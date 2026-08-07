@@ -7,6 +7,10 @@ from django.contrib.auth import get_user_model
 from django.core.management.base import BaseCommand
 
 
+def _flag(name: str) -> bool:
+    return os.environ.get(name, "").strip().lower() in ("1", "true", "yes", "on")
+
+
 class Command(BaseCommand):
     help = "Create or update the superuser described by the DJANGO_SUPERUSER_* env vars"
 
@@ -30,7 +34,9 @@ class Command(BaseCommand):
             return
 
         changed = []
-        if not user.check_password(password):
+        if _flag("DJANGO_SUPERUSER_RESET_PASSWORD") and not user.check_password(
+            password
+        ):
             user.set_password(password)
             changed.append("password")
         if user.email != email:

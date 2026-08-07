@@ -7,8 +7,10 @@ import pytest
 from django.core import management
 from django.utils import timezone
 
+from pandora.ingest import models as ingest_models
 from pandora.issues import models
 from pandora.web import dashboard
+from tests.ingest import helpers
 
 pytestmark = pytest.mark.django_db
 
@@ -65,14 +67,17 @@ def test_the_callback_returns_the_same_object(rf):
     assert result is context
 
 
-def test_the_dashboard_names_the_four_headline_numbers(rf):
-    """Should answer what is on fire, what is new, what came back, what is untouched."""
+def test_the_dashboard_names_the_headline_numbers(rf):
+    """Should answer what is on fire, what is new, what came back, what is untouched,
+    and whether pandora itself is still taking deliveries."""
     result = [kpi.label for kpi in build(rf).kpis]
     expected = [
         "Firing now",
         "New in 24 hours",
         "Regressions in 7 days",
         "Untriaged",
+        "Ingest backlog",
+        "Envelopes in the last hour",
     ]
 
     assert result == expected
@@ -84,7 +89,7 @@ def test_the_dashboard_names_the_four_headline_numbers(rf):
 def test_an_empty_database_reads_as_zeroes(rf):
     """Should render a first-boot dashboard without a division or None error."""
     result = [kpi.value for kpi in build(rf).kpis]
-    expected = [0, 0, 0, 0]
+    expected = [0, 0, 0, 0, 0, 0]
 
     assert result == expected
 
@@ -329,3 +334,37 @@ def test_the_admin_index_renders_its_empty_states(admin_client):
 
     assert "Nothing open" in body
     assert "Untriaged" in body
+
+
+# ingest health
+
+
+def test_the_backlog_counts_failed_and_pending_envelopes(rf, token, am_fixture):
+    """Should show the operator there is something for replay to pick up."""
+    stuck = helpers.store_envelope(am_fixture("firing_group"), token)
+    stuck.state = ingest_models.EnvelopeState.FAILED
+    stuck.save(update_fields=["state"])
+    helpers.store_envelope(am_fixture("firing_group"), token)
+
+    backlog = next(k for k in build(rf).kpis if k.label == "Ingest backlog")
+
+    assert backlog.value == 2
+    assert "replay clears these" in backlog.hint
+
+
+def test_an_empty_inbox_says_nothing_was_ingested(rf):
+    """Should not claim a last delivery that never happened."""
+    recent = next(k for k in build(rf).kpis if k.label == "Envelopes in the last hour")
+
+    assert recent.hint == "nothing ingested yet"
+
+
+def test_the_last_accepted_delivery_is_named(rf, token, am_fixture):
+    """Should tell the operator when pandora last took anything in."""
+    envelope = helpers.store_envelope(am_fixture("firing_group"), token)
+    envelope.state = ingest_models.EnvelopeState.DONE
+    envelope.save(update_fields=["state"])
+
+    recent = next(k for k in build(rf).kpis if k.label == "Envelopes in the last hour")
+
+    assert recent.hint.startswith("last accepted ")

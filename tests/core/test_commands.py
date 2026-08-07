@@ -89,3 +89,35 @@ def test_ensure_superuser_repairs_a_downgraded_account(superuser_env):
     }
     assert state == expected
     assert "ensure_superuser: updated admin" in result
+
+
+# the password is not rewritten on every container start
+
+
+def test_an_existing_password_survives_a_restart(superuser_env):
+    """Should not silently reset a password the operator changed in the admin."""
+    user = auth.get_user_model().objects.create_superuser(
+        username="admin",
+        email="admin@example.test",
+        password="chosen-in-the-admin",
+    )
+
+    run_ensure_superuser()
+
+    user.refresh_from_db()
+    assert user.check_password("chosen-in-the-admin") is True
+
+
+def test_the_password_is_reset_only_when_asked(superuser_env, monkeypatch):
+    """Should still allow a deliberate reset from the environment."""
+    monkeypatch.setenv("DJANGO_SUPERUSER_RESET_PASSWORD", "1")
+    user = auth.get_user_model().objects.create_superuser(
+        username="admin",
+        email="admin@example.test",
+        password="chosen-in-the-admin",
+    )
+
+    run_ensure_superuser()
+
+    user.refresh_from_db()
+    assert user.check_password("admin-password") is True

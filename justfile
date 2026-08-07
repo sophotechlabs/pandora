@@ -188,6 +188,7 @@ ci-djlint:
 
 # django-migration-linter — safe migrations gate (config in pyproject.toml)
 ci-migration-lint:
+    {{ci_compose_run_deps}} --entrypoint python web manage.py makemigrations --check --dry-run
     {{ci_compose_run_deps}} --entrypoint python web manage.py lintmigrations
 
 # pytest against SQLite (the default backend, no services needed)

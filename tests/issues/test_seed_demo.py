@@ -7,15 +7,16 @@ from django.db import models as db_models
 
 from pandora.core import models as core_models
 from pandora.issues import models
+from tests.ingest import helpers
 
 pytestmark = pytest.mark.django_db
 
 FROZEN = "2026-08-04 14:00:00"
 
 
-def run_seed_demo():
+def run_seed_demo(force=False):
     out = io.StringIO()
-    management.call_command("seed_demo", stdout=out)
+    management.call_command("seed_demo", stdout=out, force=force)
     return out.getvalue()
 
 
@@ -181,7 +182,7 @@ def test_seed_demo_is_idempotent(seeded):
 def test_seed_demo_leaves_non_demo_projects_alone(project):
     """Should never touch a project that is not part of the demo set."""
     with freezegun.freeze_time(FROZEN):
-        run_seed_demo()
+        run_seed_demo(force=True)
 
     assert core_models.Project.objects.filter(slug="infrastructure").exists() is True
 
@@ -192,3 +193,37 @@ def test_seed_demo_reports_what_it_wrote(seeded):
         result = run_seed_demo()
 
     assert result.startswith("seed_demo: 2 projects, 6 issues, ")
+
+
+# guard against seeding a real database
+
+
+def test_seed_demo_refuses_a_database_with_real_projects(project):
+    """Should not overwrite demo data into somebody's live instance."""
+    with pytest.raises(management.CommandError, match="already holds real"):
+        run_seed_demo()
+
+
+def test_seed_demo_refuses_a_database_with_ingested_envelopes(token, am_fixture):
+    """Should treat any ingested envelope as proof this is not a scratch database."""
+    helpers.store_envelope(am_fixture("firing_group"), token)
+
+    with pytest.raises(management.CommandError, match="already holds real"):
+        run_seed_demo()
+
+
+def test_seed_demo_runs_on_an_empty_database():
+    """Should stay a one-command demo on a scratch database."""
+    result = run_seed_demo()
+
+    assert result.startswith("seed_demo: 2 projects")
+
+
+def test_demo_tokens_are_not_guessable(seeded):
+    """Should not ship a token an outsider could guess from the project slug."""
+    tokens = list(core_models.IngestToken.objects.values_list("token", flat=True))
+
+    assert tokens
+    for token in tokens:
+        assert token not in ("demo-am-payments", "demo-read-payments")
+        assert len(token) > 30
