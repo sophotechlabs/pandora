@@ -21,6 +21,18 @@ class FakeEventStore:
             changed += 1
         return changed
 
+    def reassign_events(self, project_id, event_ids, issue_id):
+        wanted = {str(event_id) for event_id in event_ids}
+        changed = 0
+        for index, event in enumerate(self.events):
+            if event.project_id != project_id:
+                continue
+            if event.id not in wanted:
+                continue
+            self.events[index] = dataclasses.replace(event, issue_id=issue_id)
+            changed += 1
+        return changed
+
     def fetch(
         self, project_id, *, issue_id=None, episode_id=None, before=None, limit=100
     ):
@@ -66,6 +78,9 @@ class UnbuiltEventStore:
         raise NotImplementedError
 
     def reassign(self, project_id, episode_ids, issue_id):
+        raise NotImplementedError
+
+    def reassign_events(self, project_id, event_ids, issue_id):
         raise NotImplementedError
 
     def fetch(

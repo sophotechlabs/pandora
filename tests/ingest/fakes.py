@@ -24,6 +24,15 @@ class RecordingEventStore:
             )
         return len(moved)
 
+    def reassign_events(self, project_id, event_ids, issue_id):
+        wanted = {str(event_id) for event_id in event_ids}
+        moved = [row for row in self.rows if row.id in wanted]
+        for row in moved:
+            self.rows[self.rows.index(row)] = dataclasses.replace(
+                row, issue_id=issue_id
+            )
+        return len(moved)
+
     def fetch(
         self, project_id, *, issue_id=None, episode_id=None, before=None, limit=100
     ):

@@ -6,7 +6,15 @@ from django.core import exceptions
 
 from pandora.events import postgres_store, sqlite_store, store
 
-METHODS = ("insert", "reassign", "fetch", "search", "prune", "ensure_partitions")
+METHODS = (
+    "insert",
+    "reassign",
+    "reassign_events",
+    "fetch",
+    "search",
+    "prune",
+    "ensure_partitions",
+)
 IMPLEMENTATIONS = (sqlite_store.SqliteEventStore, postgres_store.PostgresEventStore)
 
 

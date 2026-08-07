@@ -359,6 +359,104 @@ def test_reassign_is_idempotent(event_store, moment):
     assert result == expected
 
 
+# reassign_events
+
+
+def test_reassign_events_moves_one_event_to_another_issue(event_store, moment):
+    """Should relink an SDK event, which carries no episode to move it by."""
+    event_store.insert(
+        [support.make_event(0, moment, issue_id=10, episode_id=None, source="sdk")]
+    )
+
+    event_store.reassign_events(1, [support.event_id(0)], 11)
+
+    result = support.ids(event_store.fetch(1, issue_id=11))
+    expected = [support.event_id(0)]
+    assert result == expected
+
+
+def test_reassign_events_touches_only_the_ids_it_was_given(event_store, moment):
+    """Should leave every event the rebuild did not name where it was."""
+    event_store.insert(support.make_events(2, moment, issue_id=10, episode_id=None))
+
+    event_store.reassign_events(1, [support.event_id(0)], 11)
+
+    result = support.ids(event_store.fetch(1, issue_id=10))
+    expected = [support.event_id(1)]
+    assert result == expected
+
+
+def test_reassign_events_reports_how_many_rows_it_relinked(event_store, moment):
+    """Should report the row count so the rebuild can log what moved."""
+    event_store.insert(support.make_events(2, moment, issue_id=10, episode_id=None))
+
+    result = event_store.reassign_events(
+        1, [support.event_id(0), support.event_id(1)], 11
+    )
+    expected = 2
+
+    assert result == expected
+
+
+def test_reassign_events_is_scoped_to_one_project(event_store, moment):
+    """Should never relink another project's event, whatever the id."""
+    event_store.insert(
+        [
+            support.make_event(0, moment, project_id=1, episode_id=None),
+            support.make_event(1, moment, project_id=2, episode_id=None),
+        ]
+    )
+
+    event_store.reassign_events(1, [support.event_id(0), support.event_id(1)], 11)
+
+    result = [event.issue_id for event in event_store.fetch(2)]
+    expected = [10]
+    assert result == expected
+
+
+def test_reassign_events_of_nothing_touches_nothing(event_store, moment):
+    """Should short-circuit an empty move rather than build an empty IN clause."""
+    event_store.insert([support.make_event(0, moment, issue_id=10)])
+
+    result = event_store.reassign_events(1, [], 11)
+    expected = 0
+
+    assert result == expected
+
+
+def test_reassign_events_ignores_an_unknown_id(event_store, moment):
+    """Should report nothing moved rather than raise on a pruned event."""
+    event_store.insert([support.make_event(0, moment, issue_id=10)])
+
+    result = event_store.reassign_events(1, ["01JNOPE"], 11)
+    expected = 0
+
+    assert result == expected
+
+
+def test_reassign_events_accepts_more_ids_than_one_statement_holds(event_store, moment):
+    """Should chunk a wide rebuild instead of tripping the parameter limit."""
+    event_store.insert(support.make_events(3, moment, issue_id=10, episode_id=None))
+    event_ids = [support.event_id(index) for index in range(1200)]
+
+    result = event_store.reassign_events(1, event_ids, 11)
+    expected = 3
+
+    assert result == expected
+
+
+def test_reassign_events_is_idempotent(event_store, moment):
+    """Should be safe to run twice — a re-run of the rebuild must not drift."""
+    event_store.insert([support.make_event(0, moment, issue_id=10, episode_id=None)])
+
+    event_store.reassign_events(1, [support.event_id(0)], 11)
+    event_store.reassign_events(1, [support.event_id(0)], 11)
+
+    result = [event.issue_id for event in event_store.fetch(1)]
+    expected = [11]
+    assert result == expected
+
+
 # search
 
 

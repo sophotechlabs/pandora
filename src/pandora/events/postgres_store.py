@@ -32,7 +32,7 @@ SELECT = (
 
 REASSIGN = (
     f"UPDATE {EVENTS_TABLE} SET issue_id = %s "
-    "WHERE project_id = %s AND episode_id IN ({placeholders})"
+    "WHERE project_id = %s AND {column} IN ({placeholders})"
 )
 
 REASSIGN_CHUNK = 500
@@ -127,7 +127,17 @@ class PostgresEventStore:
     def reassign(
         self, project_id: int, episode_ids: Sequence[str], issue_id: int
     ) -> int:
-        wanted = [str(episode_id) for episode_id in episode_ids]
+        return self._relink("episode_id", project_id, episode_ids, issue_id)
+
+    def reassign_events(
+        self, project_id: int, event_ids: Sequence[str], issue_id: int
+    ) -> int:
+        return self._relink("id", project_id, event_ids, issue_id)
+
+    def _relink(
+        self, column: str, project_id: int, keys: Sequence[str], issue_id: int
+    ) -> int:
+        wanted = [str(key) for key in keys]
         if not wanted:
             return 0
         changed = 0
@@ -136,7 +146,7 @@ class PostgresEventStore:
                 chunk = wanted[start : start + REASSIGN_CHUNK]
                 placeholders = ", ".join(["%s"] * len(chunk))
                 cursor.execute(
-                    REASSIGN.format(placeholders=placeholders),
+                    REASSIGN.format(column=column, placeholders=placeholders),
                     [issue_id, project_id, *chunk],
                 )
                 changed += cursor.rowcount

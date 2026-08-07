@@ -20,6 +20,10 @@ class EventStore(Protocol):
         self, project_id: int, episode_ids: Sequence[str], issue_id: int
     ) -> int: ...
 
+    def reassign_events(
+        self, project_id: int, event_ids: Sequence[str], issue_id: int
+    ) -> int: ...
+
     def fetch(
         self,
         project_id: int,
