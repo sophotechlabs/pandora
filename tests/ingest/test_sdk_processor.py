@@ -61,7 +61,7 @@ def test_a_first_sdk_event_opens_an_issue(project):
 
     issue = issue_models.Issue.objects.get()
     result = (issue.title, issue.culprit, issue.level, issue.event_count)
-    expected = ("ValueError: bad input", "", issue_models.Level.ERROR, 1)
+    expected = ("ValueError", "", issue_models.Level.ERROR, 1)
     assert result == expected
 
 
@@ -277,6 +277,73 @@ def test_an_older_event_pulls_first_seen_back(project):
     assert result == expected
 
 
+# the issue follows its latest event
+
+
+@pytest.mark.django_db
+def test_a_later_event_moves_the_level(project):
+    """Should show what the issue is doing now, not what it did first."""
+    deliver(project, event_payload(level="warning"))
+
+    deliver(project, event_payload(event_id="c" * 32, level="fatal"))
+
+    issue = issue_models.Issue.objects.get()
+    result = issue.level
+    expected = issue_models.Level.FATAL
+    assert result == expected
+
+
+@pytest.mark.django_db
+def test_a_later_event_rewrites_the_title_and_culprit(project):
+    """Should refresh the text a client-side fingerprint holds together."""
+    deliver(project, event_payload(fingerprint=["checkout"]))
+    payload = event_payload(
+        event_id="c" * 32,
+        fingerprint=["checkout"],
+        exception={
+            "values": [
+                {
+                    "type": "TimeoutError",
+                    "value": "gateway did not answer",
+                    "module": "app.pay",
+                    "stacktrace": {
+                        "frames": [
+                            {"module": "app.pay", "function": "charge", "in_app": True}
+                        ]
+                    },
+                }
+            ]
+        },
+    )
+
+    deliver(project, payload)
+
+    issue = issue_models.Issue.objects.get()
+    result = (issue.title, issue.culprit)
+    expected = ("TimeoutError: app.pay in charge", "app.pay in charge")
+    assert result == expected
+
+
+@pytest.mark.django_db
+def test_a_late_delivery_does_not_rewrite_the_title(project):
+    """Should ignore a straggler — the newest event is what the issue shows."""
+    now = timezone.now()
+    deliver(project, event_payload(fingerprint=["checkout"]), received_at=now)
+    payload = event_payload(
+        event_id="c" * 32,
+        fingerprint=["checkout"],
+        level="fatal",
+        exception={"values": [{"type": "TimeoutError", "value": "slow"}]},
+    )
+
+    deliver(project, payload, received_at=now - datetime.timedelta(hours=1))
+
+    issue = issue_models.Issue.objects.get()
+    result = (issue.title, issue.level)
+    expected = ("ValueError", issue_models.Level.ERROR)
+    assert result == expected
+
+
 # regression
 
 
@@ -476,9 +543,21 @@ def test_a_replayed_id_less_event_still_counts_once(project):
 
 @pytest.mark.django_db
 def test_an_overlong_title_is_capped_to_the_column(project):
-    """Should not let a long exception value reject the row on Postgres."""
+    """Should not let a deep module path reject the row on Postgres."""
     payload = event_payload(
-        exception={"values": [{"type": "ValueError", "value": "x" * 2000}]}
+        exception={
+            "values": [
+                {
+                    "type": "ValueError",
+                    "value": "bad",
+                    "stacktrace": {
+                        "frames": [
+                            {"module": "m" * 400, "function": "f" * 400, "in_app": True}
+                        ]
+                    },
+                }
+            ]
+        }
     )
     deliver(project, payload)
 

@@ -112,7 +112,7 @@ def translate_event(
         title=title[:TITLE_MAX],
         culprit=_culprit(exception)[:CULPRIT_MAX],
         level=_level(payload),
-        message=_message(payload, title),
+        message=_message(payload, exception, title),
         starts_at=timestamp,
         ends_at=None,
         timestamp=received_at,
@@ -205,31 +205,59 @@ def _default_fingerprint(
         kind = str(exception.get("type", "")).strip()
         module = str(exception.get("module", "")).strip()
         if kind:
-            return [part for part in (module, kind) if part]
-    logentry = _logentry(payload)
-    if logentry:
-        return [logentry]
+            parts = (module, kind, *_frame_parts(exception))
+            return [part for part in parts if part]
+    template = _logentry_template(payload)
+    if template:
+        return [part for part in (_logger(payload), template) if part]
     message = str(payload.get("message", "")).strip()
     if message:
         return [message]
     return [UNKNOWN_TITLE]
 
 
+def _frame_parts(exception: Mapping[str, Any]) -> tuple[str, ...]:
+    frame = _top_frame(exception)
+    if frame is None:
+        return ()
+    module = str(frame.get("module", "")).strip()
+    function = str(frame.get("function", "")).strip()
+    if module:
+        return (module, function)
+    if function:
+        return (function,)
+    return (str(frame.get("filename", "")).strip(),)
+
+
 def _title(payload: Mapping[str, Any], exception: Mapping[str, Any] | None) -> str:
     if exception is not None:
         kind = str(exception.get("type", "")).strip()
-        value = str(exception.get("value", "")).strip()
-        if kind and value:
-            return f"{kind}: {value}"
+        culprit = _culprit(exception)
+        if kind and culprit:
+            return f"{kind}: {culprit}"
         if kind:
             return kind
-    logentry = _logentry(payload)
-    if logentry:
-        return logentry
+    template = _logentry_template(payload)
+    if template:
+        return template
     message = str(payload.get("message", "")).strip()
     if message:
         return message
     return UNKNOWN_TITLE
+
+
+def _logger(payload: Mapping[str, Any]) -> str:
+    return str(payload.get("logger", "")).strip()
+
+
+def _logentry_template(payload: Mapping[str, Any]) -> str:
+    logentry = payload.get("logentry")
+    if not isinstance(logentry, Mapping):
+        return ""
+    message = str(logentry.get("message", "")).strip()
+    if message:
+        return message
+    return str(logentry.get("formatted", "")).strip()
 
 
 def _logentry(payload: Mapping[str, Any]) -> str:
@@ -285,7 +313,14 @@ def _level(payload: Mapping[str, Any]) -> str:
     return SENTRY_LEVELS.get(level, DEFAULT_LEVEL)
 
 
-def _message(payload: Mapping[str, Any], title: str) -> str:
+def _message(
+    payload: Mapping[str, Any],
+    exception: Mapping[str, Any] | None,
+    title: str,
+) -> str:
+    raised = _exception_line(exception)
+    if raised:
+        return raised
     logentry = _logentry(payload)
     if logentry:
         return logentry
@@ -293,6 +328,16 @@ def _message(payload: Mapping[str, Any], title: str) -> str:
     if message:
         return message
     return title
+
+
+def _exception_line(exception: Mapping[str, Any] | None) -> str:
+    if exception is None:
+        return ""
+    kind = str(exception.get("type", "")).strip()
+    value = str(exception.get("value", "")).strip()
+    if kind and value:
+        return f"{kind}: {value}"
+    return kind
 
 
 def _environment(payload: Mapping[str, Any], fallback: str) -> str:

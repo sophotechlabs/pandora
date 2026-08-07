@@ -224,20 +224,63 @@ def test_a_prehistoric_timestamp_still_yields_an_id():
 
 
 @pytest.mark.django_db
-def test_an_exception_event_takes_its_title_from_type_and_value(project):
-    """Should read as Sentry does — ExceptionType: value."""
+def test_an_exception_event_takes_its_title_from_type_and_culprit(project):
+    """Should name the group, not one victim — the value varies per event."""
     occurrence = envelope.translate_event(
         event_payload(), project, received_at=RECEIVED_AT
     )
 
     result = occurrence.title
+    expected = "ValueError: pandora.ingest.views in envelope"
+    assert result == expected
+
+
+@pytest.mark.django_db
+def test_the_per_event_value_survives_on_the_message(project):
+    """Should keep the varying detail where the event list can still show it."""
+    occurrence = envelope.translate_event(
+        event_payload(), project, received_at=RECEIVED_AT
+    )
+
+    result = occurrence.message
     expected = "ValueError: bad input"
     assert result == expected
 
 
 @pytest.mark.django_db
-def test_an_exception_without_a_value_titles_on_the_type_alone(project):
-    """Should not append an empty value to the title."""
+def test_two_events_of_one_group_share_a_title(project):
+    """Should title both the same — the old title froze on the first URL seen."""
+    other = event_payload(
+        exception={
+            "values": [
+                {
+                    "type": "ValueError",
+                    "value": "a different url entirely",
+                    "module": "pandora.ingest",
+                    "stacktrace": {
+                        "frames": [
+                            {
+                                "module": "pandora.ingest.views",
+                                "function": "envelope",
+                                "in_app": True,
+                            }
+                        ]
+                    },
+                }
+            ]
+        }
+    )
+
+    result = envelope.translate_event(other, project, received_at=RECEIVED_AT).title
+    expected = envelope.translate_event(
+        event_payload(), project, received_at=RECEIVED_AT
+    ).title
+    assert result == expected
+
+
+@pytest.mark.django_db
+def test_an_exception_without_a_stack_titles_on_the_type_alone(project):
+    """Should not append an empty culprit to the title."""
     payload = event_payload(
         exception={"values": [{"type": "ValueError", "module": "pandora"}]}
     )
@@ -250,8 +293,8 @@ def test_an_exception_without_a_value_titles_on_the_type_alone(project):
 
 
 @pytest.mark.django_db
-def test_a_log_event_titles_on_its_formatted_message(project):
-    """Should fall back to logentry when there is no exception."""
+def test_a_log_event_titles_on_its_template(project):
+    """Should title on the template — the formatted line names one source."""
     payload = {
         "event_id": "c" * 32,
         "logentry": {"formatted": "disk almost full", "message": "disk %s full"},
@@ -260,7 +303,7 @@ def test_a_log_event_titles_on_its_formatted_message(project):
     occurrence = envelope.translate_event(payload, project, received_at=RECEIVED_AT)
 
     result = (occurrence.title, occurrence.message)
-    expected = ("disk almost full", "disk almost full")
+    expected = ("disk %s full", "disk almost full")
     assert result == expected
 
 
@@ -398,11 +441,167 @@ def test_an_event_without_a_stack_has_no_culprit(project):
 
 
 @pytest.mark.django_db
-def test_the_default_fingerprint_is_the_exception_module_and_type(project):
-    """Should group by what raised, not by the message, which varies."""
+def test_the_default_fingerprint_is_the_exception_and_the_culprit_frame(project):
+    """Should group by where it was raised, not by the exception class alone."""
     occurrence = envelope.translate_event(
         event_payload(), project, received_at=RECEIVED_AT
     )
+
+    result = occurrence.fingerprint
+    expected = ["pandora.ingest", "ValueError", "pandora.ingest.views", "envelope"]
+    assert result == expected
+
+
+@pytest.mark.django_db
+def test_one_exception_class_raised_in_two_places_is_two_issues(project):
+    """Should split by call site — every HTTPError used to land in one issue."""
+    elsewhere = event_payload(
+        exception={
+            "values": [
+                {
+                    "type": "ValueError",
+                    "value": "bad input",
+                    "module": "pandora.ingest",
+                    "stacktrace": {
+                        "frames": [
+                            {
+                                "module": "pandora.ingest.queue",
+                                "function": "publish",
+                                "in_app": True,
+                            }
+                        ]
+                    },
+                }
+            ]
+        }
+    )
+
+    result = envelope.translate_event(
+        elsewhere, project, received_at=RECEIVED_AT
+    ).fingerprint_hash
+    other = envelope.translate_event(
+        event_payload(), project, received_at=RECEIVED_AT
+    ).fingerprint_hash
+    assert result != other
+
+
+@pytest.mark.django_db
+def test_the_fingerprint_ignores_the_line_the_frame_sits_on(project):
+    """Should survive a deploy that shifted the file — same bug, new lineno."""
+    moved = event_payload(
+        exception={
+            "values": [
+                {
+                    "type": "ValueError",
+                    "value": "bad input",
+                    "module": "pandora.ingest",
+                    "stacktrace": {
+                        "frames": [
+                            {
+                                "module": "pandora.ingest.views",
+                                "function": "envelope",
+                                "lineno": 412,
+                                "in_app": True,
+                            }
+                        ]
+                    },
+                }
+            ]
+        }
+    )
+
+    result = envelope.translate_event(moved, project, received_at=RECEIVED_AT)
+    expected = envelope.translate_event(
+        event_payload(), project, received_at=RECEIVED_AT
+    )
+    assert result.fingerprint == expected.fingerprint
+
+
+@pytest.mark.django_db
+def test_the_fingerprint_ignores_the_exception_value(project):
+    """Should not split on the value — one URL per source is one issue per source."""
+    other = event_payload(
+        exception={
+            "values": [
+                {
+                    "type": "ValueError",
+                    "value": "https://example.test/board/9782",
+                    "module": "pandora.ingest",
+                    "stacktrace": {
+                        "frames": [
+                            {
+                                "module": "pandora.ingest.views",
+                                "function": "envelope",
+                                "in_app": True,
+                            }
+                        ]
+                    },
+                }
+            ]
+        }
+    )
+
+    result = envelope.translate_event(other, project, received_at=RECEIVED_AT)
+    expected = envelope.translate_event(
+        event_payload(), project, received_at=RECEIVED_AT
+    )
+    assert result.fingerprint == expected.fingerprint
+
+
+@pytest.mark.django_db
+def test_a_frame_with_no_module_fingerprints_on_its_function(project):
+    """Should still separate call sites when the SDK sends no frame module."""
+    payload = event_payload(
+        exception={
+            "values": [
+                {
+                    "type": "ValueError",
+                    "value": "bad",
+                    "stacktrace": {"frames": [{"function": "handler", "in_app": True}]},
+                }
+            ]
+        }
+    )
+
+    occurrence = envelope.translate_event(payload, project, received_at=RECEIVED_AT)
+
+    result = occurrence.fingerprint
+    expected = ["ValueError", "handler"]
+    assert result == expected
+
+
+@pytest.mark.django_db
+def test_a_frame_with_only_a_filename_fingerprints_on_the_file(project):
+    """Should fall back to the file, still without the line it moved to."""
+    payload = event_payload(
+        exception={
+            "values": [
+                {
+                    "type": "ValueError",
+                    "value": "bad",
+                    "stacktrace": {
+                        "frames": [{"filename": "app.py", "lineno": 42, "in_app": True}]
+                    },
+                }
+            ]
+        }
+    )
+
+    occurrence = envelope.translate_event(payload, project, received_at=RECEIVED_AT)
+
+    result = occurrence.fingerprint
+    expected = ["ValueError", "app.py"]
+    assert result == expected
+
+
+@pytest.mark.django_db
+def test_an_exception_without_a_stack_fingerprints_on_the_class_alone(project):
+    """Should group on what it can when the SDK sends no frames."""
+    payload = event_payload(
+        exception={"values": [{"type": "ValueError", "module": "pandora.ingest"}]}
+    )
+
+    occurrence = envelope.translate_event(payload, project, received_at=RECEIVED_AT)
 
     result = occurrence.fingerprint
     expected = ["pandora.ingest", "ValueError"]
@@ -429,7 +628,13 @@ def test_the_default_placeholder_expands_inside_an_explicit_fingerprint(project)
     occurrence = envelope.translate_event(payload, project, received_at=RECEIVED_AT)
 
     result = occurrence.fingerprint
-    expected = ["pandora.ingest", "ValueError", "tenant-7"]
+    expected = [
+        "pandora.ingest",
+        "ValueError",
+        "pandora.ingest.views",
+        "envelope",
+        "tenant-7",
+    ]
     assert result == expected
 
 
@@ -441,13 +646,13 @@ def test_an_empty_fingerprint_list_falls_back_to_the_default(project):
     occurrence = envelope.translate_event(payload, project, received_at=RECEIVED_AT)
 
     result = occurrence.fingerprint
-    expected = ["pandora.ingest", "ValueError"]
+    expected = ["pandora.ingest", "ValueError", "pandora.ingest.views", "envelope"]
     assert result == expected
 
 
 @pytest.mark.django_db
 def test_a_message_event_fingerprints_on_its_logentry(project):
-    """Should group log events by their formatted line."""
+    """Should group log events by the only line they carry."""
     payload = {"event_id": "c" * 32, "logentry": {"formatted": "disk almost full"}}
 
     occurrence = envelope.translate_event(payload, project, received_at=RECEIVED_AT)
@@ -455,6 +660,66 @@ def test_a_message_event_fingerprints_on_its_logentry(project):
     result = occurrence.fingerprint
     expected = ["disk almost full"]
     assert result == expected
+
+
+@pytest.mark.django_db
+def test_a_log_event_fingerprints_on_the_template_not_the_formatted_line(project):
+    """Should keep one issue per log call — formatted gives one per source."""
+    payload = {
+        "event_id": "c" * 32,
+        "logger": "listopad.core.tasks",
+        "logentry": {
+            "message": "fetch failed for source %s",
+            "params": ["corepilot-greenhouse"],
+            "formatted": "fetch failed for source corepilot-greenhouse",
+        },
+    }
+
+    occurrence = envelope.translate_event(payload, project, received_at=RECEIVED_AT)
+
+    result = occurrence.fingerprint
+    expected = ["listopad.core.tasks", "fetch failed for source %s"]
+    assert result == expected
+
+
+@pytest.mark.django_db
+def test_two_sources_of_one_log_call_share_an_issue(project):
+    """Should collapse the per-source explosion the formatted line created."""
+    template = "fetch failed for source %s"
+    first = {
+        "event_id": "c" * 32,
+        "logger": "listopad.core.tasks",
+        "logentry": {"message": template, "formatted": "fetch failed for source a"},
+    }
+    second = {
+        "event_id": "d" * 32,
+        "logger": "listopad.core.tasks",
+        "logentry": {"message": template, "formatted": "fetch failed for source b"},
+    }
+
+    result = envelope.translate_event(first, project, received_at=RECEIVED_AT)
+    other = envelope.translate_event(second, project, received_at=RECEIVED_AT)
+    assert result.fingerprint_hash == other.fingerprint_hash
+
+
+@pytest.mark.django_db
+def test_two_loggers_sharing_a_template_stay_apart(project):
+    """Should keep the logger in the identity — two modules are two issues."""
+    template = {"message": "fetch failed for source %s"}
+    first = {
+        "event_id": "c" * 32,
+        "logger": "listopad.core.tasks",
+        "logentry": template,
+    }
+    second = {
+        "event_id": "d" * 32,
+        "logger": "listopad.jobs.tech",
+        "logentry": template,
+    }
+
+    result = envelope.translate_event(first, project, received_at=RECEIVED_AT)
+    other = envelope.translate_event(second, project, received_at=RECEIVED_AT)
+    assert result.fingerprint_hash != other.fingerprint_hash
 
 
 @pytest.mark.django_db
@@ -495,7 +760,7 @@ def test_an_exception_list_is_read_like_a_values_mapping(project):
 
     occurrence = envelope.translate_event(payload, project, received_at=RECEIVED_AT)
 
-    result = occurrence.title
+    result = occurrence.message
     expected = "KeyError: missing"
     assert result == expected
 
@@ -515,7 +780,7 @@ def test_the_last_exception_in_a_chain_is_the_one_reported(project):
 
     occurrence = envelope.translate_event(payload, project, received_at=RECEIVED_AT)
 
-    result = occurrence.title
+    result = occurrence.message
     expected = "RuntimeError: effect"
     assert result == expected
 

@@ -142,9 +142,19 @@ def _event_fields(
         return fields
     if issue_state.last_seen > occurrence.timestamp:
         fields["last_seen"] = issue_state.last_seen
+    else:
+        fields.update(latest_fields(occurrence))
     if occurrence.starts_at < issue_state.first_seen:
         fields["first_seen"] = occurrence.starts_at
     return fields
+
+
+def latest_fields(occurrence: Occurrence) -> dict[str, Any]:
+    return {
+        "title": occurrence.title,
+        "culprit": occurrence.culprit,
+        "level": occurrence.level,
+    }
 
 
 def _event_activities(
