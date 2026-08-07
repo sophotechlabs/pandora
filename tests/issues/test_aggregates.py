@@ -13,9 +13,9 @@ HOUR = datetime.datetime(2026, 8, 4, 9, tzinfo=datetime.UTC)
 pytestmark = pytest.mark.django_db
 
 
-def fill_tag_key(issue, key, count):
+def fill_tag_key(issue, key, count, seen=1):
     models.TagStat.objects.bulk_create(
-        models.TagStat(issue=issue, key=key, value=f"value-{index:04d}", count=1)
+        models.TagStat(issue=issue, key=key, value=f"value-{index:04d}", count=seen)
         for index in range(count)
     )
 
@@ -153,7 +153,7 @@ def test_a_long_tag_key_is_cut_to_the_column(issue):
 
 def test_a_new_value_past_the_cap_lands_in_the_overflow_bucket(issue):
     """Should stop one runaway label from filling the table with rows."""
-    fill_tag_key(issue, "pod", models.TAG_VALUE_CAP)
+    fill_tag_key(issue, "pod", models.TAG_VALUE_CAP, seen=2)
 
     aggregates.count_occurrence(issue, MOMENT, {"pod": "one-pod-too-many"})
 
@@ -165,13 +165,83 @@ def test_a_new_value_past_the_cap_lands_in_the_overflow_bucket(issue):
 
 def test_the_overflow_bucket_keeps_counting(issue):
     """Should keep totalling the tail once the cap is reached."""
-    fill_tag_key(issue, "pod", models.TAG_VALUE_CAP)
+    fill_tag_key(issue, "pod", models.TAG_VALUE_CAP, seen=2)
 
     aggregates.count_occurrence(issue, MOMENT, {"pod": "extra-one"})
     aggregates.count_occurrence(issue, MOMENT, {"pod": "extra-two"})
 
     result = issue.tag_stats.get(value=models.TAG_OVERFLOW_VALUE).count
     expected = 2
+
+    assert result == expected
+
+
+# unbounded keys
+
+
+def test_a_key_whose_values_never_repeat_collapses_to_one_row(issue):
+    """Should fold an id-shaped key — 99 celery task ids were no breakdown."""
+    fill_tag_key(issue, "celery_task_id", models.TAG_VALUE_CAP)
+
+    aggregates.count_occurrence(issue, MOMENT, {"celery_task_id": "one-id-too-many"})
+
+    result = issue.tag_stats.filter(key="celery_task_id").count()
+    expected = 1
+
+    assert result == expected
+
+
+def test_a_collapsed_key_keeps_the_total_it_folded(issue):
+    """Should lose the values, not the count — the breakdown becomes a number."""
+    fill_tag_key(issue, "celery_task_id", models.TAG_VALUE_CAP)
+
+    aggregates.count_occurrence(issue, MOMENT, {"celery_task_id": "one-id-too-many"})
+
+    stat = issue.tag_stats.get(key="celery_task_id")
+    result = (stat.value, stat.count)
+    expected = (models.TAG_OVERFLOW_VALUE, models.TAG_VALUE_CAP + 1)
+
+    assert result == expected
+
+
+def test_a_collapsed_key_stays_collapsed(issue):
+    """Should not refill with ids once the budget is back — that would loop."""
+    fill_tag_key(issue, "celery_task_id", models.TAG_VALUE_CAP)
+    aggregates.count_occurrence(issue, MOMENT, {"celery_task_id": "id-one"})
+
+    aggregates.count_occurrence(issue, MOMENT, {"celery_task_id": "id-two"})
+
+    stat = issue.tag_stats.get(key="celery_task_id")
+    result = (issue.tag_stats.filter(key="celery_task_id").count(), stat.count)
+    expected = (1, models.TAG_VALUE_CAP + 2)
+
+    assert result == expected
+
+
+def test_a_key_with_a_repeated_value_is_not_collapsed(issue):
+    """Should keep a real dimension — a repeat is what makes it a breakdown."""
+    fill_tag_key(issue, "pod", models.TAG_VALUE_CAP - 1)
+    models.TagStat.objects.create(issue=issue, key="pod", value="busy", count=7)
+
+    aggregates.count_occurrence(issue, MOMENT, {"pod": "one-pod-too-many"})
+
+    result = issue.tag_stats.filter(key="pod").count()
+    expected = models.TAG_VALUE_CAP + 1
+
+    assert result == expected
+
+
+def test_collapsing_one_key_leaves_the_others_readable(issue):
+    """Should free the breakdown for the keys worth reading — the whole point."""
+    fill_tag_key(issue, "celery_task_id", models.TAG_VALUE_CAP)
+    aggregates.count_occurrence(
+        issue,
+        MOMENT,
+        {"celery_task_id": "one-id-too-many", "source": "corepilot-greenhouse"},
+    )
+
+    result = issue.tag_stats.get(key="source").value
+    expected = "corepilot-greenhouse"
 
     assert result == expected
 
@@ -264,12 +334,16 @@ def test_a_rebuild_of_nothing_leaves_nothing(issue):
     assert result == expected
 
 
+def repeated_pods(issue, distinct):
+    return [
+        episode_at(issue, index, {"pod": f"pod-{index % distinct:04d}"})
+        for index in range(distinct * 2)
+    ]
+
+
 def test_a_rebuild_folds_the_tail_into_the_overflow_bucket(issue):
     """Should apply the same cap on rebuild as on the ingest path."""
-    episodes = [
-        episode_at(issue, index, {"pod": f"pod-{index:04d}"})
-        for index in range(models.TAG_VALUE_CAP + 5)
-    ]
+    episodes = repeated_pods(issue, models.TAG_VALUE_CAP + 5)
 
     aggregates.rebuild(issue, episodes)
 
@@ -281,6 +355,18 @@ def test_a_rebuild_folds_the_tail_into_the_overflow_bucket(issue):
 
 def test_the_rebuilt_overflow_bucket_carries_the_tail_total(issue):
     """Should keep the dropped values visible as a single total."""
+    episodes = repeated_pods(issue, models.TAG_VALUE_CAP + 5)
+
+    aggregates.rebuild(issue, episodes)
+
+    result = issue.tag_stats.get(key="pod", value=models.TAG_OVERFLOW_VALUE).count
+    expected = 12
+
+    assert result == expected
+
+
+def test_a_rebuild_collapses_a_key_whose_values_never_repeat(issue):
+    """Should reach the same verdict as the ingest path on an id-shaped key."""
     episodes = [
         episode_at(issue, index, {"pod": f"pod-{index:04d}"})
         for index in range(models.TAG_VALUE_CAP + 5)
@@ -288,8 +374,9 @@ def test_the_rebuilt_overflow_bucket_carries_the_tail_total(issue):
 
     aggregates.rebuild(issue, episodes)
 
-    result = issue.tag_stats.get(key="pod", value=models.TAG_OVERFLOW_VALUE).count
-    expected = 6
+    stat = issue.tag_stats.get(key="pod")
+    result = (stat.value, stat.count)
+    expected = (models.TAG_OVERFLOW_VALUE, models.TAG_VALUE_CAP + 5)
 
     assert result == expected
 

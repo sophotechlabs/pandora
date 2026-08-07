@@ -5,7 +5,7 @@ import dataclasses
 import datetime
 import functools
 import hmac
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from http import HTTPStatus
 from typing import Any
 
@@ -25,6 +25,8 @@ DEFAULT_LIMIT = 50
 MAX_LIMIT = 200
 DETAIL_EPISODE_LIMIT = 20
 DETAIL_TAG_LIMIT = 500
+DETAIL_TAG_VALUES = 10
+DETAIL_TAG_SCAN = 5000
 SEARCH_WINDOW = datetime.timedelta(days=7)
 SAFE_METHODS = ("GET", "HEAD")
 
@@ -248,6 +250,20 @@ def serialize_tag_stat(stat: TagStat) -> dict[str, Any]:
     return {"key": stat.key, "value": stat.value, "count": stat.count}
 
 
+def tag_page(stats: Iterable[TagStat]) -> list[TagStat]:
+    per_key: dict[str, int] = {}
+    page = []
+    for stat in stats:
+        taken = per_key.get(stat.key, 0)
+        if taken >= DETAIL_TAG_VALUES:
+            continue
+        per_key[stat.key] = taken + 1
+        page.append(stat)
+        if len(page) >= DETAIL_TAG_LIMIT:
+            break
+    return page
+
+
 def serialize_event(event: Event) -> dict[str, Any]:
     payload = dataclasses.asdict(event)
     payload["timestamp"] = isoformat(event.timestamp)
@@ -290,7 +306,7 @@ def issue_detail(
         serialize_episode(episode) for episode in episodes[:DETAIL_EPISODE_LIMIT]
     ]
     payload["tag_stats"] = [
-        serialize_tag_stat(stat) for stat in tag_stats[:DETAIL_TAG_LIMIT]
+        serialize_tag_stat(stat) for stat in tag_page(tag_stats[:DETAIL_TAG_SCAN])
     ]
     return payload
 

@@ -62,6 +62,14 @@ def test_the_detail_sub_lists_are_bounded():
     assert result == expected
 
 
+def test_one_tag_key_cannot_take_the_whole_detail_budget():
+    """Should ration the tag rows per key — one id key used to eat the response."""
+    result = api.DETAIL_TAG_VALUES < api.DETAIL_TAG_LIMIT
+    expected = True
+
+    assert result == expected
+
+
 def test_only_safe_methods_are_served():
     """Should keep the API read-only — no write verb is ever routed."""
     result = api.SAFE_METHODS
@@ -927,6 +935,85 @@ def test_the_detail_orders_tags_by_key_then_frequency(client, auth, issue):
         ("namespace", "monitoring"),
         ("severity", "warning"),
     ]
+
+    assert result == expected
+
+
+def test_the_detail_rations_tag_rows_per_key(client, auth, issue):
+    """Should cut a high-cardinality key down to its top values."""
+    issue_models.TagStat.objects.bulk_create(
+        [
+            issue_models.TagStat(
+                issue=issue, key="celery_task_id", value=f"id-{index:04d}", count=1
+            )
+            for index in range(50)
+        ]
+    )
+
+    response = client.get(f"{ISSUES_URL}/{issue.pk}", headers=auth)
+
+    result = len(response.json()["tag_stats"])
+    expected = api.DETAIL_TAG_VALUES
+
+    assert result == expected
+
+
+def test_a_rationed_key_leaves_room_for_the_others(client, auth, issue):
+    """Should still show the key an operator actually wants to read."""
+    issue_models.TagStat.objects.bulk_create(
+        [
+            issue_models.TagStat(
+                issue=issue, key="celery_task_id", value=f"id-{index:04d}", count=1
+            )
+            for index in range(50)
+        ]
+        + [issue_models.TagStat(issue=issue, key="source", value="corepilot", count=7)]
+    )
+
+    response = client.get(f"{ISSUES_URL}/{issue.pk}", headers=auth)
+
+    result = [row for row in response.json()["tag_stats"] if row["key"] == "source"]
+    expected = [{"key": "source", "value": "corepilot", "count": 7}]
+
+    assert result == expected
+
+
+def test_the_rationed_rows_are_the_most_frequent_ones(client, auth, issue):
+    """Should keep the top values, not whichever the index reached first."""
+    issue_models.TagStat.objects.bulk_create(
+        [
+            issue_models.TagStat(
+                issue=issue, key="source", value=f"board-{index:04d}", count=index
+            )
+            for index in range(api.DETAIL_TAG_VALUES + 5)
+        ]
+    )
+
+    response = client.get(f"{ISSUES_URL}/{issue.pk}", headers=auth)
+
+    result = [row["count"] for row in response.json()["tag_stats"]]
+    expected = sorted(result, reverse=True)
+
+    assert result == expected
+    assert min(result) == 5
+
+
+def test_the_detail_still_bounds_the_whole_tag_list(client, auth, issue, monkeypatch):
+    """Should stop at the response budget however many keys an issue collected."""
+    monkeypatch.setattr(api, "DETAIL_TAG_LIMIT", 4)
+    issue_models.TagStat.objects.bulk_create(
+        [
+            issue_models.TagStat(
+                issue=issue, key=f"key-{index:02d}", value="one", count=1
+            )
+            for index in range(6)
+        ]
+    )
+
+    response = client.get(f"{ISSUES_URL}/{issue.pk}", headers=auth)
+
+    result = len(response.json()["tag_stats"])
+    expected = 4
 
     assert result == expected
 
