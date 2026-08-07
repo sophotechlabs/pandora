@@ -48,6 +48,30 @@ An SDK points at pandora with a DSN of the form `http://<public_key>@<host>/<pro
 
 Pandora reimplements the Sentry ingest wire format from public protocol documentation so unmodified MIT-licensed Sentry SDKs can point at it. No Sentry server code is used. "Sentry-compatible" is a statement about the wire format, nothing more.
 
+## Grouping
+
+An occurrence becomes an issue through a fingerprint, and neither door puts anything per-instance in one.
+
+Alertmanager alerts group on their labels minus a denylist. The seeded rule drops `pod`, `instance`, `container`, `endpoint`, `replicaset`, `uid`, `node` and `job_name` — the last is the run name kube-state-metrics stamps on `KubeJobFailed`, so without it every failed CronJob run minted its own issue. Rules are editable in the admin: denylist or allowlist, optionally scoped to one project and one `alertname` pattern, lowest priority number first.
+
+SDK events group on the stack signature — the exception's module and class, then the module and function of the culprit frame, the last one marked `in_app`. Two things are deliberately absent. The line number, because it moves with every deploy that touches the file above it. The exception value, because it carries the URL or id that failed and would mint one issue per value. An event with no exception groups on its logger and its **logentry template** (`fetch failed for source %s`), not on the formatted line, which names one source. A client that wants a finer split sets `scope.fingerprint`; `{{ default }}` expands to the derived parts.
+
+Title, culprit and level follow the issue's most recent event. The title is built from the invariants — `HTTPError: listopad.core.transport in get_json` — so it describes the group rather than whichever event opened it. The varying detail stays on the event's `message`, which is what `/issues/<id>/events` returns.
+
+Tag breakdowns are capped per key. A key whose values never repeat — a task id, a request id — collapses to a single `<other>` row once it fills the cap, so it stops crowding out the keys worth reading; the detail response rations rows per key on top of that.
+
+### Regrouping
+
+Changing a rule does not rewrite history on its own:
+
+```sh
+python manage.py regroup --dry-run
+```
+
+Two passes. The first recomputes Alertmanager issues from the permanent `Episode` history. The second recomputes SDK issues by re-reading `RawEnvelope` payloads through the translator and relinking stored events by id — an SDK event carries no episode, so nothing else can move it. Both carry triage state with an issue that regroups whole, drop issues nothing points at any more, and roll back together under `--dry-run`.
+
+The SDK pass sees only what `PANDORA_ENVELOPE_RETENTION_DAYS` (7) still holds; an event whose envelope has expired keeps the grouping it has, and the run reports how many envelopes it read and how many it could not parse. Nothing goes back through the ingest path, so `ProcessedEvent` is untouched and no event is counted twice.
+
 ## Alertmanager
 
 Webhooks are the fast path; they are not the whole truth. A delivery can be lost, and Alertmanager can stop reporting an alert without ever sending a resolve. `reconcile` is the correction:
