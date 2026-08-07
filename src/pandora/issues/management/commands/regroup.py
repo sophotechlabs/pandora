@@ -5,13 +5,14 @@ from typing import Any
 from django.core.management.base import BaseCommand, CommandError
 
 from pandora.core.models import Project
+from pandora.ingest import regroup as regroup_events
 from pandora.issues import regroup as regroup_issues
 
 ORPHAN_SAMPLE = 20
 
 
 class Command(BaseCommand):
-    help = "Recompute issue grouping from the permanent episode history"
+    help = "Recompute issue grouping from the permanent episode and envelope history"
 
     def add_arguments(self, parser: Any) -> None:
         parser.add_argument(
@@ -35,6 +36,7 @@ class Command(BaseCommand):
 
         dry_run = bool(options["dry_run"])
         report = regroup_issues.regroup(project=project, dry_run=dry_run)
+        events = regroup_events.regroup_events(project=project, dry_run=dry_run)
 
         if dry_run:
             verb = "would rebuild"
@@ -53,5 +55,18 @@ class Command(BaseCommand):
             f"{report.triage_migrated} triage states carried, "
             f"{report.issues_deleted} emptied issues removed"
         )
-        for title in report.orphans[:ORPHAN_SAMPLE]:
+        self.stdout.write(
+            f"regroup: sdk — {verb} {events.issues_before} issues into "
+            f"{events.issues_after} from {events.events} events "
+            f"re-read out of {events.envelopes} retained envelopes"
+        )
+        self.stdout.write(
+            f"regroup: sdk — {events.issues_created} created, "
+            f"{events.issues_renamed} regrouped in place, "
+            f"{events.events_moved} stored events relinked, "
+            f"{events.triage_migrated} triage states carried, "
+            f"{events.issues_deleted} emptied issues removed, "
+            f"{events.unreadable} envelopes unreadable"
+        )
+        for title in [*report.orphans, *events.orphans][:ORPHAN_SAMPLE]:
             self.stdout.write(f"regroup: orphaned {title}")
