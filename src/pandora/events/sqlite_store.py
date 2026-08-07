@@ -22,7 +22,11 @@ SELECT = (
     f"fingerprint, tags, extra, source, environment FROM {EVENTS_TABLE}"
 )
 
-DELETE = f'DELETE FROM {EVENTS_TABLE} WHERE "timestamp" < %s'
+DELETE = (
+    f"DELETE FROM {EVENTS_TABLE} WHERE id IN "
+    f'(SELECT id FROM {EVENTS_TABLE} WHERE "timestamp" < %s LIMIT %s)'
+)
+PRUNE_BATCH = 5000
 
 REASSIGN = (
     f"UPDATE {EVENTS_TABLE} SET issue_id = %s "
@@ -167,9 +171,15 @@ class SqliteEventStore:
             return _fetched(cursor)
 
     def prune(self, before: datetime) -> int:
-        with self.connection.cursor() as cursor:
-            cursor.execute(DELETE, [_encode_timestamp(before)])
-            return cursor.rowcount
+        cutoff = _encode_timestamp(before)
+        removed = 0
+        while True:
+            with self.connection.cursor() as cursor:
+                cursor.execute(DELETE, [cutoff, PRUNE_BATCH])
+                deleted = cursor.rowcount
+            removed += deleted
+            if deleted < PRUNE_BATCH:
+                return removed
 
     def ensure_partitions(self, months_ahead: int = 2) -> None:
         return None

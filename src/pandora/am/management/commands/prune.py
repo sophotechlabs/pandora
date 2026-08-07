@@ -11,7 +11,7 @@ from django.utils import timezone
 
 from pandora.events.store import get_store
 from pandora.ingest.models import EnvelopeState, ProcessedEvent, RawEnvelope
-from pandora.issues.models import SilenceLink
+from pandora.issues.models import HourlyStat, IssueActivity, SilenceLink
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +24,8 @@ class PruneResult:
     envelopes: int
     processed_events: int
     silences: int
+    hourly_stats: int = 0
+    activities: int = 0
 
 
 def prune_expired(now: datetime) -> PruneResult:
@@ -40,6 +42,8 @@ def prune_expired(now: datetime) -> PruneResult:
         seen_at__lt=retention_cutoff,
     ).delete()
     silences, _ = SilenceLink.objects.filter(expires_at__lt=now).delete()
+    hourly_stats, _ = HourlyStat.objects.filter(hour__lt=retention_cutoff).delete()
+    activities, _ = IssueActivity.objects.filter(at__lt=retention_cutoff).delete()
     store.ensure_partitions(months_ahead=MONTHS_AHEAD)
 
     result = PruneResult(
@@ -47,13 +51,18 @@ def prune_expired(now: datetime) -> PruneResult:
         envelopes=envelopes,
         processed_events=processed_events,
         silences=silences,
+        hourly_stats=hourly_stats,
+        activities=activities,
     )
     logger.info(
-        "prune: %s events, %s envelopes, %s processed events, %s silences",
+        "prune: %s events, %s envelopes, %s processed events, %s silences,"
+        " %s hourly stats, %s activities",
         result.events,
         result.envelopes,
         result.processed_events,
         result.silences,
+        result.hourly_stats,
+        result.activities,
     )
     return result
 
@@ -65,5 +74,6 @@ class Command(BaseCommand):
         result = prune_expired(timezone.now())
         self.stdout.write(
             f"prune: {result.events} events, {result.envelopes} envelopes, "
-            f"{result.processed_events} processed events, {result.silences} silences"
+            f"{result.processed_events} processed events, {result.silences} silences, "
+            f"{result.hourly_stats} hourly stats, {result.activities} activities"
         )

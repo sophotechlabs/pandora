@@ -60,7 +60,14 @@ def test_prune_asks_for_two_months_of_partitions():
 def test_prune_reports_every_retention_class():
     """Should account for each thing it deletes, not a single total."""
     result = list(prune.PruneResult.__dataclass_fields__)
-    expected = ["events", "envelopes", "processed_events", "silences"]
+    expected = [
+        "events",
+        "envelopes",
+        "processed_events",
+        "silences",
+        "hourly_stats",
+        "activities",
+    ]
 
     assert result == expected
 
@@ -216,7 +223,10 @@ def test_prune_keeps_a_live_silence_link(issue, moment):
 def test_the_command_reports_an_empty_run():
     """Should print one line naming every retention class it touched."""
     result = run_command()
-    expected = "prune: 0 events, 0 envelopes, 0 processed events, 0 silences\n"
+    expected = (
+        "prune: 0 events, 0 envelopes, 0 processed events, 0 silences,"
+        " 0 hourly stats, 0 activities\n"
+    )
 
     assert result == expected
 
@@ -236,6 +246,78 @@ def test_the_command_reports_what_it_removed(project, issue):
     )
 
     result = run_command()
-    expected = "prune: 0 events, 1 envelopes, 0 processed events, 1 silences\n"
+    expected = (
+        "prune: 0 events, 1 envelopes, 0 processed events, 1 silences,"
+        " 0 hourly stats, 0 activities\n"
+    )
+
+    assert result == expected
+
+
+# aggregates that would otherwise grow forever
+
+
+def test_hourly_stats_past_retention_are_removed(project, issue):
+    """Should drop sparkline buckets nothing can read — the window is 7 days."""
+    now = timezone.now()
+    issue_models.HourlyStat.objects.create(
+        issue=issue,
+        hour=now - datetime.timedelta(days=120),
+        count=3,
+    )
+    issue_models.HourlyStat.objects.create(issue=issue, hour=now, count=1)
+
+    result = prune.prune_expired(now)
+
+    assert result.hourly_stats == 1
+    assert issue_models.HourlyStat.objects.count() == 1
+
+
+def test_activities_past_retention_are_removed(project, issue):
+    """Should bound the audit feed rather than let a flapping alert grow it forever."""
+    now = timezone.now()
+    issue_models.IssueActivity.objects.create(
+        issue=issue,
+        kind=issue_models.ActivityKind.CREATED,
+        at=now - datetime.timedelta(days=120),
+    )
+    issue_models.IssueActivity.objects.create(
+        issue=issue,
+        kind=issue_models.ActivityKind.REGRESSION,
+        at=now,
+    )
+
+    result = prune.prune_expired(now)
+
+    assert result.activities == 1
+    assert issue_models.IssueActivity.objects.count() == 1
+
+
+def test_episodes_are_never_pruned(project, issue, episode):
+    """Should keep episodes permanently — regroup replays them after payloads are gone,
+    which is why the implementation plan pins them as permanent."""
+    issue_models.Episode.objects.filter(pk=episode.pk).update(
+        starts_at=timezone.now() - datetime.timedelta(days=400)
+    )
+
+    prune.prune_expired(timezone.now())
+
+    result = issue_models.Episode.objects.count()
+    expected = 1
+
+    assert result == expected
+
+
+def test_tag_stats_are_never_pruned(project, issue):
+    """Should leave the tag distribution alone — it is a capped aggregate, not a
+    time series, so pruning by age would corrupt a live issue's sidebar."""
+    issue_models.TagStat.objects.create(
+        issue=issue, key="namespace", value="payments", count=9
+    )
+
+    prune.prune_expired(timezone.now())
+
+    result = issue_models.TagStat.objects.count()
+    expected = 1
 
     assert result == expected

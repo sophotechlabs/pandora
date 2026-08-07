@@ -190,3 +190,18 @@ def test_ensure_partitions_stays_a_no_op(sqlite_event_store, moment):
 
     assert result is None
     assert len(sqlite_event_store.fetch(1)) == 1
+
+
+def test_prune_loops_until_the_last_batch_is_short(
+    sqlite_event_store, moment, monkeypatch
+):
+    """Should keep going past one batch — a single huge DELETE holds the writer
+    lock, which on SQLite blocks reconcile writing beside the web tier."""
+    monkeypatch.setattr(sqlite_store, "PRUNE_BATCH", 4)
+    old = moment - datetime.timedelta(days=400)
+    sqlite_event_store.insert(support.make_events(11, old))
+
+    removed = sqlite_event_store.prune(moment - datetime.timedelta(days=1))
+
+    assert removed == 11
+    assert support.ids(sqlite_event_store.fetch(1)) == []
