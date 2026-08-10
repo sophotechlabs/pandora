@@ -92,6 +92,8 @@ Without `--loop` it runs a single pass and exits. Deploy it with `--loop`, not a
 
 Reconcile never writes issues directly. Everything it corrects goes through `RawEnvelope` and `process_envelope`, so counters stay exactly-once and a correction is as replayable as a delivery.
 
+`GET /api/v2/alerts` returns every alert Alertmanager holds, including the ones its own routing tree sends to a blackhole receiver — routing decides notification, not membership. Reconcile would otherwise resurrect exactly what the route drops. `PANDORA_RECONCILE_IGNORE` (default `Watchdog,InfoInhibitor`) is the list it will not open an episode for; the `Watchdog` gauge is still stamped before the filter runs, because that reading is the point of the alert. Each pass reports how many it skipped.
+
 ### Silences
 
 The issue changelist can silence for 1h, 4h or 1d. Matchers are structured and exact — one `isEqual` matcher per retained grouping label, no regex — so a silence covers the issue and nothing else. An issue that kept no grouping labels is refused rather than turned into a silence that matches everything. The comment links back to the issue; set `PANDORA_BASE_URL` to make that link absolute. Each silence is recorded as a `SilenceLink` and shows in the issue's activity feed; the link list can lift a silence early, and `prune` drops links once they expire.

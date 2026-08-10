@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
+from django.conf import settings
 from django.utils import timezone
 from prometheus_client import Counter, Gauge
 
@@ -41,6 +42,11 @@ ACTIONS = Counter(
 log = logging.getLogger(__name__)
 
 
+def ignored_alertnames() -> frozenset[str]:
+    raw = str(getattr(settings, "PANDORA_RECONCILE_IGNORE", ""))
+    return frozenset(name.strip() for name in raw.split(",") if name.strip())
+
+
 class ScopeError(RuntimeError):
     pass
 
@@ -58,6 +64,7 @@ class ReconcileReport:
     opened: int = 0
     closed: int = 0
     missing: int = 0
+    ignored: int = 0
     watchdog: bool = False
     error: str = ""
 
@@ -99,10 +106,15 @@ class Reconciler:
         client: am_client.AlertmanagerClient,
         *,
         close_after: int = CLOSE_AFTER_MISSES,
+        ignore: Sequence[str] | None = None,
     ) -> None:
         self.scope = scope
         self.client = client
         self.close_after = close_after
+        if ignore is None:
+            self.ignore = ignored_alertnames()
+        else:
+            self.ignore = frozenset(ignore)
         self.misses: dict[int, int] = {}
 
     def cycle(self, now: datetime | None = None) -> ReconcileReport:
@@ -123,7 +135,10 @@ class Reconciler:
         report = ReconcileReport(alerts=len(alerts))
         report.watchdog = self._watchdog(alerts, now)
 
-        present = _by_fingerprint(alerts)
+        tracked = [alert for alert in alerts if _alertname(alert) not in self.ignore]
+        report.ignored = len(alerts) - len(tracked)
+
+        present = _by_fingerprint(tracked)
         episodes = self._open_episodes()
         report.open_episodes = len(episodes)
 
@@ -141,8 +156,10 @@ class Reconciler:
         ACTIONS.labels(action="closed").inc(report.closed)
         ACTIONS.labels(action="missing").inc(report.missing)
         log.info(
-            "reconcile: %s alerts, %s open episodes, %s opened, %s closed, %s missing",
+            "reconcile: %s alerts (%s routed away), %s open episodes, "
+            "%s opened, %s closed, %s missing",
             report.alerts,
+            report.ignored,
             report.open_episodes,
             report.opened,
             report.closed,
@@ -209,6 +226,13 @@ class Reconciler:
                 envelope.error,
             )
         return envelope
+
+
+def _alertname(alert: Mapping[str, Any]) -> str:
+    labels = alert.get("labels")
+    if not isinstance(labels, Mapping):
+        return ""
+    return str(labels.get(ALERTNAME_LABEL, ""))
 
 
 def _by_fingerprint(

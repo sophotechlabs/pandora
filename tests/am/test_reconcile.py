@@ -566,6 +566,108 @@ def test_an_alert_without_labels_is_not_a_watchdog(alertmanager, reconciler, mom
     assert result is False
 
 
+# alerts alertmanager routes away
+
+
+def info_inhibitor(moment):
+    return fake_am.alert(
+        "1a2b3c4d5e6f7080",
+        {"alertname": "InfoInhibitor", "severity": "info"},
+        starts_at=stamp(moment - datetime.timedelta(hours=1)),
+    )
+
+
+def test_a_routed_away_alert_opens_no_episode(alertmanager, reconciler, moment):
+    """Should not resurrect what the Alertmanager route deliberately blackholes."""
+    alertmanager.alerts = [info_inhibitor(moment)]
+
+    report = reconciler.run_once(moment)
+
+    result = (report.opened, issue_models.Episode.objects.count())
+    expected = (0, 0)
+
+    assert result == expected
+
+
+def test_a_routed_away_alert_is_counted_not_hidden(alertmanager, reconciler, moment):
+    """Should say how many it skipped rather than drop them silently."""
+    alertmanager.alerts = [info_inhibitor(moment), target_down(moment)]
+
+    report = reconciler.run_once(moment)
+
+    result = (report.alerts, report.ignored, report.opened)
+    expected = (2, 1, 1)
+
+    assert result == expected
+
+
+def test_the_watchdog_still_stamps_the_metric_while_ignored(
+    alertmanager, reconciler, moment
+):
+    """Should read the heartbeat before filtering — the gauge is the whole point."""
+    alertmanager.alerts = [watchdog(moment)]
+
+    report = reconciler.run_once(moment)
+
+    result = (report.watchdog, report.opened, issue_models.Episode.objects.count())
+    expected = (True, 0, 0)
+
+    assert result == expected
+
+
+def test_the_ignore_list_comes_from_settings(settings):
+    """Should let an operator name the alerts reconcile must not resurrect."""
+    settings.PANDORA_RECONCILE_IGNORE = "Watchdog, InfoInhibitor ,, KubectlExecObserved"
+
+    result = reconcile.ignored_alertnames()
+    expected = frozenset({"Watchdog", "InfoInhibitor", "KubectlExecObserved"})
+
+    assert result == expected
+
+
+def test_an_empty_ignore_list_tracks_everything(settings):
+    """Should track every alert when an operator clears the list."""
+    settings.PANDORA_RECONCILE_IGNORE = ""
+
+    result = reconcile.ignored_alertnames()
+    expected = frozenset()
+
+    assert result == expected
+
+
+def test_the_default_ignore_list_covers_alertmanager_plumbing():
+    """Should ship ignoring the two alerts Alertmanager fires about itself."""
+    result = reconcile.ignored_alertnames()
+    expected = frozenset({"Watchdog", "InfoInhibitor"})
+
+    assert result == expected
+
+
+def test_an_ignored_alert_lets_its_stale_episode_close(
+    alertmanager, reconciler, scope, moment
+):
+    """Should let an episode from before the filter resolve instead of hanging open."""
+    episode = open_episode(scope, moment)
+    alertmanager.alerts = [info_inhibitor(moment)]
+
+    run(reconciler, moment, cycles=3)
+
+    result = issue_models.Episode.objects.get(pk=episode.pk).ends_at is not None
+    expected = True
+
+    assert result == expected
+
+
+def test_a_caller_can_override_the_ignore_list(scope, alertmanager_client):
+    """Should let the command and the tests name their own list."""
+    other = reconcile.Reconciler(scope, alertmanager_client, ignore=["TargetDown"])
+
+    result = other.ignore
+    expected = frozenset({"TargetDown"})
+
+    assert result == expected
+
+
 # scope isolation
 
 
@@ -602,7 +704,7 @@ def test_a_closed_episode_is_not_reopened_by_the_scan(
 
 
 def test_the_report_counts_what_the_pass_saw(alertmanager, reconciler, scope, moment):
-    """Should give the loop one line worth printing."""
+    """Should give the loop one line worth printing — the heartbeat is not an issue."""
     open_episode(scope, moment)
     alertmanager.alerts = [cpu_overcommit(moment), watchdog(moment)]
 
@@ -610,12 +712,13 @@ def test_the_report_counts_what_the_pass_saw(alertmanager, reconciler, scope, mo
 
     result = (
         report.alerts,
+        report.ignored,
         report.open_episodes,
         report.opened,
         report.closed,
         report.missing,
         report.watchdog,
     )
-    expected = (2, 1, 2, 0, 1, True)
+    expected = (2, 1, 1, 1, 0, 1, True)
 
     assert result == expected
