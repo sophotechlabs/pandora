@@ -1,5 +1,5 @@
 {% extends "ui/base.html" %}
-{% block title %}Issues | pandora{% endblock %}
+{% block title %}Issues | Pandora{% endblock %}
 {% block content %}
   <div class="page-head">
     <h1>Issues</h1>
@@ -17,7 +17,7 @@
     <input type="hidden" name="sort" value="{{ sort.key }}">
     <button class="btn btn-primary" type="submit">Search</button>
   </form>
-  {% if ignored %}<p class="notice">Ignored, not a filter pandora knows: {{ ignored|join:", " }}</p>{% endif %}
+  {% if ignored %}<p class="notice">Ignored, not a filter Pandora knows: {{ ignored|join:", " }}</p>{% endif %}
   <nav class="segments">
     {% for segment in segments %}
       <a class="segment

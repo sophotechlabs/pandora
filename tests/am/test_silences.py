@@ -69,7 +69,7 @@ def test_the_comment_names_the_issue(issue):
     """Should let whoever finds the silence in Alertmanager get back to the record."""
     result = silences.build_comment(issue)
     expected = (
-        f"pandora issue #{issue.pk} — TargetDown: scrape target unreachable"
+        f"Pandora issue #{issue.pk} — TargetDown: scrape target unreachable"
         f" — /issues/{issue.pk}/"
     )
 
@@ -129,7 +129,7 @@ def test_an_unattributed_silence_is_created_by_pandora(
     silences.silence_issue(issue, ONE_HOUR, client=alertmanager_client)
 
     result = alertmanager.silence_bodies()[0]["createdBy"]
-    expected = "pandora"
+    expected = "Pandora"
 
     assert result == expected
 

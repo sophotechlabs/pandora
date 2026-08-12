@@ -3,7 +3,7 @@
     {% for entry in detail.activities %}
       <li class="feed-item">
         <span class="feed-kind">{{ entry.kind }}</span>
-        <span class="feed-actor">{{ entry.actor|default:"pandora" }}</span>
+        <span class="feed-actor">{{ entry.actor|default:"Pandora" }}</span>
         {% if entry.note %}<span class="muted">{{ entry.note }}</span>{% endif %}
         <span class="feed-stamp" title="{{ entry.at|date:'Y-m-d H:i:s e' }}">{{ entry.at|date:"M d, H:i" }}</span>
       </li>

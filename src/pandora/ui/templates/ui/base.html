@@ -4,7 +4,7 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>{% block title %}pandora{% endblock %}</title>
+    <title>{% block title %}Pandora{% endblock %}</title>
     <link rel="icon" href="{% static 'ui/favicon.svg' %}" type="image/svg+xml">
     <link rel="stylesheet" href="{% static 'ui/pandora.css' %}">
     <script>
@@ -25,7 +25,7 @@
     <header class="topbar">
       <a class="brand" href="{% url 'ui:stream' %}">
         <span class="brand-mark"></span>
-        <span class="brand-name">pandora</span>
+        <span class="brand-name">Pandora</span>
       </a>
       {% if pandora_env %}<span class="env env-{{ pandora_env_tone }}">{{ pandora_env }}</span>{% endif %}
       <nav class="mainnav">

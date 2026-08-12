@@ -12,7 +12,7 @@ from django.utils import timezone
 from pandora.am import client as am_client
 from pandora.issues.models import ActivityKind, Issue, IssueActivity, SilenceLink
 
-CREATED_BY = "pandora"
+CREATED_BY = "Pandora"
 ISSUE_ROUTE = "ui:issue"
 
 log = logging.getLogger(__name__)
@@ -50,7 +50,7 @@ def issue_url(issue: Issue) -> str:
 
 
 def build_comment(issue: Issue) -> str:
-    return f"pandora issue #{issue.pk} — {issue.title} — {issue_url(issue)}"
+    return f"Pandora issue #{issue.pk} — {issue.title} — {issue_url(issue)}"
 
 
 def silence_issue(

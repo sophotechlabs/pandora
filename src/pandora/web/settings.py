@@ -214,8 +214,8 @@ def _unfold_environment(request):
 
 
 UNFOLD = {
-    "SITE_TITLE": "pandora",
-    "SITE_HEADER": "pandora",
+    "SITE_TITLE": "Pandora",
+    "SITE_HEADER": "Pandora",
     "SITE_URL": "/",
     "SHOW_HISTORY": True,
     "SHOW_VIEW_ON_SITE": False,

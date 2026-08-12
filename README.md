@@ -1,4 +1,4 @@
-# pandora
+# Pandora
 
 Self-hosted, k8s-native event tracker on the Sentry model: occurrences grouped into issues with first/last-seen, counts, sparkline and triage state. Two front doors into one core — Alertmanager webhooks and the Sentry envelope protocol — and one operator UI over both. SQLite and Postgres are both first-class.
 
@@ -64,7 +64,7 @@ The stream opens on `is:unresolved`. The search box takes a query rather than a 
 | `seen:` | `seen:1h` | last seen inside the window — `30m`, `6h`, `7d`, `2w` |
 | `age:` | `age:1d` | first seen inside the window |
 
-Anything else is matched against the title and the culprit, and a bare hash prefix matches the fingerprint. Repeating a key widens it (`level:error level:fatal`); different keys narrow together. A term pandora does not understand is named back above the table rather than silently returning nothing.
+Anything else is matched against the title and the culprit, and a bare hash prefix matches the fingerprint. Repeating a key widens it (`level:error level:fatal`); different keys narrow together. A term Pandora does not understand is named back above the table rather than silently returning nothing.
 
 Selecting rows raises an action bar: acknowledge, resolve, ignore, or silence in Alertmanager for 1h, 4h or 1d. `/` focuses the search box, `j` and `k` move through the rows, `x` selects one, `Enter` opens it.
 
@@ -72,7 +72,7 @@ Triage needs the `issues.change_issue` permission and replay needs `ingest.chang
 
 Both ingest routes existed from the first commit and answered 501 until their phase landed — the URL and auth scheme are what SDKs and Alertmanager configs hard-code, so they were pinned before anything was written behind them. Both doors are open now.
 
-An SDK points at pandora with a DSN of the form `http://<public_key>@<host>/<project_id>`, where the key is a `DsnKey` row. Envelopes arrive gzipped or plain; `event` items become one durable `RawEnvelope` each, and every other item type — transactions, sessions, attachments — is counted, acked with `200` and dropped, so an SDK never retries what pandora will not keep. Retries are free: the Sentry event id is the dedup key, held in `ProcessedEvent`, and an issue's `event_count` moves only when that row is genuinely new. SDK events carry no episode; the firing/resolved column stays null on an issue that only SDKs feed.
+An SDK points at Pandora with a DSN of the form `http://<public_key>@<host>/<project_id>`, where the key is a `DsnKey` row. Envelopes arrive gzipped or plain; `event` items become one durable `RawEnvelope` each, and every other item type — transactions, sessions, attachments — is counted, acked with `200` and dropped, so an SDK never retries what Pandora will not keep. Retries are free: the Sentry event id is the dedup key, held in `ProcessedEvent`, and an issue's `event_count` moves only when that row is genuinely new. SDK events carry no episode; the firing/resolved column stays null on an issue that only SDKs feed.
 
 Pandora reimplements the Sentry ingest wire format from public protocol documentation so unmodified MIT-licensed Sentry SDKs can point at it. No Sentry server code is used. "Sentry-compatible" is a statement about the wire format, nothing more.
 
@@ -108,13 +108,13 @@ Webhooks are the fast path; they are not the whole truth. A delivery can be lost
 python manage.py reconcile --loop 60
 ```
 
-Each pass reads `GET /api/v2/alerts` (asking for silenced, inhibited and unprocessed alerts as well — a suppressed alert is still firing) and compares it with the episodes pandora holds open:
+Each pass reads `GET /api/v2/alerts` (asking for silenced, inhibited and unprocessed alerts as well — a suppressed alert is still firing) and compares it with the episodes Pandora holds open:
 
 - an alert with no open episode → the missed webhook is synthesised and replayed through the same envelope inbox and consumer the webhook path uses;
 - an open episode whose alert is absent → closed only after **three consecutive** misses, so an Alertmanager restart cannot manufacture a resolve. The counter lives in memory and resets when the process restarts, which errs towards keeping episodes open;
 - a `Watchdog` alert → `pandora_watchdog_last_seen_timestamp`, the dead-man's switch that watches the alert path itself.
 
-Scope comes from the Alertmanager ingest token — its project and environment. Pass `--project` and `--environment` when one pandora serves more than one cluster. `--metrics-port` exposes the gauge from the reconcile process, which has no web port of its own.
+Scope comes from the Alertmanager ingest token — its project and environment. Pass `--project` and `--environment` when one Pandora serves more than one cluster. `--metrics-port` exposes the gauge from the reconcile process, which has no web port of its own.
 
 Without `--loop` it runs a single pass and exits. Deploy it with `--loop`, not as a CronJob: the miss counter lives in the process, so a one-shot run catches up missed webhooks but can never reach a third consecutive miss. A database error ends the process rather than being swallowed — the restart brings a working connection back, which a wedged loop never would.
 
