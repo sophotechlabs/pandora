@@ -28,7 +28,7 @@ up-fg:
 bootstrap:
     docker compose up -d --wait --build
     @echo ""
-    @echo "Stack healthy. Open http://localhost:8000/admin/"
+    @echo "Stack healthy. Open http://localhost:8000/"
     @echo "If you need a superuser: just superuser"
 
 # Stop and remove containers (keeps volumes; backs up DB first)
