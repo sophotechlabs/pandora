@@ -1,0 +1,58 @@
+<tbody id="stream-rows" data-total="{{ total }}">
+  {% for row in rows %}
+    <tr class="issue-row" data-href="{% url 'ui:issue' row.issue.pk %}">
+      <td class="pick">
+        <input type="checkbox"
+               name="issue"
+               value="{{ row.issue.pk }}"
+               aria-label="Select {{ row.issue.title }}">
+      </td>
+      <td class="subject">
+        <div class="subject-line">
+          <span class="dot dot-{{ row.issue.source_state|default:'none' }}"
+                title="{{ row.state_label }}"></span>
+          <a class="subject-title" href="{% url 'ui:issue' row.issue.pk %}">{{ row.issue.title }}</a>
+          <span class="chip chip-{{ row.issue.level }}">{{ row.issue.get_level_display }}</span>
+        </div>
+        <div class="subject-sub">
+          <span class="project">{{ row.issue.project.slug }}</span>
+          {% if row.issue.environment %}<span class="project">{{ row.issue.environment }}</span>{% endif %}
+          {% for label in row.labels %}
+            <span class="tag">{{ label }}</span>
+          {% empty %}
+            <span class="culprit">{{ row.issue.culprit }}</span>
+          {% endfor %}
+        </div>
+      </td>
+      <td class="graph">
+        <svg class="spark"
+             width="{{ spark_width }}"
+             height="{{ spark_height }}"
+             viewBox="0 0 {{ spark_width }} {{ spark_height }}"
+             fill="currentColor"
+             role="img"
+             aria-label="7 day activity">
+          <title>{{ row.window_total }} in 7 days</title>
+          {% for bar in row.bars %}
+            <rect x="{{ bar.x }}" y="{{ bar.y }}" width="{{ bar.width }}" height="{{ bar.height }}" opacity="{{ bar.opacity }}"></rect>
+          {% endfor %}
+        </svg>
+      </td>
+      <td class="num">{{ row.issue.event_count }}</td>
+      <td class="num">{{ row.duration }}</td>
+      <td class="when" title="{{ row.issue.last_seen|date:'Y-m-d H:i:s e' }}">{{ row.last_seen }}</td>
+      <td class="state">
+        <span class="pill pill-{{ row.issue.triage_state }}">{{ row.issue.get_triage_state_display }}</span>
+      </td>
+    </tr>
+  {% empty %}
+    <tr>
+      <td class="empty" colspan="7">
+        <p class="empty-title">No issue matches this search</p>
+        <p class="empty-hint">
+          Filters: is, state, level, project, environment, tag, label, seen, age. Anything else is matched against the title and the culprit.
+        </p>
+      </td>
+    </tr>
+  {% endfor %}
+</tbody>

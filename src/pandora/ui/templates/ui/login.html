@@ -1,0 +1,29 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Sign in | pandora</title>
+    <link rel="icon" href="{% static 'ui/favicon.svg' %}" type="image/svg+xml">
+    <link rel="stylesheet" href="{% static 'ui/pandora.css' %}">
+  </head>
+  <body class="auth-body">
+    <main class="auth">
+      <div class="auth-brand">
+        <span class="brand-mark"></span>
+        <span class="brand-name">pandora</span>
+      </div>
+      <form class="auth-form" method="post" action="{% url 'ui:login' %}">
+        {% csrf_token %}
+        {% if form.errors %}<p class="auth-error">That username and password do not match an account.</p>{% endif %}
+        <label for="{{ form.username.id_for_label }}">Username</label>
+        {{ form.username }}
+        <label for="{{ form.password.id_for_label }}">Password</label>
+        {{ form.password }}
+        <button class="btn btn-primary" type="submit">Sign in</button>
+        {% if next %}<input type="hidden" name="next" value="{{ next }}">{% endif %}
+      </form>
+    </main>
+  </body>
+</html>

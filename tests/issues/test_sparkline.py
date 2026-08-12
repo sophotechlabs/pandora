@@ -170,3 +170,73 @@ def test_the_tooltip_reports_the_window_total():
     svg = sparkline.render([2] * 28)
 
     assert 'title="56 in 7 days"' in svg
+
+
+# bar geometry
+
+
+def test_bars_are_generated_for_every_bucket():
+    """Should hand the template one rect per slot, whatever the data."""
+    result = len(sparkline.bars([0] * 28))
+    expected = 28
+
+    assert result == expected
+
+
+def test_a_bar_carries_its_own_geometry():
+    """Should let a template render the rect without arithmetic of its own."""
+    bar = sparkline.bars([10])[0]
+
+    result = (bar.x, bar.y, bar.width, bar.height, bar.opacity)
+    expected = (
+        0,
+        0,
+        sparkline.BAR_WIDTH,
+        sparkline.CHART_HEIGHT,
+        sparkline.BUSY_OPACITY,
+    )
+
+    assert result == expected
+
+
+def test_bar_geometry_can_be_resized_for_a_bigger_chart():
+    """Should serve the detail chart as well as the row sparkline."""
+    bars = sparkline.bars([1, 1], height=64, width=10, gap=4)
+
+    result = (bars[1].x, bars[0].height)
+    expected = (14, 64)
+
+    assert result == expected
+
+
+def test_the_chart_width_follows_the_bar_geometry():
+    """Should size a wider chart without a second magic number."""
+    result = sparkline.chart_width(30, 10, 4)
+    expected = 30 * 14 - 4
+
+    assert result == expected
+
+
+def test_a_longer_window_buckets_by_the_day():
+    """Should let the detail page cover thirty days in thirty columns."""
+    counts = sparkline.counts(
+        [(hour(0), 2)],
+        NOW,
+        window=datetime.timedelta(days=30),
+        bucket_count=30,
+    )
+
+    assert len(counts) == 30
+    assert sum(counts) == 2
+
+
+def test_the_newest_hour_of_a_longer_window_lands_in_the_last_bucket():
+    """Should keep today at the right edge on the thirty day chart."""
+    counts = sparkline.counts(
+        [(NOW.replace(minute=0), 3)],
+        NOW,
+        window=datetime.timedelta(days=30),
+        bucket_count=30,
+    )
+
+    assert counts[-1] == 3

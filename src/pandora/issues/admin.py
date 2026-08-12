@@ -3,7 +3,6 @@ from __future__ import annotations
 from datetime import timedelta
 
 from django.contrib import admin, messages
-from django.db import transaction
 from django.db.models import OuterRef, Prefetch, Subquery
 from django.utils import timezone
 from django.utils.html import format_html
@@ -11,7 +10,7 @@ from unfold.admin import ModelAdmin
 
 from pandora.am import client as am_client
 from pandora.am import silences
-from pandora.issues import components, detail, regroup, sparkline, triage
+from pandora.issues import actions, components, detail, regroup, sparkline, triage
 from pandora.issues.models import (
     Episode,
     GroupingRule,
@@ -36,15 +35,11 @@ STATE_DOTS = {
 }
 UNKNOWN_DOT = ("#9ca3af", "No source state")
 
-TRIAGE_VERBS = {
-    triage.ACKNOWLEDGED: "Acknowledged",
-    triage.RESOLVED: "Resolved",
-    triage.IGNORED: "Ignored",
-}
+TRIAGE_VERBS = actions.TRIAGE_VERBS
 
-SILENCE_HOUR = timedelta(hours=1)
-SILENCE_HALF_SHIFT = timedelta(hours=4)
-SILENCE_DAY = timedelta(days=1)
+SILENCE_HOUR = actions.SILENCE_WINDOWS["1h"]
+SILENCE_HALF_SHIFT = actions.SILENCE_WINDOWS["4h"]
+SILENCE_DAY = actions.SILENCE_WINDOWS["1d"]
 
 
 class TriageFilter(admin.SimpleListFilter):
@@ -256,14 +251,12 @@ class IssueAdmin(ModelAdmin):
 
     @admin.display(description="Duration")
     def duration(self, obj):
-        open_since = getattr(obj, "open_since", None)
-        latest_start = getattr(obj, "latest_start", None)
-        latest_end = getattr(obj, "latest_end", None)
-        if open_since is not None:
-            return components.format_duration(timezone.now() - open_since)
-        if latest_start is not None and latest_end is not None:
-            return components.format_duration(latest_end - latest_start)
-        return "—"
+        return components.issue_duration(
+            getattr(obj, "open_since", None),
+            getattr(obj, "latest_start", None),
+            getattr(obj, "latest_end", None),
+            timezone.now(),
+        )
 
     @admin.display(description="First seen", ordering="first_seen")
     def first_seen_short(self, obj):
@@ -304,43 +297,32 @@ class IssueAdmin(ModelAdmin):
             self.message_user(request, f"No silence sent — {error}", messages.ERROR)
             return
 
-        actor = request.user.get_username()
-        silenced = 0
-        for issue in queryset:
-            if self._silence_one(request, issue, duration, actor, client):
-                silenced += 1
-        if silenced:
+        report = actions.silence(
+            queryset,
+            duration,
+            request.user.get_username(),
+            client,
+        )
+        for note in report.errors:
+            self.message_user(request, note, messages.ERROR)
+        if report.silenced:
             self.message_user(
                 request,
-                f"Silenced {silenced} issue(s) in Alertmanager for {label}",
+                f"Silenced {report.silenced} issue(s) in Alertmanager for {label}",
                 messages.SUCCESS,
             )
 
-    def _silence_one(self, request, issue, duration, actor, client):
-        try:
-            silences.silence_issue(issue, duration, actor=actor, client=client)
-        except (silences.SilenceError, am_client.AlertmanagerError) as error:
-            self.message_user(
-                request,
-                f"{issue.title} was not silenced — {error}",
-                messages.ERROR,
-            )
-            return False
-        return True
-
     def _retriage(self, request, queryset, target_state):
-        now = timezone.now()
-        actor = request.user.get_username()
-        issues = list(queryset)
-        changed = 0
-        for issue in issues:
-            if self._apply(issue, target_state, actor, now):
-                changed += 1
-
+        report = actions.retriage(
+            queryset,
+            target_state,
+            request.user.get_username(),
+            timezone.now(),
+        )
         self.message_user(
             request,
-            f"{TRIAGE_VERBS[target_state]} {changed} issue(s),"
-            f" {len(issues) - changed} unchanged",
+            f"{TRIAGE_VERBS[target_state]} {report.changed} issue(s),"
+            f" {report.unchanged} unchanged",
             messages.SUCCESS,
         )
 
@@ -354,23 +336,7 @@ class IssueAdmin(ModelAdmin):
         self._apply(obj, target_state, request.user.get_username(), timezone.now())
 
     def _apply(self, issue, target_state, actor, at):
-        plan = triage.plan_triage(issue.triage_state, target_state, at)
-        if not plan.changed:
-            return False
-
-        previous_state = issue.triage_state
-        with transaction.atomic():
-            for name, value in plan.issue_fields.items():
-                setattr(issue, name, value)
-            issue.save(update_fields=list(plan.issue_fields))
-            IssueActivity.objects.create(
-                issue=issue,
-                kind=plan.activity_kind,
-                actor=actor,
-                at=at,
-                data={"previous_triage_state": previous_state},
-            )
-        return True
+        return actions.apply_triage(issue, target_state, actor, at)
 
 
 @admin.register(Episode)

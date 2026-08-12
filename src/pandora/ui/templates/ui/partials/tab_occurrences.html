@@ -1,0 +1,37 @@
+{% if not events.supported %}
+  <p class="muted">This database has no event store, so single occurrences are not kept.</p>
+{% elif not events.rows %}
+  <p class="muted">
+    No stored occurrence. Alertmanager episodes are on the Episodes tab; SDK events appear here once one arrives.
+  </p>
+{% else %}
+  <ul class="events">
+    {% for event in events.rows %}
+      <li class="event">
+        <details>
+          <summary>
+            <span class="chip chip-{{ event.level }}">{{ event.level }}</span>
+            <span class="event-message">{{ event.message }}</span>
+            <span class="event-stamp"
+                  title="{{ event.timestamp|date:'Y-m-d H:i:s e' }}">{{ event.timestamp|date:"M d, H:i:s" }}</span>
+            <code class="event-id">{{ event.short_id }}</code>
+          </summary>
+          <div class="event-body">
+            {% if event.tags %}
+              <div class="event-tags">
+                {% for key, value in event.tags %}<span class="tag">{{ key }}={{ value }}</span>{% endfor %}
+              </div>
+            {% endif %}
+            <pre class="payload">{{ event.payload }}</pre>
+          </div>
+        </details>
+      </li>
+    {% endfor %}
+  </ul>
+  {% if events.next_cursor %}
+    <nav class="pagination">
+      <a class="btn btn-ghost"
+         href="{% url 'ui:issue-tab' issue.pk 'occurrences' %}?cursor={{ events.next_cursor }}">Older occurrences</a>
+    </nav>
+  {% endif %}
+{% endif %}

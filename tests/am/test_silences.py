@@ -70,7 +70,7 @@ def test_the_comment_names_the_issue(issue):
     result = silences.build_comment(issue)
     expected = (
         f"pandora issue #{issue.pk} — TargetDown: scrape target unreachable"
-        f" — /admin/issues/issue/{issue.pk}/change/"
+        f" — /issues/{issue.pk}/"
     )
 
     assert result == expected
@@ -80,7 +80,7 @@ def test_the_comment_names_the_issue(issue):
 def test_a_configured_base_url_makes_the_comment_link_absolute(issue):
     """Should be clickable from Alertmanager or karma once the deployment has a host."""
     result = silences.issue_url(issue)
-    expected = f"https://pandora.p-mk1.test/admin/issues/issue/{issue.pk}/change/"
+    expected = f"https://pandora.p-mk1.test/issues/{issue.pk}/"
 
     assert result == expected
 

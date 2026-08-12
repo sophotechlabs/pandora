@@ -1,0 +1,21 @@
+{% if detail.tags %}
+  <div class="tag-groups">
+    {% for group in detail.tags %}
+      <div class="tag-group">
+        <h3 class="tag-key">
+          {{ group.key }}
+          <span class="muted">{{ group.total }}</span>
+        </h3>
+        {% for bar in group.bars %}
+          <div class="bar-row">
+            <span class="bar-label" title="{{ bar.label }}">{{ bar.label }}</span>
+            <span class="bar-track"><span class="bar-fill" style="width: {{ bar.percent }}%"></span></span>
+            <span class="bar-count">{{ bar.count }}</span>
+          </div>
+        {% endfor %}
+      </div>
+    {% endfor %}
+  </div>
+{% else %}
+  <p class="muted">No tags recorded</p>
+{% endif %}

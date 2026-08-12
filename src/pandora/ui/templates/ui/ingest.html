@@ -1,0 +1,102 @@
+{% extends "ui/base.html" %}
+{% block title %}Ingest | pandora{% endblock %}
+{% block content %}
+  <div class="page-head">
+    <h1>Ingest</h1>
+    <form method="post" action="{% url 'ui:ingest-replay' %}">
+      {% csrf_token %}
+      <button class="btn btn-primary" type="submit">Replay the backlog</button>
+    </form>
+  </div>
+  <section class="kpis">
+    <div class="kpi">
+      <span class="kpi-label">Backlog</span>
+      <span class="kpi-value">{{ backlog }}</span>
+      <span class="kpi-hint">{{ counts.failed }} failed, {{ counts.pending }} pending</span>
+    </div>
+    <div class="kpi">
+      <span class="kpi-label">Applied</span>
+      <span class="kpi-value">{{ counts.done }}</span>
+      <span class="kpi-hint">envelopes still inside the retention window</span>
+    </div>
+    <div class="kpi">
+      <span class="kpi-label">Last accepted</span>
+      <span class="kpi-value stamp">
+        {% if last_accepted %}
+          {{ last_accepted|date:"M d, H:i" }}
+        {% else %}
+          —
+        {% endif %}
+      </span>
+      <span class="kpi-hint">the newest envelope that reached done</span>
+    </div>
+  </section>
+  <section class="card">
+    <h2 class="card-title">Failed envelopes</h2>
+    {% if failures %}
+      <table class="grid">
+        <thead>
+          <tr>
+            <th>Id</th>
+            <th>Project</th>
+            <th>Source</th>
+            <th>Received</th>
+            <th>Error</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for envelope, received in failures %}
+            <tr>
+              <td>
+                <code>{{ envelope.pk }}</code>
+              </td>
+              <td>{{ envelope.project.slug }}</td>
+              <td>{{ envelope.get_source_display }}</td>
+              <td title="{{ envelope.received_at|date:'Y-m-d H:i:s e' }}">{{ received }}</td>
+              <td class="error-cell">{{ envelope.error|default:"—" }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <p class="muted">Nothing has failed</p>
+    {% endif %}
+  </section>
+  <section class="card">
+    <h2 class="card-title">Tokens</h2>
+    {% if tokens %}
+      <table class="grid">
+        <thead>
+          <tr>
+            <th>Name</th>
+            <th>Project</th>
+            <th>Source</th>
+            <th>Scope</th>
+            <th>Environment</th>
+            <th>Active</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for entry in tokens %}
+            <tr>
+              <td>{{ entry.name }}</td>
+              <td>{{ entry.project.slug }}</td>
+              <td>{{ entry.get_source_display }}</td>
+              <td>{{ entry.get_scope_display }}</td>
+              <td>{{ entry.environment|default:"—" }}</td>
+              <td>
+                {% if entry.active %}
+                  <span class="pill pill-success">yes</span>
+                {% else %}
+                  <span class="pill pill-default">no</span>
+                {% endif %}
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <p class="muted">No ingest token exists yet</p>
+    {% endif %}
+  </section>
+{% endblock %}

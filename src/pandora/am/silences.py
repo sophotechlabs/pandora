@@ -13,7 +13,7 @@ from pandora.am import client as am_client
 from pandora.issues.models import ActivityKind, Issue, IssueActivity, SilenceLink
 
 CREATED_BY = "pandora"
-ISSUE_ADMIN_ROUTE = "admin:issues_issue_change"
+ISSUE_ROUTE = "ui:issue"
 
 log = logging.getLogger(__name__)
 
@@ -42,7 +42,7 @@ def build_matchers(issue: Issue) -> list[dict[str, Any]]:
 
 
 def issue_url(issue: Issue) -> str:
-    path = reverse(ISSUE_ADMIN_ROUTE, args=[issue.pk])
+    path = reverse(ISSUE_ROUTE, args=[issue.pk])
     base = settings.PANDORA_BASE_URL.strip().rstrip("/")
     if not base:
         return path

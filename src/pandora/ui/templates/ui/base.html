@@ -1,0 +1,67 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{% block title %}pandora{% endblock %}</title>
+    <link rel="icon" href="{% static 'ui/favicon.svg' %}" type="image/svg+xml">
+    <link rel="stylesheet" href="{% static 'ui/pandora.css' %}">
+    <script>
+      (function () {
+        var stored = null;
+        try {
+          stored = window.localStorage.getItem("pandora-theme");
+        } catch (error) {
+          stored = null;
+        }
+        if (stored) {
+          document.documentElement.dataset.theme = stored;
+        }
+      })();
+    </script>
+  </head>
+  <body>
+    <header class="topbar">
+      <a class="brand" href="{% url 'ui:stream' %}">
+        <span class="brand-mark"></span>
+        <span class="brand-name">pandora</span>
+      </a>
+      {% if pandora_env %}<span class="env env-{{ pandora_env_tone }}">{{ pandora_env }}</span>{% endif %}
+      <nav class="mainnav">
+        <a class="{% if nav == 'issues' %}active{% endif %}"
+           href="{% url 'ui:stream' %}">Issues</a>
+        <a class="{% if nav == 'overview' %}active{% endif %}"
+           href="{% url 'ui:overview' %}">Overview</a>
+        <a class="{% if nav == 'ingest' %}active{% endif %}"
+           href="{% url 'ui:ingest' %}">Ingest</a>
+      </nav>
+      <div class="topbar-end">
+        <button class="icon-btn"
+                type="button"
+                data-theme-toggle
+                aria-label="Switch theme">
+          <span class="when-dark">Light</span>
+          <span class="when-light">Dark</span>
+        </button>
+        <a class="quiet-link" href="/admin/">Admin</a>
+        {% if user.is_authenticated %}
+          <form class="logout" method="post" action="{% url 'ui:logout' %}">
+            {% csrf_token %}
+            <span class="who">{{ user.get_username }}</span>
+            <button class="quiet-link" type="submit">Sign out</button>
+          </form>
+        {% endif %}
+      </div>
+    </header>
+    {% if messages %}
+      <div class="messages">
+        {% for message in messages %}<div class="message message-{{ message.tags }}">{{ message }}</div>{% endfor %}
+      </div>
+    {% endif %}
+    <main class="page">
+      {% block content %}{% endblock %}
+    </main>
+    <script src="{% static 'ui/pandora.js' %}" defer></script>
+  </body>
+</html>

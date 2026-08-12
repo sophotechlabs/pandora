@@ -1,0 +1,30 @@
+{% if rows %}
+  <ul class="compact">
+    {% for row in rows %}
+      <li class="compact-row">
+        <span class="dot dot-{{ row.issue.source_state|default:'none' }}"
+              title="{{ row.state_label }}"></span>
+        <a class="compact-title" href="{% url 'ui:issue' row.issue.pk %}">{{ row.issue.title }}</a>
+        <span class="chip chip-{{ row.issue.level }}">{{ row.issue.get_level_display }}</span>
+        <span class="project">{{ row.issue.project.slug }}</span>
+        <svg class="spark"
+             width="{{ spark_width }}"
+             height="{{ spark_height }}"
+             viewBox="0 0 {{ spark_width }} {{ spark_height }}"
+             fill="currentColor"
+             role="img"
+             aria-label="7 day activity">
+          <title>{{ row.window_total }} in 7 days</title>
+          {% for bar in row.bars %}
+            <rect x="{{ bar.x }}" y="{{ bar.y }}" width="{{ bar.width }}" height="{{ bar.height }}" opacity="{{ bar.opacity }}"></rect>
+          {% endfor %}
+        </svg>
+        <span class="compact-count">{{ row.issue.event_count }}</span>
+        <span class="compact-when"
+              title="{{ row.issue.last_seen|date:'Y-m-d H:i:s e' }}">{{ row.last_seen }}</span>
+      </li>
+    {% endfor %}
+  </ul>
+{% else %}
+  <p class="muted">{{ empty_message }}</p>
+{% endif %}

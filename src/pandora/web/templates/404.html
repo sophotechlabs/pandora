@@ -1,0 +1,15 @@
+{% extends "ui/base.html" %}
+{% block title %}Not found | pandora{% endblock %}
+{% block content %}
+  <div class="page-head">
+    <h1>Not found</h1>
+  </div>
+  <section class="card">
+    <p class="muted">
+      Nothing lives at this address. The issue may have been regrouped or pruned — the stream will say what pandora still holds.
+    </p>
+    <p>
+      <a class="link" href="{% url 'ui:stream' %}">Back to issues</a>
+    </p>
+  </section>
+{% endblock %}

@@ -41,15 +41,19 @@ class Dashboard:
     tables: dict[str, components.Table] = field(default_factory=dict)
 
 
+def kpis(now: datetime) -> tuple[components.Kpi, ...]:
+    return _kpis(now) + _ingest_kpis(now)
+
+
+def build(now: datetime) -> Dashboard:
+    return Dashboard(kpis=kpis(now), tables={"issues": _top_issues()})
+
+
 def dashboard_callback(
     request: HttpRequest,
     context: dict[str, Any],
 ) -> dict[str, Any]:
-    now = timezone.now()
-    context["dashboard"] = Dashboard(
-        kpis=_kpis(now) + _ingest_kpis(now),
-        tables={"issues": _top_issues()},
-    )
+    context["dashboard"] = build(timezone.now())
     return context
 
 

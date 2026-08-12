@@ -25,6 +25,19 @@ SOURCE_VARIANTS = {
     "resolved": "success",
 }
 
+MINUTE = 60
+HOUR = 60 * MINUTE
+DAY = 24 * HOUR
+WEEK = 7 * DAY
+
+RELATIVE_STEPS = (
+    (MINUTE, 1, "s"),
+    (HOUR, MINUTE, "m"),
+    (DAY, HOUR, "h"),
+    (WEEK, DAY, "d"),
+    (5 * WEEK, WEEK, "w"),
+)
+
 
 @dataclass(frozen=True)
 class Cell:
@@ -81,6 +94,31 @@ def format_stamp(stamp: datetime | None) -> str:
     if stamp is None:
         return "—"
     return timezone.localtime(stamp).strftime("%b %d, %H:%M")
+
+
+def format_relative(stamp: datetime | None, now: datetime) -> str:
+    if stamp is None:
+        return "—"
+    seconds = int((now - stamp).total_seconds())
+    if seconds < 0:
+        return "just now"
+    for limit, divisor, unit in RELATIVE_STEPS:
+        if seconds < limit:
+            return f"{seconds // divisor}{unit} ago"
+    return format_stamp(stamp)
+
+
+def issue_duration(
+    open_since: datetime | None,
+    latest_start: datetime | None,
+    latest_end: datetime | None,
+    now: datetime,
+) -> str:
+    if open_since is not None:
+        return format_duration(now - open_since)
+    if latest_start is not None and latest_end is not None:
+        return format_duration(latest_end - latest_start)
+    return "—"
 
 
 def percent_of(count: int, total: int) -> int:

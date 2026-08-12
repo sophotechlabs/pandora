@@ -6,6 +6,7 @@ from django.core import management
 from django.db import models as db_models
 
 from pandora.core import models as core_models
+from pandora.events.store import get_store
 from pandora.issues import models
 from tests.ingest import helpers
 
@@ -227,3 +228,50 @@ def test_demo_tokens_are_not_guessable(seeded):
     for token in tokens:
         assert token not in ("demo-am-payments", "demo-read-payments")
         assert len(token) > 30
+
+
+def test_the_seed_stores_one_event_per_episode(seeded):
+    """Should give the occurrences tab something to show on a fresh install."""
+    store = get_store()
+    for issue in models.Issue.objects.all():
+        found = store.fetch(issue.project_id, issue_id=issue.pk, limit=1000)
+
+        assert len(found) == issue.episodes.count()
+
+
+def test_a_seeded_event_carries_the_labels_of_its_episode(seeded):
+    """Should let the occurrence viewer show what one delivery actually said."""
+    issue = models.Issue.objects.get(title__startswith="KubePodCrashLooping")
+    store = get_store()
+
+    found = store.fetch(issue.project_id, issue_id=issue.pk, limit=1)
+
+    result = found[0].tags["namespace"]
+    expected = "payments"
+
+    assert result == expected
+
+
+def test_a_seeded_event_carries_the_alert_summary(seeded):
+    """Should read as an occurrence, not as a bare identifier."""
+    issue = models.Issue.objects.get(title__startswith="KubePodCrashLooping")
+    store = get_store()
+
+    found = store.fetch(issue.project_id, issue_id=issue.pk, limit=1)
+
+    result = found[0].message
+    expected = "Pod payments/ledger is in CrashLoopBackOff"
+
+    assert result == expected
+
+
+def test_seeded_events_are_stored_in_time_order(seeded):
+    """Should let the newest-first occurrence list actually read newest first."""
+    issue = models.Issue.objects.get(title__startswith="TargetDown")
+
+    found = get_store().fetch(issue.project_id, issue_id=issue.pk, limit=5)
+
+    result = [event.timestamp for event in found]
+    expected = sorted(result, reverse=True)
+
+    assert result == expected

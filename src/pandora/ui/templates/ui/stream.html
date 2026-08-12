@@ -1,0 +1,93 @@
+{% extends "ui/base.html" %}
+{% block title %}Issues | pandora{% endblock %}
+{% block content %}
+  <div class="page-head">
+    <h1>Issues</h1>
+    <span class="count" id="stream-total">{{ total }}</span>
+  </div>
+  <form class="searchbar" method="get" action="{% url 'ui:stream' %}">
+    <input id="search"
+           class="search-input"
+           type="search"
+           name="q"
+           value="{{ raw_query }}"
+           autocomplete="off"
+           spellcheck="false"
+           placeholder="is:unresolved level:error environment:p-mk1 tag:namespace=payments">
+    <input type="hidden" name="sort" value="{{ sort.key }}">
+    <button class="btn btn-primary" type="submit">Search</button>
+  </form>
+  {% if ignored %}<p class="notice">Ignored, not a filter pandora knows: {{ ignored|join:", " }}</p>{% endif %}
+  <nav class="segments">
+    {% for segment in segments %}
+      <a class="segment
+                {% if segment.active %}active{% endif %}"
+         href="?q={{ segment.query|urlencode }}&amp;sort={{ sort.key }}">
+        {{ segment.label }}
+        <span class="segment-count">{{ segment.count }}</span>
+      </a>
+    {% endfor %}
+  </nav>
+  <div class="toolbar">
+    <span class="toolbar-label">Sort</span>
+    {% for option in sorts %}
+      <a class="toolbar-link
+                {% if option.key == sort.key %}active{% endif %}"
+         href="?q={{ raw_query|urlencode }}&amp;sort={{ option.key }}">{{ option.label }}</a>
+    {% endfor %}
+    <span class="toolbar-hint">Press / to search, j and k to move, x to select</span>
+  </div>
+  <form id="stream-form" method="post" action="{% url 'ui:issue-actions' %}">
+    {% csrf_token %}
+    <input type="hidden" name="next" value="{{ request.get_full_path }}">
+    <table class="issues">
+      <thead>
+        <tr>
+          <th class="pick">
+            <input type="checkbox"
+                   data-select-all
+                   aria-label="Select every issue on this page">
+          </th>
+          <th>Issue</th>
+          <th class="graph">7 days</th>
+          <th class="num">Events</th>
+          <th class="num">Duration</th>
+          <th class="when">Last seen</th>
+          <th class="state">Triage</th>
+        </tr>
+      </thead>
+      {% include "ui/partials/stream_rows.html" %}
+    </table>
+    <div class="selection-bar">
+      <span class="selection-count"><span data-selection-count>0</span> selected</span>
+      <button class="btn" type="submit" name="action" value="acknowledge">Acknowledge</button>
+      <button class="btn" type="submit" name="action" value="resolve">Resolve</button>
+      <button class="btn" type="submit" name="action" value="ignore">Ignore</button>
+      <details class="menu">
+        <summary class="btn">Silence</summary>
+        <div class="menu-list">
+          {% for window, label in windows %}
+            <button class="menu-item"
+                    type="submit"
+                    name="action"
+                    value="silence:{{ window }}">{{ label }}</button>
+          {% endfor %}
+        </div>
+      </details>
+      <button class="btn btn-ghost" type="button" data-clear-selection>Clear</button>
+    </div>
+  </form>
+  {% if page.paginator.num_pages > 1 %}
+    <nav class="pagination">
+      {% if page.has_previous %}
+        <a class="btn btn-ghost"
+           href="?{{ page_query }}&amp;page={{ page.previous_page_number }}">Previous</a>
+      {% endif %}
+      <span class="muted">Page {{ page.number }} of {{ page.paginator.num_pages }}</span>
+      {% if page.has_next %}
+        <a class="btn btn-ghost"
+           href="?{{ page_query }}&amp;page={{ page.next_page_number }}">Next</a>
+      {% endif %}
+    </nav>
+  {% endif %}
+{% endblock %}

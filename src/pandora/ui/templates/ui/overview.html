@@ -1,0 +1,24 @@
+{% extends "ui/base.html" %}
+{% block title %}Overview | pandora{% endblock %}
+{% block content %}
+  <div class="page-head">
+    <h1>Overview</h1>
+  </div>
+  <section class="kpis">
+    {% for kpi in kpis %}
+      <div class="kpi">
+        <span class="kpi-label">{{ kpi.label }}</span>
+        <span class="kpi-value">{{ kpi.value }}</span>
+        <span class="kpi-hint">{{ kpi.hint }}</span>
+      </div>
+    {% endfor %}
+  </section>
+  <section class="card">
+    <h2 class="card-title">Firing now</h2>
+    {% include "ui/partials/issue_list.html" with rows=firing empty_message="Nothing is firing" %}
+  </section>
+  <section class="card">
+    <h2 class="card-title">Newest issues</h2>
+    {% include "ui/partials/issue_list.html" with rows=newest empty_message="No issue has been recorded yet" %}
+  </section>
+{% endblock %}

@@ -123,6 +123,100 @@ def test_a_stamp_renders_short_and_local():
     assert result == expected
 
 
+# relative stamps
+
+NOW = datetime.datetime(2026, 8, 4, 12, 0, tzinfo=datetime.UTC)
+
+
+@pytest.mark.parametrize(
+    ("seconds", "expected"),
+    [
+        (0, "0s ago"),
+        (45, "45s ago"),
+        (60, "1m ago"),
+        (3540, "59m ago"),
+        (3600, "1h ago"),
+        (86340, "23h ago"),
+        (86400, "1d ago"),
+        (6 * 86400, "6d ago"),
+        (7 * 86400, "1w ago"),
+        (28 * 86400, "4w ago"),
+    ],
+)
+def test_a_relative_stamp_drops_precision_as_it_ages(seconds, expected):
+    """Should read the way an operator says it, not as a date."""
+    stamp = NOW - datetime.timedelta(seconds=seconds)
+
+    result = components.format_relative(stamp, NOW)
+
+    assert result == expected
+
+
+def test_a_stamp_older_than_five_weeks_falls_back_to_the_date():
+    """Should stop counting weeks once the number stops meaning anything."""
+    stamp = NOW - datetime.timedelta(days=90)
+
+    result = components.format_relative(stamp, NOW)
+    expected = "May 06, 12:00"
+
+    assert result == expected
+
+
+def test_a_missing_relative_stamp_renders_as_a_dash():
+    """Should leave the hole visible here too."""
+    result = components.format_relative(None, NOW)
+    expected = "—"
+
+    assert result == expected
+
+
+def test_a_stamp_from_the_future_reads_as_just_now():
+    """Should not print a negative age when a clock is skewed."""
+    stamp = NOW + datetime.timedelta(minutes=5)
+
+    result = components.format_relative(stamp, NOW)
+    expected = "just now"
+
+    assert result == expected
+
+
+# issue duration
+
+
+def test_an_open_issue_is_measured_from_when_it_opened():
+    """Should keep counting while the source still says firing."""
+    result = components.issue_duration(
+        NOW - datetime.timedelta(hours=3),
+        None,
+        None,
+        NOW,
+    )
+    expected = "3h 0m"
+
+    assert result == expected
+
+
+def test_a_settled_issue_reports_its_last_episode_length():
+    """Should fall back to how long the most recent episode ran."""
+    result = components.issue_duration(
+        None,
+        NOW - datetime.timedelta(hours=2),
+        NOW - datetime.timedelta(hours=1),
+        NOW,
+    )
+    expected = "1h 0m"
+
+    assert result == expected
+
+
+def test_an_issue_with_no_episodes_reports_no_duration():
+    """Should print a dash rather than guessing a window."""
+    result = components.issue_duration(None, None, None, NOW)
+    expected = "—"
+
+    assert result == expected
+
+
 # share arithmetic
 
 

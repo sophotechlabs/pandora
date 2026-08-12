@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Sequence
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 
 from django.utils.html import format_html, format_html_join
@@ -19,6 +20,15 @@ QUIET_OPACITY = "0.25"
 BUSY_OPACITY = "0.9"
 
 
+@dataclass(frozen=True)
+class Bar:
+    x: int
+    y: int
+    width: int
+    height: int
+    opacity: str
+
+
 def window_end(now: datetime) -> datetime:
     return now.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
 
@@ -27,49 +37,84 @@ def window_start(now: datetime) -> datetime:
     return window_end(now) - WINDOW
 
 
-def buckets(stats: Iterable[tuple[datetime, int]], now: datetime) -> list[int]:
-    start = window_start(now)
+def start_of(now: datetime, window: timedelta) -> datetime:
+    return window_end(now) - window
+
+
+def counts(
+    stats: Iterable[tuple[datetime, int]],
+    now: datetime,
+    window: timedelta = WINDOW,
+    bucket_count: int = BUCKET_COUNT,
+) -> list[int]:
+    start = start_of(now, window)
     end = window_end(now)
-    counts = [0] * BUCKET_COUNT
+    bucket_hours = int(window.total_seconds() // 3600) // bucket_count
+    series = [0] * bucket_count
     for hour, count in stats:
         if hour < start:
             continue
         if hour >= end:
             continue
         offset = int((hour - start).total_seconds() // 3600)
-        counts[offset // BUCKET_HOURS] += count
-    return counts
+        series[min(offset // bucket_hours, bucket_count - 1)] += count
+    return series
 
 
-def _bar(index: int, count: int, peak: int) -> tuple[int, int, int, int, str]:
+def buckets(stats: Iterable[tuple[datetime, int]], now: datetime) -> list[int]:
+    return counts(stats, now)
+
+
+def bars(
+    series: Sequence[int],
+    height: int = CHART_HEIGHT,
+    width: int = BAR_WIDTH,
+    gap: int = BAR_GAP,
+) -> list[Bar]:
+    peak = max(series, default=0)
+    return [
+        _bar(index, count, peak, height=height, width=width, gap=gap)
+        for index, count in enumerate(series)
+    ]
+
+
+def chart_width(bucket_count: int, width: int = BAR_WIDTH, gap: int = BAR_GAP) -> int:
+    return bucket_count * (width + gap) - gap
+
+
+def _bar(
+    index: int, count: int, peak: int, *, height: int, width: int, gap: int
+) -> Bar:
     if peak == 0:
-        height = 1
+        bar_height = 1
     else:
-        height = 1 + round(count * (CHART_HEIGHT - 1) / peak)
+        bar_height = 1 + round(count * (height - 1) / peak)
 
     if count == 0:
         opacity = QUIET_OPACITY
     else:
         opacity = BUSY_OPACITY
 
-    x = index * (BAR_WIDTH + BAR_GAP)
-    y = CHART_HEIGHT - height
-    return (x, y, BAR_WIDTH, height, opacity)
+    return Bar(
+        x=index * (width + gap),
+        y=height - bar_height,
+        width=width,
+        height=bar_height,
+        opacity=opacity,
+    )
 
 
-def render(counts: Sequence[int]) -> SafeString:
-    peak = max(counts, default=0)
-    bars = [_bar(index, count, peak) for index, count in enumerate(counts)]
+def render(series: Sequence[int]) -> SafeString:
     rects = format_html_join(
         "",
         '<rect x="{}" y="{}" width="{}" height="{}" opacity="{}"></rect>',
-        bars,
+        ((bar.x, bar.y, bar.width, bar.height, bar.opacity) for bar in bars(series)),
     )
     return format_html(
         '<span class="text-primary-600 dark:text-primary-500" title="{} in 7 days">'
         '<svg width="{}" height="{}" viewBox="0 0 {} {}" fill="currentColor"'
         ' role="img" aria-label="7 day activity">{}</svg></span>',
-        sum(counts),
+        sum(series),
         CHART_WIDTH,
         CHART_HEIGHT,
         CHART_WIDTH,

@@ -19,6 +19,8 @@ from pandora.core.models import (
     TokenScope,
     TokenSource,
 )
+from pandora.events.store import get_store
+from pandora.events.types import Event, new_event_id
 from pandora.ingest.models import RawEnvelope
 from pandora.issues.models import (
     ActivityKind,
@@ -33,6 +35,7 @@ from pandora.issues.models import (
 )
 
 WINDOW_MINUTES = 7 * 24 * 60
+GENERATOR_URL = "https://prometheus.demo.invalid/graph"
 
 
 @dataclass(frozen=True)
@@ -369,6 +372,26 @@ def _activities(
     return records
 
 
+def _events(spec: IssueSpec, issue: Issue) -> list[Event]:
+    message = spec.annotations.get("summary", spec.title)
+    return [
+        Event(
+            id=new_event_id(),
+            project_id=issue.project_id,
+            timestamp=episode.starts_at,
+            level=spec.level,
+            message=message,
+            issue_id=issue.pk,
+            episode_id=str(episode.pk),
+            fingerprint=list(issue.fingerprint),
+            tags=dict(episode.labels),
+            extra={"generatorURL": f"{GENERATOR_URL}?alertname={spec.alertname}"},
+            environment=episode.environment,
+        )
+        for episode in issue.episodes.order_by("starts_at")
+    ]
+
+
 def _seed_projects(now: datetime) -> dict[str, Project]:
     projects = {}
     for slug, name, environment in DEMO_PROJECTS:
@@ -437,9 +460,12 @@ class Command(BaseCommand):
         Project.objects.filter(slug__in=[slug for slug, _, _ in DEMO_PROJECTS]).delete()
         projects = _seed_projects(now)
         environments = {slug: env for slug, _, env in DEMO_PROJECTS}
+        store = get_store()
+        store.ensure_partitions()
 
         issue_count = 0
         episode_count = 0
+        event_count = 0
         for spec in SPECS:
             project = projects[spec.project]
             generated = _generate(spec, now, environments[spec.project])
@@ -458,10 +484,13 @@ class Command(BaseCommand):
                 for (key, value), count in sorted(generated.tags.items())
             )
             IssueActivity.objects.bulk_create(_activities(spec, issue, generated))
+            events = _events(spec, issue)
+            store.insert(events)
             issue_count += 1
             episode_count += len(generated.episodes)
+            event_count += len(events)
 
         self.stdout.write(
             f"seed_demo: {len(projects)} projects, {issue_count} issues, "
-            f"{episode_count} episodes"
+            f"{episode_count} episodes, {event_count} events"
         )

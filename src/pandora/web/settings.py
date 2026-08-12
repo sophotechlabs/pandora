@@ -77,6 +77,7 @@ INSTALLED_APPS = [
     "pandora.issues",
     "pandora.events",
     "pandora.am",
+    "pandora.ui",
 ]
 
 if importlib.util.find_spec("django_migration_linter"):
@@ -110,6 +111,7 @@ TEMPLATES = [
                 "django.template.context_processors.request",
                 "django.contrib.auth.context_processors.auth",
                 "django.contrib.messages.context_processors.messages",
+                "pandora.ui.context.chrome",
             ],
         },
     },
@@ -174,7 +176,8 @@ STORAGES = {
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
-LOGIN_REDIRECT_URL = "/admin/"
+LOGIN_URL = "/login/"
+LOGIN_REDIRECT_URL = "/"
 
 PANDORA_ENV = os.environ.get("PANDORA_ENV", "")
 PANDORA_BASE_URL = os.environ.get("PANDORA_BASE_URL", "")

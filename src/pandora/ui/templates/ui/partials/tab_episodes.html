@@ -1,0 +1,27 @@
+{% if detail.timeline.rows %}
+  <table class="grid">
+    <thead>
+      <tr>
+        {% for column in detail.timeline.columns %}<th class="{% if column.numeric %}num{% endif %}">{{ column.label }}</th>{% endfor %}
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in detail.timeline.rows %}
+        <tr>
+          {% for cell in row %}
+            <td>
+              {% if cell.variant %}
+                <span class="pill pill-{{ cell.variant }}">{{ cell.text }}</span>
+              {% else %}
+                {{ cell.text|default:"—" }}
+              {% endif %}
+            </td>
+          {% endfor %}
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  <p class="table-foot">Newest {{ detail.timeline.rows|length }} episodes</p>
+{% else %}
+  <p class="muted">{{ detail.timeline.empty_message }}</p>
+{% endif %}

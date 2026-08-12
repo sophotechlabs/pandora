@@ -31,12 +31,12 @@ def test_health_needs_no_authentication(client):
 # routing tests
 
 
-def test_root_redirects_to_the_admin(client):
-    """Should send the bare host to the only UI pandora has."""
+def test_root_sends_a_signed_out_reader_to_the_login_page(client):
+    """Should hand the bare host to the issue stream, which asks for a session."""
     response = client.get("/")
 
     result = (response.status_code, response.url)
-    expected = (http.HTTPStatus.FOUND, "/admin/")
+    expected = (http.HTTPStatus.FOUND, "/login/?next=/")
 
     assert result == expected
 

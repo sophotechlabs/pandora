@@ -1,0 +1,143 @@
+{% extends "ui/base.html" %}
+{% block title %}{{ issue.title }} | pandora{% endblock %}
+{% block content %}
+  <a class="back" href="{% url 'ui:stream' %}">Issues</a>
+  <header class="issue-head">
+    <div class="issue-headline">
+      <span class="dot dot-{{ issue.source_state|default:'none' }}"
+            title="{{ row.state_label }}"></span>
+      <h1>{{ issue.title }}</h1>
+      <span class="chip chip-{{ issue.level }}">{{ issue.get_level_display }}</span>
+      <span class="pill pill-{{ issue.triage_state }}">{{ issue.get_triage_state_display }}</span>
+    </div>
+    <p class="culprit">{{ issue.culprit }}</p>
+    <div class="issue-meta">
+      <span class="project">{{ issue.project.slug }}</span>
+      {% if issue.environment %}<span class="project">{{ issue.environment }}</span>{% endif %}
+      <span class="fingerprint" title="{{ issue.fingerprint_hash }}">{{ issue.fingerprint_hash|slice:":12" }}</span>
+    </div>
+    <form class="issue-actions"
+          method="post"
+          action="{% url 'ui:issue-actions' %}">
+      {% csrf_token %}
+      <input type="hidden" name="issue" value="{{ issue.pk }}">
+      <input type="hidden" name="next" value="{{ next_url }}">
+      <button class="btn" type="submit" name="action" value="acknowledge">Acknowledge</button>
+      <button class="btn" type="submit" name="action" value="resolve">Resolve</button>
+      <button class="btn" type="submit" name="action" value="ignore">Ignore</button>
+      <details class="menu">
+        <summary class="btn">Silence</summary>
+        <div class="menu-list">
+          {% for window, label in windows %}
+            <button class="menu-item"
+                    type="submit"
+                    name="action"
+                    value="silence:{{ window }}">{{ label }}</button>
+          {% endfor %}
+        </div>
+      </details>
+    </form>
+  </header>
+  <section class="stats">
+    <div class="stat">
+      <span class="stat-label">Events</span>
+      <span class="stat-value">{{ issue.event_count }}</span>
+    </div>
+    <div class="stat">
+      <span class="stat-label">Open episodes</span>
+      <span class="stat-value">{{ issue.open_episode_count }}</span>
+    </div>
+    <div class="stat">
+      <span class="stat-label">Duration</span>
+      <span class="stat-value">{{ row.duration }}</span>
+    </div>
+    <div class="stat">
+      <span class="stat-label">First seen</span>
+      <span class="stat-value"
+            title="{{ issue.first_seen|date:'Y-m-d H:i:s e' }}">{{ row.first_seen }}</span>
+    </div>
+    <div class="stat">
+      <span class="stat-label">Last seen</span>
+      <span class="stat-value" title="{{ issue.last_seen|date:'Y-m-d H:i:s e' }}">{{ row.last_seen }}</span>
+    </div>
+    <div class="stat">
+      <span class="stat-label">Source</span>
+      <span class="stat-value">{{ row.state_label }}</span>
+    </div>
+  </section>
+  <section class="card">
+    <h2 class="card-title">Activity over 30 days</h2>
+    <svg class="chart"
+         viewBox="0 0 {{ chart_width }} {{ chart_height }}"
+         preserveAspectRatio="none"
+         fill="currentColor"
+         role="img"
+         aria-label="30 day activity">
+      {% for column in chart %}
+        <rect x="{{ column.bar.x }}" y="{{ column.bar.y }}" width="{{ column.bar.width }}" height="{{ column.bar.height }}" opacity="{{ column.bar.opacity }}">
+        <title>{{ column.label }}</title>
+        </rect>
+      {% endfor %}
+    </svg>
+  </section>
+  <div class="split">
+    <section class="card">
+      <nav class="tabs">
+        {% for key, label in tabs %}
+          <a class="tab
+                    {% if key == tab %}active{% endif %}"
+             data-tab
+             href="{% url 'ui:issue-tab' issue.pk key %}">{{ label }}</a>
+        {% endfor %}
+      </nav>
+      <div id="tab-panel">
+        {% if tab == "occurrences" %}
+          {% include "ui/partials/tab_occurrences.html" %}
+        {% elif tab == "episodes" %}
+          {% include "ui/partials/tab_episodes.html" %}
+        {% elif tab == "tags" %}
+          {% include "ui/partials/tab_tags.html" %}
+        {% else %}
+          {% include "ui/partials/tab_activity.html" %}
+        {% endif %}
+      </div>
+    </section>
+    <aside class="sidebar">
+      <section class="card">
+        <h2 class="card-title">Annotations</h2>
+        <dl class="pairs">
+          {% for key, value in detail.annotations %}
+            <dt>{{ key }}</dt>
+            <dd>
+              {{ value }}
+            </dd>
+          {% empty %}
+            <p class="muted">No annotations recorded</p>
+          {% endfor %}
+        </dl>
+      </section>
+      <section class="card">
+        <h2 class="card-title">Enrichment</h2>
+        <div class="links">
+          {% for link in detail.links %}
+            <a class="link" href="{{ link.href }}" rel="noopener" target="_blank">{{ link.label }}</a>
+          {% empty %}
+            <p class="muted">No enrichment URL templates configured</p>
+          {% endfor %}
+        </div>
+      </section>
+      <section class="card">
+        <h2 class="card-title">Fingerprint</h2>
+        <ul class="plain">
+          {% for part in issue.fingerprint %}
+            <li>
+              <code>{{ part }}</code>
+            </li>
+          {% empty %}
+            <li class="muted">No fingerprint parts</li>
+          {% endfor %}
+        </ul>
+      </section>
+    </aside>
+  </div>
+{% endblock %}

@@ -1,12 +1,12 @@
 # pandora
 
-Self-hosted, k8s-native event tracker on the Sentry model: occurrences grouped into issues with first/last-seen, counts, sparkline and triage state. Two front doors into one core — Alertmanager webhooks and the Sentry envelope protocol — and one Django admin over both. SQLite and Postgres are both first-class.
+Self-hosted, k8s-native event tracker on the Sentry model: occurrences grouped into issues with first/last-seen, counts, sparkline and triage state. Two front doors into one core — Alertmanager webhooks and the Sentry envelope protocol — and one operator UI over both. SQLite and Postgres are both first-class.
 
 Alertmanager tells you an alert is firing. It does not tell you when it resolved itself, how often it flaps, or whether the thing you fixed came back. Pandora keeps that record.
 
 ## Stack
 
-Django + django-unfold admin · Postgres or SQLite · uv · just. No broker: ingest goes through a replayable envelope table, a reconcile loop and a prune job.
+Django · Postgres or SQLite · uv · just. The operator UI is server-rendered templates with one hand-written stylesheet and one script — no build step, no runtime dependency the image does not already carry. Configuration keeps the django-unfold admin. No broker: ingest goes through a replayable envelope table, a reconcile loop and a prune job.
 
 ## Quickstart
 
@@ -17,7 +17,7 @@ just superuser
 just seed-demo
 ```
 
-Admin at http://localhost:8000/admin/.
+The UI is at http://localhost:8000/, the config admin at http://localhost:8000/admin/.
 
 ## Development
 
@@ -33,7 +33,11 @@ just test-local   # pytest without docker (SQLite)
 
 | Path | What | Status |
 |---|---|---|
-| `/admin/` | the UI | live |
+| `/` | issue stream | live |
+| `/issues/<id>/` | one issue: occurrences, episodes, tags, activity | live |
+| `/overview/` | headline numbers, what is firing, what is new | live |
+| `/ingest/` | envelope backlog, failures, replay, tokens | live |
+| `/admin/` | configuration: projects, tokens, DSN keys, grouping rules | live |
 | `/health/` | liveness/readiness | live |
 | `/metrics` | Prometheus | live |
 | `/ingest/am/` | Alertmanager webhook receiver (Bearer token) | live |
@@ -41,6 +45,30 @@ just test-local   # pytest without docker (SQLite)
 | `/api/v1/issues` | issue list, filtered and cursor-paged | live |
 | `/api/v1/issues/<id>` | one issue with its episodes and tag stats | live |
 | `/api/v1/issues/<id>/events` | the stored events of one issue | live |
+
+## The UI
+
+Everything an operator does lives at `/`; the admin is for configuration. Both surfaces run the same triage code, so a state change made in either leaves the same `IssueActivity` row.
+
+The stream opens on `is:unresolved`. The search box takes a query rather than a filter sidebar:
+
+| Filter | Example | Means |
+|---|---|---|
+| `is:` | `is:unresolved` `is:new` `is:ack` `is:resolved` `is:ignored` | triage state; `unresolved` is new plus acknowledged |
+| `state:` | `state:firing` | what the source last said, not what a human decided |
+| `level:` | `level:error` | debug, info, warning, error, fatal |
+| `project:` | `project:infrastructure` | project slug |
+| `environment:` | `env:p-mk1` | environment; `env:` is the short form |
+| `label:` | `label:namespace=payments` | a grouping label the fingerprint kept |
+| `tag:` | `tag:pod=ledger-7d9f4c8b6d-hk2mp` | a value from the tag breakdown, including ones grouping dropped |
+| `seen:` | `seen:1h` | last seen inside the window — `30m`, `6h`, `7d`, `2w` |
+| `age:` | `age:1d` | first seen inside the window |
+
+Anything else is matched against the title and the culprit, and a bare hash prefix matches the fingerprint. Repeating a key widens it (`level:error level:fatal`); different keys narrow together. A term pandora does not understand is named back above the table rather than silently returning nothing.
+
+Selecting rows raises an action bar: acknowledge, resolve, ignore, or silence in Alertmanager for 1h, 4h or 1d. `/` focuses the search box, `j` and `k` move through the rows, `x` selects one, `Enter` opens it.
+
+Triage needs the `issues.change_issue` permission and replay needs `ingest.change_rawenvelope`, the same permissions the admin checks — a staff account without them gets a read-only UI.
 
 Both ingest routes existed from the first commit and answered 501 until their phase landed — the URL and auth scheme are what SDKs and Alertmanager configs hard-code, so they were pinned before anything was written behind them. Both doors are open now.
 
@@ -96,7 +124,7 @@ Reconcile never writes issues directly. Everything it corrects goes through `Raw
 
 ### Silences
 
-The issue changelist can silence for 1h, 4h or 1d. Matchers are structured and exact — one `isEqual` matcher per retained grouping label, no regex — so a silence covers the issue and nothing else. An issue that kept no grouping labels is refused rather than turned into a silence that matches everything. The comment links back to the issue; set `PANDORA_BASE_URL` to make that link absolute. Each silence is recorded as a `SilenceLink` and shows in the issue's activity feed; the link list can lift a silence early, and `prune` drops links once they expire.
+The issue stream and the issue page can silence for 1h, 4h or 1d. Matchers are structured and exact — one `isEqual` matcher per retained grouping label, no regex — so a silence covers the issue and nothing else. An issue that kept no grouping labels is refused rather than turned into a silence that matches everything. The comment links back to the issue; set `PANDORA_BASE_URL` to make that link absolute. Each silence is recorded as a `SilenceLink` and shows in the issue's activity feed; the link list can lift a silence early, and `prune` drops links once they expire.
 
 ## JSON API
 
