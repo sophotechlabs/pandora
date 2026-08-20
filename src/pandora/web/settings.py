@@ -118,7 +118,11 @@ TEMPLATES = [
 ]
 
 SQLITE_OPTIONS = {
-    "init_command": "PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;",
+    "init_command": (
+        "PRAGMA auto_vacuum=INCREMENTAL; "
+        "PRAGMA journal_mode=WAL; "
+        "PRAGMA synchronous=NORMAL;"
+    ),
     "transaction_mode": "IMMEDIATE",
     "timeout": 20,
 }
@@ -181,7 +185,7 @@ LOGIN_REDIRECT_URL = "/"
 
 PANDORA_ENV = os.environ.get("PANDORA_ENV", "")
 PANDORA_BASE_URL = os.environ.get("PANDORA_BASE_URL", "")
-PANDORA_RETENTION_DAYS = _int("PANDORA_RETENTION_DAYS", 90)
+PANDORA_RETENTION_DAYS = _int("PANDORA_RETENTION_DAYS", 30)
 PANDORA_ENVELOPE_RETENTION_DAYS = _int("PANDORA_ENVELOPE_RETENTION_DAYS", 7)
 PANDORA_INGEST_MAX_BYTES = _int("PANDORA_INGEST_MAX_BYTES", 1024 * 1024)
 PANDORA_RECONCILE_IGNORE = os.environ.get(

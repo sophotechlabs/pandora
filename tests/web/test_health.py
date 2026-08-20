@@ -3,7 +3,9 @@ from importlib import metadata
 
 import pytest
 from django import db
+from prometheus_client import REGISTRY
 
+from pandora.core import database
 from pandora.web import views
 
 # health tests
@@ -131,3 +133,31 @@ def test_an_uninstalled_build_reports_an_unknown_version(monkeypatch):
     expected = views.UNKNOWN_VERSION
 
     assert result == expected
+
+
+@pytest.mark.django_db
+def test_readiness_republishes_the_database_size(client):
+    """Should keep the size gauge fresh from the probe that already hits the DB."""
+    database.DATABASE_BYTES.set(0)
+
+    client.get("/ready/")
+
+    result = REGISTRY.get_sample_value("pandora_database_bytes")
+
+    assert result > 0
+
+
+@pytest.mark.django_db
+def test_a_failed_readiness_probe_leaves_the_size_alone(client, monkeypatch):
+    """Should not publish a size read from a connection that just failed."""
+    database.DATABASE_BYTES.set(0)
+
+    def broken_cursor():
+        raise db.OperationalError("no connection")
+
+    monkeypatch.setattr(db.connection, "cursor", broken_cursor)
+    client.get("/ready/")
+
+    result = REGISTRY.get_sample_value("pandora_database_bytes")
+
+    assert result == 0

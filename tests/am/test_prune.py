@@ -3,6 +3,7 @@ import io
 
 import pytest
 from django import test
+from django.conf import settings
 from django.core import management
 from django.utils import timezone
 
@@ -15,6 +16,7 @@ from tests.events import support
 pytestmark = pytest.mark.django_db
 
 NOTHING = prune.PruneResult(events=0, envelopes=0, processed_events=0, silences=0)
+RETENTION_DAYS = settings.PANDORA_RETENTION_DAYS
 
 
 @pytest.fixture
@@ -163,7 +165,7 @@ def test_prune_removes_dedup_markers_past_retention(project, moment):
     ingest_models.ProcessedEvent.objects.create(
         project=project,
         event_id="a" * 32,
-        seen_at=moment - datetime.timedelta(days=91),
+        seen_at=moment - datetime.timedelta(days=RETENTION_DAYS + 1),
     )
 
     result = prune.prune_expired(moment)
@@ -177,7 +179,7 @@ def test_prune_keeps_dedup_markers_inside_retention(project, moment):
     ingest_models.ProcessedEvent.objects.create(
         project=project,
         event_id="b" * 32,
-        seen_at=moment - datetime.timedelta(days=89),
+        seen_at=moment - datetime.timedelta(days=RETENTION_DAYS - 1),
     )
 
     result = prune.prune_expired(moment)
@@ -319,5 +321,30 @@ def test_tag_stats_are_never_pruned(project, issue):
 
     result = issue_models.TagStat.objects.count()
     expected = 1
+
+    assert result == expected
+
+
+# reclaiming the space the deletes freed
+
+
+def test_prune_reclaims_freed_pages_and_publishes_the_size(monkeypatch):
+    """Should hand freed pages back and republish the gauge the alert reads."""
+    called = []
+    monkeypatch.setattr(
+        prune.database,
+        "incremental_vacuum",
+        lambda connection=None: called.append("vacuum"),
+    )
+    monkeypatch.setattr(
+        prune.database,
+        "refresh_size",
+        lambda connection=None: called.append("refresh"),
+    )
+
+    prune.prune_expired(timezone.now())
+
+    result = called
+    expected = ["vacuum", "refresh"]
 
     assert result == expected

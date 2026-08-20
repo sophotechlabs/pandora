@@ -29,6 +29,24 @@ just test-local   # pytest without docker (SQLite)
 
 `just ci-test` runs the suite on SQLite; `just ci-test-pg` runs the same suite against the compose Postgres. Both run in CI — portability is enforced, not trusted. The Postgres run also carries coverage: it is the only run that exercises both `EventStore` implementations, because it adds a second in-memory SQLite connection alongside Postgres.
 
+## Storage
+
+`DATABASE_URL` picks the backend. On SQLite the connection is opened with `auto_vacuum=INCREMENTAL`, WAL and `synchronous=NORMAL`, and every write takes the lock immediately with a 20s busy timeout — so the web workers, the reconcile loop and the cron commands can share one file. The `auto_vacuum` pragma only takes on a database that does not exist yet, and only because it is set before `journal_mode`, which is the first statement that writes to the file.
+
+`PANDORA_RETENTION_DAYS` (30) covers stored events, dedup markers, hourly buckets and activity rows; `PANDORA_ENVELOPE_RETENTION_DAYS` (7) covers the envelope inbox. Episodes and tag stats are never pruned. The floor on retention is the sparkline, which reads a 7-day window. `prune` hands the freed pages back with `PRAGMA incremental_vacuum` and republishes `pandora_database_bytes`, the gauge the readiness probe also keeps fresh.
+
+```sh
+python manage.py backup --to /scratch/pandora-$(date +%Y%m%d).sqlite3
+```
+
+`VACUUM INTO` — a consistent snapshot without stopping writes, and compact rather than a copy of the high-water mark. It refuses to overwrite, because `VACUUM INTO` cannot merge into an existing file. On Postgres it refuses outright and points at that backend's own path.
+
+```sh
+python manage.py transfer_events --from postgres://user:pass@host/pandora
+```
+
+Copies stored events out of another pandora database into this one, paging per project through both `EventStore` implementations. Events live in a raw table with no model behind it, so `dumpdata` does not carry them — restore the dump first, then run this. It refuses to start if no project was restored, and `INSERT OR IGNORE` makes a second run safe after an interrupted one.
+
 ## Endpoints
 
 | Path | What | Status |

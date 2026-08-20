@@ -9,6 +9,7 @@ from django.conf import settings
 from django.core.management.base import BaseCommand
 from django.utils import timezone
 
+from pandora.core import database
 from pandora.events.store import get_store
 from pandora.ingest.models import EnvelopeState, ProcessedEvent, RawEnvelope
 from pandora.issues.models import HourlyStat, IssueActivity, SilenceLink
@@ -45,6 +46,8 @@ def prune_expired(now: datetime) -> PruneResult:
     hourly_stats, _ = HourlyStat.objects.filter(hour__lt=retention_cutoff).delete()
     activities, _ = IssueActivity.objects.filter(at__lt=retention_cutoff).delete()
     store.ensure_partitions(months_ahead=MONTHS_AHEAD)
+    database.incremental_vacuum()
+    database.refresh_size()
 
     result = PruneResult(
         events=events,

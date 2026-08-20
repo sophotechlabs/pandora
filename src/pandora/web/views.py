@@ -6,6 +6,8 @@ from importlib import metadata
 from django import db
 from django.http import HttpRequest, JsonResponse
 
+from pandora.core import database
+
 DISTRIBUTION = "pandora"
 UNKNOWN_VERSION = "unknown"
 
@@ -30,4 +32,5 @@ def ready(request: HttpRequest) -> JsonResponse:
             {"status": "unavailable", "detail": str(error)},
             status=HTTPStatus.SERVICE_UNAVAILABLE,
         )
+    database.refresh_size()
     return JsonResponse({"status": "ok", "version": version()})

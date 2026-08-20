@@ -44,7 +44,7 @@ def test_pandora_defaults_are_the_documented_ones(load_settings):
         "ingest_max_bytes": settings.PANDORA_INGEST_MAX_BYTES,
     }
     expected = {
-        "retention_days": 90,
+        "retention_days": 30,
         "envelope_retention_days": 7,
         "ingest_max_bytes": 1048576,
     }
@@ -54,12 +54,12 @@ def test_pandora_defaults_are_the_documented_ones(load_settings):
 def test_pandora_numeric_settings_come_from_the_env(load_settings):
     """Should read the numeric knobs from the environment when set."""
     settings = load_settings(
-        PANDORA_RETENTION_DAYS=30,
+        PANDORA_RETENTION_DAYS=45,
         PANDORA_INGEST_MAX_BYTES=2048,
     )
 
     result = (settings.PANDORA_RETENTION_DAYS, settings.PANDORA_INGEST_MAX_BYTES)
-    expected = (30, 2048)
+    expected = (45, 2048)
 
     assert result == expected
 
@@ -137,7 +137,11 @@ def test_sqlite_gets_wal_immediate_and_a_busy_timeout(load_settings):
 
     result = settings.DATABASES["default"]["OPTIONS"]
     expected = {
-        "init_command": "PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;",
+        "init_command": (
+            "PRAGMA auto_vacuum=INCREMENTAL; "
+            "PRAGMA journal_mode=WAL; "
+            "PRAGMA synchronous=NORMAL;"
+        ),
         "transaction_mode": "IMMEDIATE",
         "timeout": 20,
     }

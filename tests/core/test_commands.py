@@ -1,8 +1,11 @@
 import io
 
 import pytest
+from django import db
 from django.contrib import auth
 from django.core import management
+
+from pandora.core.management.commands import backup
 
 pytestmark = pytest.mark.django_db
 
@@ -121,3 +124,66 @@ def test_the_password_is_reset_only_when_asked(superuser_env, monkeypatch):
 
     user.refresh_from_db()
     assert user.check_password("admin-password") is True
+
+
+# backup
+
+
+def run_backup(target):
+    out = io.StringIO()
+    management.call_command("backup", "--to", str(target), stdout=out)
+    return out.getvalue()
+
+
+@pytest.fixture
+def on_sqlite(monkeypatch):
+    for alias in db.connections:
+        candidate = db.connections[alias]
+        if candidate.vendor == "sqlite":
+            monkeypatch.setattr(backup, "default_connection", candidate)
+            return candidate
+    pytest.skip("no sqlite connection in this run")
+
+
+@pytest.mark.django_db(databases="__all__", transaction=True)
+def test_backup_writes_a_snapshot(on_sqlite, tmp_path):
+    """Should leave a file the operator can hand to the uploader."""
+    target = tmp_path / "pandora.sqlite3"
+
+    result = run_backup(target)
+
+    assert target.is_file()
+    assert target.stat().st_size > 0
+    assert f"wrote {target.stat().st_size} bytes" in result
+
+
+@pytest.mark.django_db(databases="__all__")
+def test_backup_refuses_to_overwrite(on_sqlite, tmp_path):
+    """Should never destroy an existing snapshot — VACUUM INTO cannot merge."""
+    target = tmp_path / "pandora.sqlite3"
+    target.write_bytes(b"")
+
+    with pytest.raises(management.CommandError, match="already exists"):
+        run_backup(target)
+
+
+@pytest.mark.django_db(databases="__all__")
+def test_backup_refuses_a_missing_directory(on_sqlite, tmp_path):
+    """Should name the missing directory rather than fail inside SQLite."""
+    target = tmp_path / "absent" / "pandora.sqlite3"
+
+    with pytest.raises(management.CommandError, match="is not a directory"):
+        run_backup(target)
+
+
+def test_backup_refuses_another_vendor(tmp_path, monkeypatch):
+    """Should say plainly that another backend has its own backup path."""
+
+    class Elsewhere:
+        vendor = "postgresql"
+
+    monkeypatch.setattr(backup, "default_connection", Elsewhere())
+    target = tmp_path / "pandora.sqlite3"
+
+    with pytest.raises(management.CommandError, match="runs on SQLite only"):
+        run_backup(target)
