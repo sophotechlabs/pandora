@@ -1,4 +1,6 @@
+import datetime
 import io
+import re
 
 import pytest
 from django import db
@@ -187,3 +189,27 @@ def test_backup_refuses_another_vendor(tmp_path, monkeypatch):
 
     with pytest.raises(management.CommandError, match="runs on SQLite only"):
         run_backup(target)
+
+
+@pytest.mark.django_db(databases="__all__", transaction=True)
+def test_backup_names_the_snapshot_when_given_a_directory(on_sqlite, tmp_path):
+    """Should stamp the filename itself so no shell has to build it."""
+    result = run_backup(tmp_path)
+
+    written = list(tmp_path.iterdir())
+    assert len(written) == 1
+    assert re.fullmatch(
+        r"pandora-\d{8}T\d{6}Z\.sqlite3",
+        written[0].name,
+    )
+    assert str(written[0]) in result
+
+
+def test_the_snapshot_name_is_utc():
+    """Should name every snapshot in UTC whatever the container clock is."""
+    moment = datetime.datetime(2026, 8, 20, 14, 5, 9, tzinfo=datetime.UTC)
+
+    result = backup.snapshot_name(moment)
+    expected = "pandora-20260820T140509Z.sqlite3"
+
+    assert result == expected
