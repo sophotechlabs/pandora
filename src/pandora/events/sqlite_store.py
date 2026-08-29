@@ -28,6 +28,13 @@ DELETE = (
 )
 PRUNE_BATCH = 5000
 
+REWRITE = (
+    f"UPDATE {EVENTS_TABLE} SET message = %s, tags = %s, extra = %s, payload = %s "
+    "WHERE project_id = %s AND id = %s"
+)
+
+REMOVE = f"DELETE FROM {EVENTS_TABLE} WHERE project_id = %s AND id = %s"
+
 REASSIGN = (
     f"UPDATE {EVENTS_TABLE} SET issue_id = %s "
     "WHERE project_id = %s AND {column} IN ({placeholders})"
@@ -181,6 +188,34 @@ class SqliteEventStore:
         with self.connection.cursor() as cursor:
             cursor.execute(query, params)
             return _fetched(cursor)
+
+    def rewrite(self, project_id: int, events: Sequence[Event]) -> int:
+        if not events:
+            return 0
+        rows: list[list[Any]] = [
+            [
+                event.message,
+                json.dumps(event.tags),
+                json.dumps(event.extra),
+                json.dumps(event.payload),
+                project_id,
+                event.id,
+            ]
+            for event in events
+        ]
+        with self.connection.cursor() as cursor:
+            cursor.executemany(REWRITE, rows)
+        return len(rows)
+
+    def delete(self, project_id: int, events: Sequence[Event]) -> int:
+        if not events:
+            return 0
+        removed = 0
+        with self.connection.cursor() as cursor:
+            for event in events:
+                cursor.execute(REMOVE, [project_id, event.id])
+                removed += cursor.rowcount
+        return removed
 
     def prune(self, before: datetime) -> int:
         cutoff = _encode_timestamp(before)

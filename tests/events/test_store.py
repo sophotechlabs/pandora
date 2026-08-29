@@ -12,6 +12,8 @@ METHODS = (
     "reassign_events",
     "fetch",
     "search",
+    "rewrite",
+    "delete",
     "prune",
     "ensure_partitions",
 )

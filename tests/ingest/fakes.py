@@ -41,6 +41,21 @@ class RecordingEventStore:
     def search(self, project_id, tags, since, until, limit=100):
         return list(self.rows)
 
+    def rewrite(self, project_id, events):
+        by_id = {event.id: event for event in events}
+        replaced = 0
+        for index, row in enumerate(self.rows):
+            if row.id in by_id:
+                self.rows[index] = by_id[row.id]
+                replaced += 1
+        return replaced
+
+    def delete(self, project_id, events):
+        wanted = {event.id for event in events}
+        before = len(self.rows)
+        self.rows = [row for row in self.rows if row.id not in wanted]
+        return before - len(self.rows)
+
     def prune(self, before):
         return 0
 

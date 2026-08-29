@@ -1675,3 +1675,7 @@ pre {
   flex-wrap: wrap;
   gap: 5px;
 }
+
+.occurrence-delete {
+  margin-top: 10px;
+}

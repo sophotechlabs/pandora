@@ -37,6 +37,16 @@ REASSIGN = (
 
 REASSIGN_CHUNK = 500
 
+REWRITE = (
+    f"UPDATE {EVENTS_TABLE} SET message = %s, tags = %s::jsonb, extra = %s::jsonb, "
+    "payload = %s::jsonb "
+    'WHERE project_id = %s AND id = %s AND "timestamp" = %s'
+)
+
+REMOVE = (
+    f'DELETE FROM {EVENTS_TABLE} WHERE project_id = %s AND id = %s AND "timestamp" = %s'
+)
+
 PARTITIONS = (
     "SELECT c.relname, pg_get_expr(c.relpartbound, c.oid) "
     "FROM pg_class c "
@@ -202,6 +212,35 @@ class PostgresEventStore:
         with self.connection.cursor() as cursor:
             cursor.execute(query, params)
             return _fetched(cursor)
+
+    def rewrite(self, project_id: int, events: Sequence[Event]) -> int:
+        if not events:
+            return 0
+        rows: list[list[Any]] = [
+            [
+                event.message,
+                json.dumps(event.tags),
+                json.dumps(event.extra),
+                json.dumps(event.payload),
+                project_id,
+                event.id,
+                _aware(event.timestamp),
+            ]
+            for event in events
+        ]
+        with self.connection.cursor() as cursor:
+            cursor.executemany(REWRITE, rows)
+        return len(rows)
+
+    def delete(self, project_id: int, events: Sequence[Event]) -> int:
+        if not events:
+            return 0
+        removed = 0
+        with self.connection.cursor() as cursor:
+            for event in events:
+                cursor.execute(REMOVE, [project_id, event.id, _aware(event.timestamp)])
+                removed += cursor.rowcount
+        return removed
 
     def prune(self, before: datetime) -> int:
         cutoff = _aware(before)

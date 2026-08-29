@@ -146,6 +146,16 @@ Beyond the defaults, **scrub rules** name a dotted path — `user.email`, `reque
 
 **The fingerprint is computed before scrubbing.** Microsoft's App Center shipped the other order and split every issue in two when a redacted value was part of the grouping key; there is a test that pins ours.
 
+**Retroactive redaction** is the only fix when the leak came from an app version you cannot patch:
+
+```sh
+python manage.py redact --project infrastructure --dry-run
+```
+
+It re-applies the current keywords and rules to events already stored, rewrites only the rows that actually change, pages through a store larger than memory, and rolls back under `--dry-run`. Sentry has no equivalent.
+
+An occurrence can also be **deleted one at a time** from the occurrences tab, behind the same permission triage needs. Sentry cannot do that either.
+
 **Drop rules** refuse a payload before the durable write, so the saving is disk rather than only noise. Each matches a field — `alertname`, `namespace`, `severity`, `type`, `value`, `message`, `release`, `environment`, `server_name`, `transaction`, `platform` — against a regular expression, counts what it refused, and works on both ingest doors. An invalid pattern never matches rather than taking ingest down.
 
 ## Holding the door

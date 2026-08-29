@@ -29,6 +29,15 @@
               <summary class="raw-toggle">Raw payload</summary>
               <pre class="payload">{{ event.raw }}</pre>
             </details>
+            {% if can_triage %}
+              <form class="occurrence-delete"
+                    method="post"
+                    action="{% url 'ui:occurrence-delete' issue.pk event.id %}">
+                {% csrf_token %}
+                <input type="hidden" name="next" value="{{ next_url }}">
+                <button class="btn btn-ghost" type="submit">Delete this occurrence</button>
+              </form>
+            {% endif %}
           </div>
         </details>
       </li>

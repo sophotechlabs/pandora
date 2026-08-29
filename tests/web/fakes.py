@@ -63,6 +63,21 @@ class FakeEventStore:
         found.sort(key=lambda event: event.timestamp, reverse=True)
         return found[:limit]
 
+    def rewrite(self, project_id, events):
+        by_id = {event.id: event for event in events}
+        replaced = 0
+        for index, row in enumerate(self.events):
+            if row.id in by_id:
+                self.events[index] = by_id[row.id]
+                replaced += 1
+        return replaced
+
+    def delete(self, project_id, events):
+        wanted = {event.id for event in events}
+        before = len(self.events)
+        self.events = [row for row in self.events if row.id not in wanted]
+        return before - len(self.events)
+
     def prune(self, before):
         return 0
 
@@ -81,6 +96,12 @@ class UnbuiltEventStore:
         raise NotImplementedError
 
     def reassign_events(self, project_id, event_ids, issue_id):
+        raise NotImplementedError
+
+    def rewrite(self, project_id, events):
+        raise NotImplementedError
+
+    def delete(self, project_id, events):
         raise NotImplementedError
 
     def fetch(

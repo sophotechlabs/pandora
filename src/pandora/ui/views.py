@@ -236,6 +236,37 @@ def issue_actions(request: HttpRequest) -> HttpResponse:
 
 @staff_member_required(login_url=LOGIN_URL)
 @require_POST
+def delete_occurrence(
+    request: HttpRequest, issue_id: int, event_id: str
+) -> HttpResponse:
+    if not request.user.has_perm(TRIAGE_PERMISSION):
+        return HttpResponseForbidden(
+            "deleting an occurrence requires the issue change permission"
+        )
+
+    issue = get_object_or_404(Issue, pk=issue_id)
+    store = get_store()
+    try:
+        found = [
+            event
+            for event in store.fetch(
+                issue.project_id, issue_id=issue.pk, limit=EVENT_ROWS
+            )
+            if event.id == event_id
+        ]
+    except NotImplementedError:
+        found = []
+    if not found:
+        messages.warning(request, "That occurrence is not stored any more")
+        return redirect(_next_url(request))
+
+    removed = store.delete(issue.project_id, found)
+    messages.success(request, f"Deleted {removed} occurrence(s)")
+    return redirect(_next_url(request))
+
+
+@staff_member_required(login_url=LOGIN_URL)
+@require_POST
 def replay_envelopes(request: HttpRequest) -> HttpResponse:
     if not request.user.has_perm(REPLAY_PERMISSION):
         return HttpResponseForbidden("replay requires the envelope change permission")
@@ -274,6 +305,7 @@ def _issue_context(
     }
     if tab == "occurrences":
         context["events"] = _events(issue, request.GET.get("cursor", ""))
+        context["can_triage"] = request.user.has_perm(TRIAGE_PERMISSION)
     return context
 
 

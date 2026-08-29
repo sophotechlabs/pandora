@@ -10,6 +10,11 @@ urlpatterns = [
     path("issues/<int:issue_id>/", views.issue_page, name="issue"),
     path("issues/<int:issue_id>/<str:tab>/", views.issue_page, name="issue-tab"),
     path("issues/actions/", views.issue_actions, name="issue-actions"),
+    path(
+        "issues/<int:issue_id>/occurrences/<str:event_id>/delete/",
+        views.delete_occurrence,
+        name="occurrence-delete",
+    ),
     path("overview/", views.overview, name="overview"),
     path("ingest/", views.ingest, name="ingest"),
     path("ingest/replay/", views.replay_envelopes, name="ingest-replay"),

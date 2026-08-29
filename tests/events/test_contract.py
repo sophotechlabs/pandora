@@ -1,3 +1,4 @@
+import dataclasses
 import datetime
 
 import pytest
@@ -656,4 +657,82 @@ def test_events_still_land_after_ensuring_partitions(event_store, moment):
 
     result = event_store.fetch(event.project_id)
     expected = [event]
+    assert result == expected
+
+
+# rewriting and removing single rows
+
+
+def test_rewrite_replaces_the_mutable_columns(event_store, moment):
+    """Should let a retroactive redaction land without touching the identity of the row."""
+    event = support.make_event(0, moment)
+    event_store.insert([event])
+    edited = dataclasses.replace(
+        event,
+        message="[redacted]",
+        tags={"namespace": "payments"},
+        extra={},
+        payload={"user": {"id": "7"}},
+    )
+
+    written = event_store.rewrite(event.project_id, [edited])
+
+    result = (written, event_store.fetch(event.project_id))
+    expected = (1, [edited])
+
+    assert result == expected
+
+
+def test_rewrite_leaves_other_rows_alone(event_store, moment):
+    """Should touch only what it was given."""
+    first, second = support.make_events(2, moment)
+    event_store.insert([first, second])
+
+    event_store.rewrite(first.project_id, [dataclasses.replace(first, message="gone")])
+
+    result = [event.message for event in event_store.fetch(first.project_id)]
+    expected = [second.message, "gone"]
+
+    assert result == expected
+
+
+def test_rewrite_of_nothing_is_a_no_op(event_store):
+    """Should not issue a statement for an empty batch."""
+    result = event_store.rewrite(1, [])
+    expected = 0
+
+    assert result == expected
+
+
+def test_delete_removes_one_occurrence(event_store, moment):
+    """Should let an operator remove a single leaked payload, which Sentry cannot do."""
+    first, second = support.make_events(2, moment)
+    event_store.insert([first, second])
+
+    removed = event_store.delete(first.project_id, [first])
+
+    result = (removed, [event.id for event in event_store.fetch(first.project_id)])
+    expected = (1, [second.id])
+
+    assert result == expected
+
+
+def test_delete_is_scoped_to_the_project(event_store, moment):
+    """Should never reach across projects, the rule every other store method holds."""
+    event = support.make_event(0, moment)
+    event_store.insert([event])
+
+    removed = event_store.delete(event.project_id + 1, [event])
+
+    result = (removed, len(event_store.fetch(event.project_id)))
+    expected = (0, 1)
+
+    assert result == expected
+
+
+def test_delete_of_nothing_is_a_no_op(event_store):
+    """Should not issue a statement for an empty batch."""
+    result = event_store.delete(1, [])
+    expected = 0
+
     assert result == expected
