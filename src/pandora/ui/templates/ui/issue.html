@@ -18,39 +18,51 @@
       <span class="project">{{ issue.project.slug }}</span>
       {% if issue.environment %}<span class="project">{{ issue.environment }}</span>{% endif %}
       <span class="fingerprint" title="{{ issue.fingerprint_hash }}">{{ issue.fingerprint_hash|slice:":12" }}</span>
+      {% if owner %}
+        <a class="tag"
+           href="{% url 'ui:stream' %}?q=owner:{{ owner|urlencode }}">owned by {{ owner }}</a>
+      {% elif owner_suggestions %}
+        <span class="muted">
+          Owned by nobody — {% for rule in owner_suggestions %}{{ rule.team|default:rule.user }}{% if not forloop.last %}, {% endif %}{% endfor %} each claim it
+        </span>
+      {% else %}
+        <span class="muted">Owned by nobody</span>
+      {% endif %}
     </div>
-    <form class="issue-actions"
-          method="post"
-          action="{% url 'ui:issue-actions' %}">
-      {% csrf_token %}
-      <input type="hidden" name="issue" value="{{ issue.pk }}">
-      <input type="hidden" name="next" value="{{ next_url }}">
-      <button class="btn" type="submit" name="action" value="acknowledge">Acknowledge</button>
-      <button class="btn" type="submit" name="action" value="resolve">Resolve</button>
-      <button class="btn" type="submit" name="action" value="ignore">Ignore</button>
-      <details class="menu">
-        <summary class="btn">Snooze</summary>
-        <div class="menu-list">
-          {% for spec, label in snoozes %}
-            <button class="menu-item"
-                    type="submit"
-                    name="action"
-                    value="snooze:{{ spec }}">{{ label }}</button>
-          {% endfor %}
-        </div>
-      </details>
-      <details class="menu">
-        <summary class="btn">Silence</summary>
-        <div class="menu-list">
-          {% for window, label in windows %}
-            <button class="menu-item"
-                    type="submit"
-                    name="action"
-                    value="silence:{{ window }}">{{ label }}</button>
-          {% endfor %}
-        </div>
-      </details>
-    </form>
+    {% if can_triage %}
+      <form class="issue-actions"
+            method="post"
+            action="{% url 'ui:issue-actions' %}">
+        {% csrf_token %}
+        <input type="hidden" name="issue" value="{{ issue.pk }}">
+        <input type="hidden" name="next" value="{{ next_url }}">
+        <button class="btn" type="submit" name="action" value="acknowledge">Acknowledge</button>
+        <button class="btn" type="submit" name="action" value="resolve">Resolve</button>
+        <button class="btn" type="submit" name="action" value="ignore">Ignore</button>
+        <details class="menu">
+          <summary class="btn">Snooze</summary>
+          <div class="menu-list">
+            {% for spec, label in snoozes %}
+              <button class="menu-item"
+                      type="submit"
+                      name="action"
+                      value="snooze:{{ spec }}">{{ label }}</button>
+            {% endfor %}
+          </div>
+        </details>
+        <details class="menu">
+          <summary class="btn">Silence</summary>
+          <div class="menu-list">
+            {% for window, label in windows %}
+              <button class="menu-item"
+                      type="submit"
+                      name="action"
+                      value="silence:{{ window }}">{{ label }}</button>
+            {% endfor %}
+          </div>
+        </details>
+      </form>
+    {% endif %}
   </header>
   <section class="stats">
     <div class="stat">

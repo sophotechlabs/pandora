@@ -1,0 +1,21 @@
+<table class="issues">
+  <thead>
+    <tr>
+      {% if can_triage %}
+        <th class="pick">
+          <input type="checkbox"
+                 data-select-all
+                 aria-label="Select every issue on this page">
+        </th>
+      {% endif %}
+      <th>Issue</th>
+      <th class="graph">7 days</th>
+      <th class="num">Events</th>
+      <th class="num">Duration</th>
+      <th class="when">Last seen</th>
+      <th class="owner">Owner</th>
+      <th class="state">Triage</th>
+    </tr>
+  </thead>
+  {% include "ui/partials/stream_rows.html" %}
+</table>

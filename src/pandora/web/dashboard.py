@@ -41,8 +41,16 @@ class Dashboard:
     tables: dict[str, components.Table] = field(default_factory=dict)
 
 
-def kpis(now: datetime) -> tuple[components.Kpi, ...]:
-    return _kpis(now) + _ingest_kpis(now)
+def _only(queryset: Any, projects: list[int] | None) -> Any:
+    if projects is None:
+        return queryset
+    return queryset.filter(project_id__in=projects)
+
+
+def kpis(
+    now: datetime, projects: list[int] | None = None
+) -> tuple[components.Kpi, ...]:
+    return _kpis(now, projects) + _ingest_kpis(now, projects)
 
 
 def build(now: datetime) -> Dashboard:
@@ -57,13 +65,20 @@ def dashboard_callback(
     return context
 
 
-def _kpis(now: datetime) -> tuple[components.Kpi, ...]:
-    firing = Issue.objects.filter(source_state=SourceState.FIRING)
+def _kpis(
+    now: datetime,
+    projects: list[int] | None = None,
+) -> tuple[components.Kpi, ...]:
+    issues = _only(Issue.objects.all(), projects)
+    firing = issues.filter(source_state=SourceState.FIRING)
     open_episodes = firing.aggregate(total=Sum("open_episode_count"))["total"] or 0
-    new_day = Issue.objects.filter(first_seen__gte=now - NEW_WINDOW).count()
-    new_week = Issue.objects.filter(first_seen__gte=now - REGRESSION_WINDOW).count()
+    new_day = issues.filter(first_seen__gte=now - NEW_WINDOW).count()
+    new_week = issues.filter(first_seen__gte=now - REGRESSION_WINDOW).count()
+    activity = IssueActivity.objects.all()
+    if projects is not None:
+        activity = activity.filter(issue__project_id__in=projects)
     regressions = (
-        IssueActivity.objects.filter(
+        activity.filter(
             kind=ActivityKind.REGRESSION,
             at__gte=now - REGRESSION_WINDOW,
         )
@@ -71,8 +86,8 @@ def _kpis(now: datetime) -> tuple[components.Kpi, ...]:
         .distinct()
         .count()
     )
-    untriaged = Issue.objects.filter(triage_state=TriageState.NEW).count()
-    acknowledged = Issue.objects.filter(
+    untriaged = issues.filter(triage_state=TriageState.NEW).count()
+    acknowledged = issues.filter(
         triage_state=TriageState.ACKNOWLEDGED,
     ).count()
 
@@ -100,11 +115,15 @@ def _kpis(now: datetime) -> tuple[components.Kpi, ...]:
     )
 
 
-def _ingest_kpis(now: datetime) -> tuple[components.Kpi, ...]:
-    failed = RawEnvelope.objects.filter(state=EnvelopeState.FAILED).count()
-    pending = RawEnvelope.objects.filter(state=EnvelopeState.PENDING).count()
+def _ingest_kpis(
+    now: datetime,
+    projects: list[int] | None = None,
+) -> tuple[components.Kpi, ...]:
+    envelopes = _only(RawEnvelope.objects.all(), projects)
+    failed = envelopes.filter(state=EnvelopeState.FAILED).count()
+    pending = envelopes.filter(state=EnvelopeState.PENDING).count()
     latest = (
-        RawEnvelope.objects.filter(state=EnvelopeState.DONE)
+        envelopes.filter(state=EnvelopeState.DONE)
         .order_by("-received_at")
         .values_list("received_at", flat=True)
         .first()
@@ -114,7 +133,7 @@ def _ingest_kpis(now: datetime) -> tuple[components.Kpi, ...]:
     if latest is not None:
         hint = f"last accepted {components.format_stamp(latest)}"
 
-    recent = RawEnvelope.objects.filter(received_at__gte=now - INGEST_WINDOW).count()
+    recent = envelopes.filter(received_at__gte=now - INGEST_WINDOW).count()
 
     return (
         components.Kpi(

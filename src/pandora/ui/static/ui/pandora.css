@@ -100,7 +100,7 @@ html {
 body {
   margin: 0;
   background: var(--bg);
-  color: var(--text);
+  color: var(--text-strong);
   font-family: var(--font);
   font-size: 14px;
   line-height: 1.45;
@@ -139,7 +139,7 @@ pre {
 }
 
 .muted {
-  color: var(--text-muted);
+  color: var(--text-faint);
 }
 
 .topbar {
@@ -202,13 +202,13 @@ pre {
 .mainnav a {
   padding: 6px 11px;
   border-radius: var(--radius-sm);
-  color: var(--text-muted);
+  color: var(--text-faint);
   font-weight: 500;
 }
 
 .mainnav a:hover {
   background: var(--surface-hover);
-  color: var(--text);
+  color: var(--text-strong);
 }
 
 .mainnav a.active {
@@ -231,13 +231,13 @@ pre {
   padding: 0;
   border: 0;
   background: none;
-  color: var(--text-muted);
+  color: var(--text-faint);
   font: inherit;
   cursor: pointer;
 }
 
 .quiet-link:hover {
-  color: var(--text);
+  color: var(--text-strong);
 }
 
 .logout {
@@ -252,7 +252,7 @@ pre {
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   background: none;
-  color: var(--text-muted);
+  color: var(--text-faint);
   font: inherit;
   font-size: 12px;
   cursor: pointer;
@@ -260,7 +260,7 @@ pre {
 
 .icon-btn:hover {
   border-color: var(--border-strong);
-  color: var(--text);
+  color: var(--text-strong);
 }
 
 .when-light {
@@ -306,7 +306,7 @@ pre {
   padding: 2px 8px;
   border-radius: 999px;
   background: var(--surface-2);
-  color: var(--text-muted);
+  color: var(--text-faint);
   font-size: 12px;
   font-variant-numeric: tabular-nums;
 }
@@ -352,7 +352,7 @@ pre {
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: var(--surface);
-  color: var(--text);
+  color: var(--text-strong);
   font-family: var(--mono);
   font-size: 13px;
 }
@@ -390,17 +390,17 @@ pre {
   gap: 6px;
   padding: 8px 12px;
   border-bottom: 2px solid transparent;
-  color: var(--text-muted);
+  color: var(--text-faint);
   font-weight: 500;
 }
 
 .segment:hover {
-  color: var(--text);
+  color: var(--text-strong);
 }
 
 .segment.active {
   border-bottom-color: var(--accent);
-  color: var(--text);
+  color: var(--text-strong);
 }
 
 .segment-count {
@@ -430,11 +430,11 @@ pre {
 }
 
 .toolbar-link {
-  color: var(--text-muted);
+  color: var(--text-faint);
 }
 
 .toolbar-link:hover {
-  color: var(--text);
+  color: var(--text-strong);
 }
 
 .toolbar-link.active {
@@ -524,7 +524,7 @@ pre {
 
 .subject-title {
   font-weight: 600;
-  color: var(--text);
+  color: var(--text-strong);
 }
 
 .subject-title:hover {
@@ -542,7 +542,7 @@ pre {
 
 .culprit {
   margin: 0;
-  color: var(--text-muted);
+  color: var(--text-faint);
   font-family: var(--mono);
   font-size: 12px;
 }
@@ -556,7 +556,7 @@ pre {
   padding: 1px 6px;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  color: var(--text-muted);
+  color: var(--text-faint);
   font-family: var(--mono);
   font-size: 11px;
 }
@@ -572,14 +572,14 @@ pre {
 
 .num {
   width: 78px;
-  color: var(--text-muted);
+  color: var(--text-faint);
   font-variant-numeric: tabular-nums;
   text-align: right;
 }
 
 .when {
   width: 96px;
-  color: var(--text-muted);
+  color: var(--text-faint);
   white-space: nowrap;
 }
 
@@ -689,7 +689,7 @@ pre {
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-sm);
   background: var(--surface-2);
-  color: var(--text);
+  color: var(--text-strong);
   font: inherit;
   font-size: 13px;
   font-weight: 500;
@@ -716,7 +716,7 @@ pre {
 .btn-ghost {
   border-color: transparent;
   background: none;
-  color: var(--text-muted);
+  color: var(--text-faint);
 }
 
 .btn-ghost:hover {
@@ -761,7 +761,7 @@ pre {
   border: 0;
   border-radius: var(--radius-sm);
   background: none;
-  color: var(--text);
+  color: var(--text-strong);
   font: inherit;
   font-size: 13px;
   text-align: left;
@@ -799,7 +799,7 @@ pre {
 
 .selection-count {
   padding-right: 6px;
-  color: var(--text-muted);
+  color: var(--text-faint);
   font-size: 13px;
   font-variant-numeric: tabular-nums;
 }
@@ -814,7 +814,7 @@ pre {
 .back {
   display: inline-block;
   margin-bottom: 10px;
-  color: var(--text-muted);
+  color: var(--text-faint);
   font-size: 12px;
 }
 
@@ -823,7 +823,7 @@ pre {
 }
 
 .back:hover {
-  color: var(--text);
+  color: var(--text-strong);
 }
 
 .issue-head {
@@ -913,7 +913,7 @@ pre {
 }
 
 .kpi-label {
-  color: var(--text-muted);
+  color: var(--text-faint);
   font-size: 12px;
 }
 
@@ -943,7 +943,7 @@ pre {
 
 .card-title {
   margin-bottom: 12px;
-  color: var(--text-muted);
+  color: var(--text-faint);
   font-size: 12px;
   letter-spacing: 0.04em;
   text-transform: uppercase;
@@ -978,18 +978,18 @@ pre {
 .tab {
   padding: 11px 12px;
   border-bottom: 2px solid transparent;
-  color: var(--text-muted);
+  color: var(--text-faint);
   font-size: 13px;
   font-weight: 500;
 }
 
 .tab:hover {
-  color: var(--text);
+  color: var(--text-strong);
 }
 
 .tab.active {
   border-bottom-color: var(--accent);
-  color: var(--text);
+  color: var(--text-strong);
 }
 
 .grid {
@@ -1016,7 +1016,7 @@ pre {
 .grid td {
   padding: 9px 10px;
   border-bottom: 1px solid var(--border);
-  color: var(--text-muted);
+  color: var(--text-faint);
 }
 
 .grid tbody tr:last-child td {
@@ -1103,7 +1103,7 @@ pre {
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   background: var(--bg);
-  color: var(--text-muted);
+  color: var(--text-faint);
   font-size: 12px;
   overflow: auto;
 }
@@ -1133,7 +1133,7 @@ pre {
 .bar-label {
   width: 40%;
   overflow: hidden;
-  color: var(--text-muted);
+  color: var(--text-faint);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -1183,12 +1183,12 @@ pre {
   padding: 2px 8px;
   border-radius: 999px;
   background: var(--surface-2);
-  color: var(--text-muted);
+  color: var(--text-faint);
   font-size: 11px;
 }
 
 .feed-actor {
-  color: var(--text);
+  color: var(--text-strong);
 }
 
 .feed-stamp {
@@ -1233,7 +1233,7 @@ pre {
 
 .compact-count {
   width: 46px;
-  color: var(--text-muted);
+  color: var(--text-faint);
   font-size: 12px;
   font-variant-numeric: tabular-nums;
   text-align: right;
@@ -1294,7 +1294,7 @@ pre {
 }
 
 .plain code {
-  color: var(--text-muted);
+  color: var(--text-faint);
 }
 
 .auth-body {
@@ -1329,7 +1329,7 @@ pre {
 }
 
 .auth-form label {
-  color: var(--text-muted);
+  color: var(--text-faint);
   font-size: 12px;
 }
 
@@ -1339,7 +1339,7 @@ pre {
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   background: var(--bg);
-  color: var(--text);
+  color: var(--text-strong);
   font: inherit;
 }
 
@@ -1428,7 +1428,7 @@ pre {
 }
 
 .exc-kind {
-  color: var(--text);
+  color: var(--text-strong);
   font-family: var(--mono);
   font-size: 14px;
   font-weight: 600;
@@ -1442,7 +1442,7 @@ pre {
 
 .exc-value {
   margin: 0 0 10px;
-  color: var(--text-muted);
+  color: var(--text-faint);
   font-family: var(--mono);
   font-size: 12px;
   overflow-wrap: anywhere;
@@ -1486,7 +1486,7 @@ pre {
 }
 
 .frame-app .frame-loc {
-  color: var(--text);
+  color: var(--text-strong);
   font-weight: 600;
 }
 
@@ -1532,11 +1532,11 @@ pre {
 }
 
 .src-text {
-  color: var(--text-muted);
+  color: var(--text-faint);
 }
 
 .src-current .src-text {
-  color: var(--text);
+  color: var(--text-strong);
 }
 
 .pairs-mono {
@@ -1583,12 +1583,12 @@ pre {
 }
 
 .crumb-category {
-  color: var(--text-muted);
+  color: var(--text-faint);
   font-family: var(--mono);
 }
 
 .crumb-message {
-  color: var(--text);
+  color: var(--text-strong);
   overflow-wrap: anywhere;
 }
 
@@ -1650,7 +1650,7 @@ pre {
 }
 
 .correlated-title {
-  color: var(--text);
+  color: var(--text-strong);
   font-size: 13px;
   font-weight: 500;
 }
@@ -1678,4 +1678,42 @@ pre {
 
 .occurrence-delete {
   margin-top: 10px;
+}
+
+.filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.audit-data {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.auth-divider {
+  margin: 14px 0 10px;
+  color: var(--text-faint);
+  font-size: 12px;
+  text-align: center;
+}
+
+td.owner,
+th.owner {
+  white-space: nowrap;
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.owner-link {
+  color: var(--text-faint);
+  text-decoration: none;
+}
+
+.owner-link:hover {
+  color: var(--text-strong);
+  text-decoration: underline;
 }

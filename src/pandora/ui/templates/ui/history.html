@@ -1,0 +1,67 @@
+{% extends "ui/base.html" %}
+{% block title %}History | Pandora{% endblock %}
+{% block content %}
+  <header class="page-head">
+    <h1>History</h1>
+    <p class="muted">Every action a person took, and every command that changed configuration.</p>
+  </header>
+  <form class="filters" method="get" action="{% url 'ui:history' %}">
+    <select class="search-input" name="action">
+      <option value="">every action</option>
+      {% for name in actions %}
+        <option value="{{ name }}" {% if name == action %}selected{% endif %}>{{ name }}</option>
+      {% endfor %}
+    </select>
+    <input class="search-input"
+           type="text"
+           name="actor"
+           value="{{ actor }}"
+           placeholder="actor">
+    <button class="btn" type="submit">Filter</button>
+  </form>
+  <section class="card">
+    <table class="grid">
+      <thead>
+        <tr>
+          <th>When</th>
+          <th>Who</th>
+          <th>Action</th>
+          <th>Target</th>
+          <th>Detail</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for entry, ago in rows %}
+          <tr>
+            <td title="{{ entry.at|date:'Y-m-d H:i:s e' }}">{{ ago }}</td>
+            <td>{{ entry.actor|default:"pandora" }}</td>
+            <td>
+              <code>{{ entry.action }}</code>
+            </td>
+            <td>{{ entry.target }}</td>
+            <td class="audit-data">
+              {% for key, value in entry.data.items %}<span class="tag">{{ key }}={{ value }}</span>{% endfor %}
+            </td>
+          </tr>
+        {% empty %}
+          <tr>
+            <td colspan="5" class="muted">Nothing recorded yet</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
+  {% if page.paginator.num_pages > 1 %}
+    <nav class="pagination">
+      {% if page.has_previous %}
+        <a class="btn btn-ghost"
+           href="?page={{ page.previous_page_number }}&{{ page_query }}">Newer</a>
+      {% endif %}
+      <span class="muted">{{ page.number }} of {{ page.paginator.num_pages }} · {{ total }} entries</span>
+      {% if page.has_next %}
+        <a class="btn btn-ghost"
+           href="?page={{ page.next_page_number }}&{{ page_query }}">Older</a>
+      {% endif %}
+    </nav>
+  {% endif %}
+{% endblock %}

@@ -15,6 +15,9 @@ DEFAULT_QUERY = "is:unresolved"
 SNOOZED = "snoozed"
 AWAKE = "awake"
 UNRESOLVED = "unresolved"
+OWNER = "owner"
+ME = "me"
+NOBODY = "none"
 
 KEY_NAME = re.compile(r"^[a-z_]+$")
 LABEL_NAME = re.compile(r"^[A-Za-z][A-Za-z0-9]*(_[A-Za-z0-9]+)*$")
@@ -80,15 +83,30 @@ def parse(raw: str) -> Query:
 
 
 def filter_issues(
-    queryset: QuerySet[Issue], query: Query, now: datetime
+    queryset: QuerySet[Issue],
+    query: Query,
+    now: datetime,
+    viewer: str = "",
 ) -> tuple[QuerySet[Issue], list[str]]:
     rejected: list[str] = []
     for key, values in _group(query.terms).items():
-        queryset, bad = HANDLERS[key](queryset, values, now)
+        queryset, bad = HANDLERS[key](queryset, _resolve(key, values, viewer), now)
         rejected.extend(bad)
     if query.text:
         queryset = queryset.filter(_text_query(query.text))
     return queryset, rejected
+
+
+def _resolve(key: str, values: list[str], viewer: str) -> list[str]:
+    if key != OWNER:
+        return values
+    resolved = []
+    for value in values:
+        if value.lower() == ME and viewer:
+            resolved.append(viewer)
+        else:
+            resolved.append(value)
+    return resolved
 
 
 def _split(raw: str) -> list[str]:
@@ -242,6 +260,18 @@ def parse_duration(raw: str) -> timedelta | None:
     return timedelta(**{DURATION_UNITS[unit]: int(amount)})
 
 
+def _apply_owner(
+    queryset: QuerySet[Issue], values: Sequence[str], now: datetime
+) -> tuple[QuerySet[Issue], list[str]]:
+    query = Q()
+    for value in values:
+        if value.lower() == NOBODY:
+            query |= Q(assignment__isnull=True)
+            continue
+        query |= Q(assignment__team__name=value) | Q(assignment__user__username=value)
+    return queryset.filter(query), []
+
+
 HANDLERS: dict[str, Handler] = {
     "is": _apply_is,
     "state": _apply_state,
@@ -252,4 +282,5 @@ HANDLERS: dict[str, Handler] = {
     "age": _apply_age,
     "label": _apply_label,
     "tag": _apply_tag,
+    OWNER: _apply_owner,
 }

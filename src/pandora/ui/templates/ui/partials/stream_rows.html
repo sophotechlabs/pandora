@@ -1,12 +1,14 @@
 <tbody id="stream-rows" data-total="{{ total }}">
   {% for row in rows %}
     <tr class="issue-row" data-href="{% url 'ui:issue' row.issue.pk %}">
-      <td class="pick">
-        <input type="checkbox"
-               name="issue"
-               value="{{ row.issue.pk }}"
-               aria-label="Select {{ row.issue.title }}">
-      </td>
+      {% if can_triage %}
+        <td class="pick">
+          <input type="checkbox"
+                 name="issue"
+                 value="{{ row.issue.pk }}"
+                 aria-label="Select {{ row.issue.title }}">
+        </td>
+      {% endif %}
       <td class="subject">
         <div class="subject-line">
           <span class="dot dot-{{ row.issue.source_state|default:'none' }}"
@@ -41,13 +43,20 @@
       <td class="num">{{ row.issue.event_count }}</td>
       <td class="num">{{ row.duration }}</td>
       <td class="when" title="{{ row.issue.last_seen|date:'Y-m-d H:i:s e' }}">{{ row.last_seen }}</td>
+      <td class="owner">
+        {% if row.owner %}
+          <a class="owner-link" href="?q=owner:{{ row.owner|urlencode }}">{{ row.owner }}</a>
+        {% else %}
+          <span class="muted">—</span>
+        {% endif %}
+      </td>
       <td class="state">
         <span class="pill pill-{{ row.issue.triage_state }}">{{ row.issue.get_triage_state_display }}</span>
       </td>
     </tr>
   {% empty %}
     <tr>
-      <td class="empty" colspan="7">
+      <td class="empty" colspan="{% if can_triage %}8{% else %}7{% endif %}">
         <p class="empty-title">No issue matches this search</p>
         <p class="empty-hint">
           Filters: is, state, level, project, environment, tag, label, seen, age. Anything else is matched against the title and the culprit.

@@ -16,6 +16,7 @@ urlpatterns = [
         name="occurrence-delete",
     ),
     path("overview/", views.overview, name="overview"),
+    path("history/", views.history, name="history"),
     path("ingest/", views.ingest, name="ingest"),
     path("ingest/replay/", views.replay_envelopes, name="ingest-replay"),
     path(
@@ -26,6 +27,8 @@ urlpatterns = [
         ),
         name="login",
     ),
+    path("sso/", views.sso_start, name="sso-start"),
+    path("sso/callback/", views.sso_callback, name="sso-callback"),
     path(
         "logout/",
         auth_views.LogoutView.as_view(next_page="ui:login"),

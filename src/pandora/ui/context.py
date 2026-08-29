@@ -5,6 +5,8 @@ from typing import Any
 from django.conf import settings
 from django.http import HttpRequest
 
+from pandora.people import oidc
+
 ENVIRONMENT_TONES = {
     "local": "info",
     "dev": "info",
@@ -21,4 +23,5 @@ def chrome(request: HttpRequest) -> dict[str, Any]:
     return {
         "pandora_env": environment.upper(),
         "pandora_env_tone": ENVIRONMENT_TONES.get(environment.lower(), "info"),
+        "sso_enabled": oidc.enabled(),
     }

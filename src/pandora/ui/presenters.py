@@ -45,6 +45,7 @@ class Row:
     first_seen: str
     duration: str
     state_label: str
+    owner: str
 
 
 @dataclass(frozen=True)
@@ -76,7 +77,9 @@ def stream_queryset(now: datetime) -> QuerySet[Issue]:
         hour__gte=sparkline.window_start(now)
     ).order_by("hour")
     return (
-        Issue.objects.select_related("project")
+        Issue.objects.select_related(
+            "project", "assignment", "assignment__team", "assignment__user"
+        )
         .prefetch_related(
             Prefetch("hourly_stats", queryset=window_stats, to_attr="window_stats")
         )
@@ -114,7 +117,19 @@ def row(issue: Issue, now: datetime) -> Row:
             now,
         ),
         state_label=state_label(issue),
+        owner=owner_of(issue),
     )
+
+
+def owner_of(issue: Issue) -> str:
+    assignment = getattr(issue, "assignment", None)
+    if assignment is None:
+        return ""
+    if assignment.user is not None:
+        return assignment.user.get_username()
+    if assignment.team is not None:
+        return assignment.team.name
+    return ""
 
 
 def grouping_labels(issue: Issue) -> tuple[str, ...]:

@@ -6,6 +6,7 @@ from typing import Any
 
 from django.contrib import messages
 from django.contrib.admin.views.decorators import staff_member_required
+from django.contrib.auth import login
 from django.core.paginator import Page, Paginator
 from django.db.models import Count, Q, QuerySet
 from django.http import Http404, HttpRequest, HttpResponse, HttpResponseForbidden
@@ -24,10 +25,13 @@ from pandora.ingest.models import EnvelopeState, RawEnvelope
 from pandora.issues import actions, components, sparkline, triage
 from pandora.issues import detail as detail_module
 from pandora.issues.models import HourlyStat, Issue, SourceState, TriageState
+from pandora.people import access, audit, oidc, ownership
+from pandora.people.models import AuditEntry
 from pandora.ui import markdown, presenters, query
 from pandora.web import dashboard
 
 LOGIN_URL = "ui:login"
+OIDC_VIA = "oidc"
 PAGE_SIZE = 25
 OVERVIEW_ROWS = 8
 FAILURE_ROWS = 20
@@ -107,6 +111,41 @@ class EventPage:
     supported: bool
 
 
+def _scoped(queryset: QuerySet[Issue], request: HttpRequest) -> QuerySet[Issue]:
+    projects = access.projects_for(request.user)
+    if projects is None:
+        return queryset
+    return queryset.filter(project_id__in=projects)
+
+
+def sso_start(request: HttpRequest) -> HttpResponse:
+    if not oidc.enabled():
+        raise Http404("single sign-on is not configured")
+    redirect_uri = request.build_absolute_uri(reverse("ui:sso-callback"))
+    return oidc.client().authorize_redirect(request, redirect_uri)
+
+
+def sso_callback(request: HttpRequest) -> HttpResponse:
+    if not oidc.enabled():
+        raise Http404("single sign-on is not configured")
+    try:
+        token = oidc.client().authorize_access_token(request)
+    except Exception as error:
+        messages.error(request, f"Single sign-on failed — {error}")
+        return redirect("ui:login")
+
+    claims = token.get("userinfo") or {}
+    try:
+        user = oidc.provision(claims)
+    except oidc.OidcError as error:
+        messages.error(request, f"Single sign-on failed — {error}")
+        return redirect("ui:login")
+
+    request.pandora_login_via = OIDC_VIA
+    login(request, user, backend="django.contrib.auth.backends.ModelBackend")
+    return redirect("ui:stream")
+
+
 @staff_member_required(login_url=LOGIN_URL)
 def stream(request: HttpRequest) -> HttpResponse:
     now = timezone.now()
@@ -114,7 +153,10 @@ def stream(request: HttpRequest) -> HttpResponse:
     if raw is None:
         raw = query.DEFAULT_QUERY
     parsed = query.parse(raw)
-    found, rejected = query.filter_issues(presenters.stream_queryset(now), parsed, now)
+    scoped = _scoped(presenters.stream_queryset(now), request)
+    found, rejected = query.filter_issues(
+        scoped, parsed, now, request.user.get_username()
+    )
     sort = _sort(request.GET.get("sort", ""))
     page = _page(request, found.order_by(*sort.ordering).distinct())
 
@@ -133,6 +175,7 @@ def stream(request: HttpRequest) -> HttpResponse:
         "snoozes": SNOOZE_LABELS,
         "spark_width": presenters.SPARK_WIDTH,
         "spark_height": presenters.SPARK_HEIGHT,
+        "can_triage": access.may(request.user, TRIAGE_PERMISSION),
     }
     if request.GET.get("partial"):
         return render(request, "ui/partials/stream_rows.html", context)
@@ -146,7 +189,7 @@ def issue_page(request: HttpRequest, issue_id: int, tab: str = TABS[0]) -> HttpR
 
     now = timezone.now()
     issue = get_object_or_404(
-        presenters.stream_queryset(now),
+        _scoped(presenters.stream_queryset(now), request),
         pk=issue_id,
     )
     context = _issue_context(request, issue, tab, now)
@@ -179,21 +222,53 @@ def _recent_events(issue: Issue) -> list[Event]:
 @staff_member_required(login_url=LOGIN_URL)
 def overview(request: HttpRequest) -> HttpResponse:
     now = timezone.now()
+    projects = access.projects_for(request.user)
     firing = (
-        presenters.stream_queryset(now)
+        _scoped(presenters.stream_queryset(now), request)
         .filter(source_state=SourceState.FIRING)
         .order_by("-last_seen")[:OVERVIEW_ROWS]
     )
-    newest = presenters.stream_queryset(now).order_by("-first_seen")[:OVERVIEW_ROWS]
+    newest = _scoped(presenters.stream_queryset(now), request).order_by("-first_seen")[
+        :OVERVIEW_ROWS
+    ]
     context = {
         "nav": "overview",
-        "kpis": dashboard.kpis(now),
+        "kpis": dashboard.kpis(now, projects),
         "firing": [presenters.row(issue, now) for issue in firing],
         "newest": [presenters.row(issue, now) for issue in newest],
         "spark_width": presenters.SPARK_WIDTH,
         "spark_height": presenters.SPARK_HEIGHT,
     }
     return render(request, "ui/overview.html", context)
+
+
+@staff_member_required(login_url=LOGIN_URL)
+def history(request: HttpRequest) -> HttpResponse:
+    now = timezone.now()
+    entries = AuditEntry.objects.all()
+    action = request.GET.get("action", "").strip()
+    if action:
+        entries = entries.filter(action=action)
+    actor = request.GET.get("actor", "").strip()
+    if actor:
+        entries = entries.filter(actor=actor)
+    page = _page(request, entries)
+    context = {
+        "nav": "history",
+        "rows": [
+            (entry, components.format_relative(entry.at, now))
+            for entry in page.object_list
+        ],
+        "page": page,
+        "total": page.paginator.count,
+        "actions": sorted(
+            AuditEntry.objects.values_list("action", flat=True).distinct()
+        ),
+        "action": action,
+        "actor": actor,
+        "page_query": urlencode({"action": action, "actor": actor}),
+    }
+    return render(request, "ui/history.html", context)
 
 
 @staff_member_required(login_url=LOGIN_URL)
@@ -228,7 +303,7 @@ def ingest(request: HttpRequest) -> HttpResponse:
 @staff_member_required(login_url=LOGIN_URL)
 @require_POST
 def issue_actions(request: HttpRequest) -> HttpResponse:
-    if not request.user.has_perm(TRIAGE_PERMISSION):
+    if not access.may(request.user, TRIAGE_PERMISSION):
         return HttpResponseForbidden("triage requires the issue change permission")
 
     issues = list(Issue.objects.filter(pk__in=request.POST.getlist("issue")))
@@ -253,7 +328,7 @@ def issue_actions(request: HttpRequest) -> HttpResponse:
 def delete_occurrence(
     request: HttpRequest, issue_id: int, event_id: str
 ) -> HttpResponse:
-    if not request.user.has_perm(TRIAGE_PERMISSION):
+    if not access.may(request.user, TRIAGE_PERMISSION):
         return HttpResponseForbidden(
             "deleting an occurrence requires the issue change permission"
         )
@@ -275,6 +350,9 @@ def delete_occurrence(
         return redirect(_next_url(request))
 
     removed = store.delete(issue.project_id, found)
+    audit.from_request(
+        request, audit.DELETE_OCCURRENCE, str(issue.pk), {"event": event_id}
+    )
     messages.success(request, f"Deleted {removed} occurrence(s)")
     return redirect(_next_url(request))
 
@@ -282,12 +360,18 @@ def delete_occurrence(
 @staff_member_required(login_url=LOGIN_URL)
 @require_POST
 def replay_envelopes(request: HttpRequest) -> HttpResponse:
-    if not request.user.has_perm(REPLAY_PERMISSION):
+    if not access.may(request.user, REPLAY_PERMISSION):
         return HttpResponseForbidden("replay requires the envelope change permission")
 
     result = ingest_replay.replay(
         ingest_replay.STATE_SETS["all"],
         REPLAY_LIMIT,
+    )
+    audit.from_request(
+        request,
+        audit.REPLAY,
+        "",
+        {"attempted": result.attempted, "done": result.done, "failed": result.failed},
     )
     messages.success(
         request,
@@ -317,11 +401,28 @@ def _issue_context(
         "windows": SILENCE_LABELS,
         "snoozes": SNOOZE_LABELS,
         "next_url": request.get_full_path(),
+        "can_triage": access.may(request.user, TRIAGE_PERMISSION),
     }
+    context.update(_owner_context(issue))
     if tab == "occurrences":
         context["events"] = _events(issue, request.GET.get("cursor", ""))
-        context["can_triage"] = request.user.has_perm(TRIAGE_PERMISSION)
     return context
+
+
+def _owner_context(issue: Issue) -> dict[str, Any]:
+    owner = presenters.owner_of(issue)
+    if owner:
+        return {"owner": owner, "owner_suggestions": []}
+    if not ownership.rules_for(issue):
+        return {"owner": "", "owner_suggestions": []}
+    events = _recent_events(issue)
+    newest = None
+    if events:
+        newest = events[0]
+    return {
+        "owner": "",
+        "owner_suggestions": ownership.suggestions(issue, newest),
+    }
 
 
 def _latest(issue: Issue) -> presenters.EventRow | None:
@@ -363,6 +464,12 @@ def _run_triage(request: HttpRequest, issues: list[Issue], target_state: str) ->
         request.user.get_username(),
         timezone.now(),
     )
+    audit.from_request(
+        request,
+        audit.TRIAGE,
+        ",".join(str(issue.pk) for issue in issues),
+        {"state": target_state, "changed": report.changed},
+    )
     messages.success(
         request,
         f"{actions.TRIAGE_VERBS[target_state]} {report.changed} issue(s),"
@@ -378,6 +485,12 @@ def _run_snooze(request: HttpRequest, issues: list[Issue], spec: str) -> None:
         for error in report.errors:
             messages.error(request, error)
         return
+    audit.from_request(
+        request,
+        audit.SNOOZE,
+        ",".join(str(issue.pk) for issue in issues),
+        {"spec": spec},
+    )
     messages.success(request, f"Snoozed {report.snoozed} issue(s)")
 
 
@@ -401,6 +514,12 @@ def _run_silence(request: HttpRequest, issues: list[Issue], window: str) -> None
     for note in report.errors:
         messages.error(request, note)
     if report.silenced:
+        audit.from_request(
+            request,
+            audit.SILENCE,
+            ",".join(str(issue.pk) for issue in issues),
+            {"window": window, "silenced": report.silenced},
+        )
         messages.success(
             request,
             f"Silenced {report.silenced} issue(s) in Alertmanager for {window}",
