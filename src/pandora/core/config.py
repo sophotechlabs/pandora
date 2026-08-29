@@ -7,11 +7,22 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+from django.contrib.auth import get_user_model
 
 from pandora.core.models import DsnKey, IngestToken, Project, ServiceLink
 from pandora.issues.models import GroupingRule
+from pandora.people import ownership
+from pandora.people.models import Membership, OwnershipRule, Role, Team
 
-SECTIONS = ("projects", "tokens", "dsn_keys", "grouping_rules", "service_links")
+SECTIONS = (
+    "projects",
+    "tokens",
+    "dsn_keys",
+    "grouping_rules",
+    "service_links",
+    "teams",
+    "ownership_rules",
+)
 
 
 class ConfigError(ValueError):
@@ -88,6 +99,8 @@ def apply(document: Mapping[str, Any]) -> Report:
     _apply_dsn_keys(document, projects, report)
     _apply_grouping_rules(document, projects, report)
     _apply_service_links(document, projects, report)
+    _apply_teams(document, projects, report)
+    _apply_ownership_rules(document, projects, report)
     return report
 
 
@@ -229,6 +242,108 @@ def _apply_service_links(
         declared.append(link.pk)
         _record(report, created, changed, f"service link {link.name}")
     _deactivate(ServiceLink.objects.exclude(pk__in=declared), report, "service link")
+
+
+def _account(username: str) -> Any:
+    model = get_user_model()
+    user, created = model.objects.get_or_create(
+        username=username, defaults={"is_staff": True}
+    )
+    if created:
+        user.set_unusable_password()
+        user.save(update_fields=["password"])
+    return user
+
+
+def _members(row: Mapping[str, Any], team: Team) -> None:
+    declared = []
+    for entry in row.get("members", []) or []:
+        username = ""
+        role = str(Role.MEMBER)
+        if isinstance(entry, str):
+            username = entry
+        else:
+            username = str(entry.get("user", ""))
+            role = str(entry.get("role", Role.MEMBER))
+        if not username:
+            raise ConfigError("teams entry has a member with no user")
+        if role not in Role.values:
+            raise ConfigError(f"teams entry names unknown role {role!r}")
+        user = _account(username)
+        membership, _ = Membership.objects.get_or_create(team=team, user=user)
+        _write(membership, {"role": role})
+        declared.append(user.pk)
+    Membership.objects.filter(team=team).exclude(user_id__in=declared).delete()
+
+
+def _apply_teams(
+    document: Mapping[str, Any], projects: Mapping[str, Project], report: Report
+) -> None:
+    for row in _rows(document, "teams"):
+        _required(row, "teams", "name")
+        team, created = Team.objects.get_or_create(name=str(row["name"]))
+        wanted = [
+            _project(projects, slug, "teams") for slug in row.get("projects", []) or []
+        ]
+        changed = set(team.projects.all()) != set(wanted)
+        team.projects.set(wanted)
+        before = set(Membership.objects.filter(team=team).values_list("user", "role"))
+        _members(row, team)
+        after = set(Membership.objects.filter(team=team).values_list("user", "role"))
+        _record(report, created, changed or before != after, f"team {team.name}")
+
+
+def _apply_ownership_rules(
+    document: Mapping[str, Any], projects: Mapping[str, Project], report: Report
+) -> None:
+    declared = []
+    for row in _rows(document, "ownership_rules"):
+        _required(row, "ownership_rules", "name", "pattern")
+        if row.get("team") and row.get("user"):
+            raise ConfigError(
+                f"ownership rule {row['name']!r} names both a team and a user"
+            )
+        if not row.get("team") and not row.get("user"):
+            raise ConfigError(f"ownership rule {row['name']!r} names no owner")
+        field = str(row.get("field", ownership.PATH))
+        if field not in ownership.FIELDS:
+            raise ConfigError(
+                f"ownership rule {row['name']!r} matches on unknown field {field!r}"
+            )
+        team = None
+        if row.get("team"):
+            team = Team.objects.filter(name=str(row["team"])).first()
+            if team is None:
+                raise ConfigError(
+                    f"ownership rule {row['name']!r} names unknown team {row['team']!r}"
+                )
+        user = None
+        if row.get("user"):
+            user = _account(str(row["user"]))
+        project = None
+        if row.get("project"):
+            project = _project(projects, row["project"], "ownership_rules")
+        rule, created = OwnershipRule.objects.get_or_create(
+            name=str(row["name"]),
+            defaults={"pattern": str(row["pattern"])},
+        )
+        changed = _write(
+            rule,
+            {
+                "pattern": str(row["pattern"]),
+                "field": field,
+                "team": team,
+                "user": user,
+                "project": project,
+                "ordering": int(row.get("ordering", 100)),
+                "active": True,
+            },
+        )
+        declared.append(rule.pk)
+        _record(report, created, changed, f"ownership rule {rule.name}")
+    _deactivate(
+        OwnershipRule.objects.exclude(pk__in=declared), report, "ownership rule"
+    )
 
 
 def _deactivate(queryset: Any, report: Report, label: str) -> None:
