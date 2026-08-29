@@ -136,6 +136,10 @@ A frame with no `context_line` says so rather than rendering an empty block. Tha
 
 Every event keeps its raw form too, behind **Raw payload** on the occurrence.
 
+## Taking an issue somewhere else
+
+`?format=md` on any issue page renders it as Markdown — title, the facts table, the newest occurrences with their stack traces and breadcrumbs, episode history, tags, what else was firing in the same window, the outbound links and the activity trail. It is the artefact you paste into a chat, a ticket or an agent, and the page carries a button for it.
+
 ## Outbound links
 
 An issue is a starting point, not a destination. **Service links** are URL templates in the admin, rendered as buttons on the issue page with the issue's own values already filled in:

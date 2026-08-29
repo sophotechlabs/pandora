@@ -11,6 +11,9 @@
       <span class="pill pill-{{ issue.triage_state }}">{{ issue.get_triage_state_display }}</span>
     </div>
     <p class="culprit">{{ issue.culprit }}</p>
+    <p class="issue-export">
+      <a class="btn btn-ghost" href="?format=md">Copy as Markdown</a>
+    </p>
     <div class="issue-meta">
       <span class="project">{{ issue.project.slug }}</span>
       {% if issue.environment %}<span class="project">{{ issue.environment }}</span>{% endif %}

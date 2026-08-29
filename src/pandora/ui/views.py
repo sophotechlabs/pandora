@@ -18,11 +18,13 @@ from django.views.decorators.http import require_POST
 from pandora.am import client as am_client
 from pandora.core.models import IngestToken
 from pandora.events.store import get_store
+from pandora.events.types import Event
 from pandora.ingest import replay as ingest_replay
 from pandora.ingest.models import EnvelopeState, RawEnvelope
-from pandora.issues import actions, components, detail, sparkline, triage
+from pandora.issues import actions, components, sparkline, triage
+from pandora.issues import detail as detail_module
 from pandora.issues.models import HourlyStat, Issue, SourceState, TriageState
-from pandora.ui import presenters, query
+from pandora.ui import markdown, presenters, query
 from pandora.web import dashboard
 
 LOGIN_URL = "ui:login"
@@ -136,10 +138,30 @@ def issue_page(request: HttpRequest, issue_id: int, tab: str = TABS[0]) -> HttpR
         pk=issue_id,
     )
     context = _issue_context(request, issue, tab, now)
+    if request.GET.get("format") == "md":
+        return _markdown_response(issue, context["detail"])
     if request.GET.get("partial"):
         return render(request, f"ui/partials/tab_{tab}.html", context)
     context["latest"] = _latest(issue)
     return render(request, "ui/issue.html", context)
+
+
+def _markdown_response(issue: Issue, detail: detail_module.Detail) -> HttpResponse:
+    body = markdown.render(issue, detail, _recent_events(issue))
+    response = HttpResponse(body, content_type="text/markdown; charset=utf-8")
+    response["Content-Disposition"] = f'inline; filename="issue-{issue.pk}.md"'
+    return response
+
+
+def _recent_events(issue: Issue) -> list[Event]:
+    try:
+        return get_store().fetch(
+            issue.project_id,
+            issue_id=issue.pk,
+            limit=markdown.EVENT_LIMIT,
+        )
+    except NotImplementedError:
+        return []
 
 
 @staff_member_required(login_url=LOGIN_URL)
@@ -241,7 +263,7 @@ def _issue_context(
         "nav": "issues",
         "issue": issue,
         "row": presenters.row(issue, now),
-        "detail": detail.build(issue),
+        "detail": detail_module.build(issue),
         "chart": presenters.chart(stats, now),
         "chart_width": presenters.CHART_WIDTH,
         "chart_height": presenters.CHART_HEIGHT,
