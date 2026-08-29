@@ -1,5 +1,7 @@
 # Pandora
 
+[![license](https://img.shields.io/badge/license-FSL--1.1--ALv2-blue)](LICENSE)
+
 Self-hosted, k8s-native event tracker on the Sentry model: occurrences grouped into issues with first/last-seen, counts, sparkline and triage state. Two front doors into one core — Alertmanager webhooks and the Sentry envelope protocol — and one operator UI over both. SQLite and Postgres are both first-class.
 
 Alertmanager tells you an alert is firing. It does not tell you when it resolved itself, how often it flaps, or whether the thing you fixed came back. Pandora keeps that record.
@@ -256,3 +258,11 @@ The event payloads behind an issue, newest first, read through the `EventStore`.
 ```
 
 `payload` holds the normalised Sentry interfaces of an SDK event — `exceptions`, `threads`, `breadcrumbs`, `user`, `request`, `contexts`, `sdk`, `modules`, `logentry`, `debug_images`, `extra`, and the scalars (`release`, `dist`, `server_name`, `transaction`, `platform`). It is `{}` for an Alertmanager occurrence, which has no stack trace, and for anything stored before 0.7.0.
+
+## License
+
+[FSL-1.1-ALv2](LICENSE): use, modify and redistribute it for anything except a commercial product that competes with Pandora. Each release turns into Apache 2.0 two years after it ships.
+
+It comes as is, with no warranty of any kind and no liability on Sophotech s.r.o. for what it does. The image carries a copy at `/app/LICENSE`.
+
+Sentry's own server is source-available under a licence that forbids competing use. Pandora derives nothing from it — the wire format is reimplemented from public protocol documentation, as the ingest section above says.

@@ -59,7 +59,7 @@ FROM base AS prod
 
 COPY --from=builder --chown=root:root /opt/venv /opt/venv
 RUN chown root:root /opt/venv
-COPY pyproject.toml manage.py ./
+COPY pyproject.toml manage.py LICENSE ./
 COPY docker/ ./docker/
 COPY src/ ./src/
 
