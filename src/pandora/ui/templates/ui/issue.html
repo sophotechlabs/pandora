@@ -29,6 +29,17 @@
       <button class="btn" type="submit" name="action" value="resolve">Resolve</button>
       <button class="btn" type="submit" name="action" value="ignore">Ignore</button>
       <details class="menu">
+        <summary class="btn">Snooze</summary>
+        <div class="menu-list">
+          {% for spec, label in snoozes %}
+            <button class="menu-item"
+                    type="submit"
+                    name="action"
+                    value="snooze:{{ spec }}">{{ label }}</button>
+          {% endfor %}
+        </div>
+      </details>
+      <details class="menu">
         <summary class="btn">Silence</summary>
         <div class="menu-list">
           {% for window, label in windows %}

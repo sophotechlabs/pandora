@@ -6,12 +6,14 @@ from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
-from django.db.models import Q, QuerySet
+from django.db.models import F, Q, QuerySet
 
 from pandora.issues import triage
 from pandora.issues.models import Issue, Level, SourceState, TriageState
 
 DEFAULT_QUERY = "is:unresolved"
+SNOOZED = "snoozed"
+AWAKE = "awake"
 UNRESOLVED = "unresolved"
 
 KEY_NAME = re.compile(r"^[a-z_]+$")
@@ -111,6 +113,10 @@ def _text_query(text: str) -> Q:
     )
 
 
+def _snoozed_query(now: datetime) -> Q:
+    return Q(snoozed_until__gt=now) | Q(snoozed_past_count__gt=F("event_count"))
+
+
 def _apply_is(
     queryset: QuerySet[Issue], values: Sequence[str], now: datetime
 ) -> tuple[QuerySet[Issue], list[str]]:
@@ -119,6 +125,12 @@ def _apply_is(
     for value in values:
         if value == UNRESOLVED:
             query |= Q(triage_state__in=triage.OPEN_STATES)
+            continue
+        if value.lower() == SNOOZED:
+            query |= _snoozed_query(now)
+            continue
+        if value.lower() == AWAKE:
+            query |= ~_snoozed_query(now)
             continue
         state = TRIAGE_VALUES.get(value.lower())
         if state is None:

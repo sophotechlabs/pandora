@@ -34,6 +34,7 @@ FAILURE_ROWS = 20
 EVENT_ROWS = 25
 REPLAY_LIMIT = 200
 SILENCE_PREFIX = "silence:"
+SNOOZE_PREFIX = "snooze:"
 TRIAGE_PERMISSION = "issues.change_issue"
 REPLAY_PERMISSION = "ingest.change_rawenvelope"
 
@@ -70,6 +71,16 @@ SILENCE_LABELS = (
     ("1h", "1 hour"),
     ("4h", "4 hours"),
     ("1d", "1 day"),
+)
+
+SNOOZE_LABELS = (
+    ("1h", "1 hour"),
+    ("4h", "4 hours"),
+    ("1d", "1 day"),
+    ("1w", "1 week"),
+    ("100", "100 more"),
+    ("500", "500 more"),
+    ("1000", "1000 more"),
 )
 
 
@@ -119,6 +130,7 @@ def stream(request: HttpRequest) -> HttpResponse:
         "sort": sort,
         "page_query": urlencode({"q": raw, "sort": sort.key}),
         "windows": SILENCE_LABELS,
+        "snoozes": SNOOZE_LABELS,
         "spark_width": presenters.SPARK_WIDTH,
         "spark_height": presenters.SPARK_HEIGHT,
     }
@@ -227,6 +239,8 @@ def issue_actions(request: HttpRequest) -> HttpResponse:
     action = request.POST.get("action", "")
     if action in TRIAGE_ACTIONS:
         _run_triage(request, issues, TRIAGE_ACTIONS[action])
+    elif action.startswith(SNOOZE_PREFIX):
+        _run_snooze(request, issues, action[len(SNOOZE_PREFIX) :])
     elif action.startswith(SILENCE_PREFIX):
         _run_silence(request, issues, action[len(SILENCE_PREFIX) :])
     else:
@@ -301,6 +315,7 @@ def _issue_context(
         "tab": tab,
         "tabs": TAB_LABELS,
         "windows": SILENCE_LABELS,
+        "snoozes": SNOOZE_LABELS,
         "next_url": request.get_full_path(),
     }
     if tab == "occurrences":
@@ -353,6 +368,17 @@ def _run_triage(request: HttpRequest, issues: list[Issue], target_state: str) ->
         f"{actions.TRIAGE_VERBS[target_state]} {report.changed} issue(s),"
         f" {report.unchanged} unchanged",
     )
+
+
+def _run_snooze(request: HttpRequest, issues: list[Issue], spec: str) -> None:
+    report = actions.apply_snooze(
+        issues, spec, request.user.get_username(), timezone.now()
+    )
+    if report.errors:
+        for error in report.errors:
+            messages.error(request, error)
+        return
+    messages.success(request, f"Snoozed {report.snoozed} issue(s)")
 
 
 def _run_silence(request: HttpRequest, issues: list[Issue], window: str) -> None:

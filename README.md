@@ -112,11 +112,13 @@ The stream opens on `is:unresolved`. The search box takes a query rather than a 
 | `label:` | `label:namespace=payments` | a grouping label the fingerprint kept |
 | `tag:` | `tag:pod=ledger-7d9f4c8b6d-hk2mp` | a value from the tag breakdown, including ones grouping dropped |
 | `seen:` | `seen:1h` | last seen inside the window — `30m`, `6h`, `7d`, `2w` |
+| `is:snoozed` | `is:snoozed` | quiet on purpose, by time or by occurrence count |
+| `is:awake` | `is:awake` | everything not currently snoozed |
 | `age:` | `age:1d` | first seen inside the window |
 
 Anything else is matched against the title and the culprit, and a bare hash prefix matches the fingerprint. Repeating a key widens it (`level:error level:fatal`); different keys narrow together. A term Pandora does not understand is named back above the table rather than silently returning nothing.
 
-Selecting rows raises an action bar: acknowledge, resolve, ignore, or silence in Alertmanager for 1h, 4h or 1d. `/` focuses the search box, `j` and `k` move through the rows, `x` selects one, `Enter` opens it.
+Selecting rows raises an action bar: acknowledge, resolve, ignore, snooze, or silence in Alertmanager for 1h, 4h or 1d. `/` focuses the search box, `j` and `k` move through the rows, `x` selects one, `Enter` opens it.
 
 Triage needs the `issues.change_issue` permission and replay needs `ingest.change_rawenvelope`, the same permissions the admin checks — a staff account without them gets a read-only UI.
 
@@ -226,6 +228,14 @@ https://loki.example.com/explore?q={pod}&from={from_iso}&to={to_iso}
 Available names: every grouping label, every label of the newest episode, the most frequent value of every tag key the breakdown holds, plus `project`, `environment`, `issue`, `fingerprint`, and the window as `from_ms` / `to_ms` / `from_iso` / `to_iso` with `padded_` variants five minutes either side. A template naming something the issue does not have renders no button rather than a broken one. Leave the project blank for a template that applies to every project.
 
 `PANDORA_GRAFANA_URL` and `PANDORA_LOKI_QUERY_URL` still work and read the same names.
+
+## Three kinds of quiet
+
+**Snooze** hides an issue for a while and it comes back on its own: 1 hour, 4 hours, a day, a week, or *the next 100 / 500 / 1000 occurrences*. The count form has no Sentry equivalent and it is the right answer for something that flaps. There is deliberately **no indefinite snooze** — an issue that can be silenced forever is one nobody looks at again.
+
+**Ignore** is the triage state for something you have decided not to act on. **Resolve** says it is fixed, and a further occurrence is a regression.
+
+Snoozing never stops ingest; the counts keep moving and `is:snoozed` lists what is quiet. To stop *recording* something, use a drop rule.
 
 ## Grouping
 

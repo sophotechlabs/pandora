@@ -31,6 +31,8 @@ class TriageState(models.TextChoices):
 
 class ActivityKind(models.TextChoices):
     CREATED = "created", "Created"
+    SNOOZED = "snoozed", "Snoozed"
+    UNSNOOZED = "unsnoozed", "Woke up"
     REGRESSION = "regression", "Regression"
     ACKNOWLEDGED = "acknowledged", "Acknowledged"
     RESOLVED = "resolved", "Resolved"
@@ -79,6 +81,8 @@ class Issue(models.Model):
         default=TriageState.NEW,
     )
     last_resolved_at = models.DateTimeField(null=True, blank=True)
+    snoozed_until = models.DateTimeField(null=True, blank=True)
+    snoozed_past_count = models.PositiveBigIntegerField(null=True, blank=True)
 
     class Meta:
         constraints = [
@@ -95,6 +99,10 @@ class Issue(models.Model):
             models.Index(
                 fields=["project", "source_state"],
                 name="issues_issue_proj_source",
+            ),
+            models.Index(
+                fields=["snoozed_until"],
+                name="issues_issue_snoozed",
             ),
         ]
         ordering = ("-last_seen",)

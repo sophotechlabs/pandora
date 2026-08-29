@@ -8,6 +8,7 @@ from django.db import transaction
 
 from pandora.am import client as am_client
 from pandora.am import silences
+from pandora.issues import snooze as snooze_module
 from pandora.issues import triage
 from pandora.issues.models import Issue, IssueActivity
 
@@ -84,3 +85,44 @@ def silence(
             continue
         silenced += 1
     return SilenceReport(silenced=silenced, errors=tuple(errors))
+
+
+@dataclass(frozen=True)
+class SnoozeReport:
+    snoozed: int = 0
+    errors: tuple[str, ...] = field(default_factory=tuple)
+
+
+def apply_snooze(
+    issues: Iterable[Issue], spec: str, actor: str, at: datetime
+) -> SnoozeReport:
+    snoozed = 0
+    errors: list[str] = []
+    for issue in issues:
+        plan = snooze_module.plan(issue, spec, at)
+        if plan.error:
+            return SnoozeReport(errors=(plan.error,))
+        with transaction.atomic():
+            issue.snoozed_until = plan.until
+            issue.snoozed_past_count = plan.past_count
+            issue.save(update_fields=["snoozed_until", "snoozed_past_count"])
+            IssueActivity.objects.create(
+                issue=issue,
+                kind="snoozed",
+                actor=actor,
+                at=at,
+                data={"spec": spec},
+            )
+        snoozed += 1
+    return SnoozeReport(snoozed=snoozed, errors=tuple(errors))
+
+
+def wake(issue: Issue, at: datetime) -> bool:
+    if not snooze_module.expired(issue, at):
+        return False
+    with transaction.atomic():
+        issue.snoozed_until = None
+        issue.snoozed_past_count = None
+        issue.save(update_fields=["snoozed_until", "snoozed_past_count"])
+        IssueActivity.objects.create(issue=issue, kind="unsnoozed", at=at)
+    return True
