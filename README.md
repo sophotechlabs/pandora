@@ -148,6 +148,14 @@ Beyond the defaults, **scrub rules** name a dotted path — `user.email`, `reque
 
 **Drop rules** refuse a payload before the durable write, so the saving is disk rather than only noise. Each matches a field — `alertname`, `namespace`, `severity`, `type`, `value`, `message`, `release`, `environment`, `server_name`, `transaction`, `platform` — against a regular expression, counts what it refused, and works on both ingest doors. An invalid pattern never matches rather than taking ingest down.
 
+## Holding the door
+
+An **ingest quota** caps how much a project may send in a window — a row in the admin naming a limit and a window in seconds, scoped to one project or to the whole install, tightest wins. Past the limit the door answers `429` with `X-Sentry-Rate-Limits` and `Retry-After`, which unmodified Sentry SDKs already honour, so a client backs off instead of retrying into a wall. Both doors hold the same contract.
+
+**Spike protection** is off by default. Turned on, it compares the current hour against the median of the previous 24 and sheds when the ratio passes `PANDORA_SPIKE_FACTOR` (5) and the count passes `PANDORA_SPIKE_FLOOR` (100). The median rather than the mean, so one quiet hour cannot turn normal traffic into a spike.
+
+With no quota configured and spike protection off, the gate does exactly what it did before — a size check and nothing else, with no counter written. Counters live in one small table, bucketed by window, and `prune` drops them after two days.
+
 ## An agent's view
 
 Pandora ships a read-only MCP server as an optional extra, so an agent can look at issues without being handed a browser session:

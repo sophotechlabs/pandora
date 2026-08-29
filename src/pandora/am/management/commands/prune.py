@@ -11,12 +11,14 @@ from django.utils import timezone
 
 from pandora.core import database
 from pandora.events.store import get_store
+from pandora.ingest import limits
 from pandora.ingest.models import EnvelopeState, ProcessedEvent, RawEnvelope
 from pandora.issues.models import HourlyStat, IssueActivity, SilenceLink
 
 logger = logging.getLogger(__name__)
 
 MONTHS_AHEAD = 2
+COUNTER_RETENTION = timedelta(days=2)
 
 
 @dataclass(frozen=True)
@@ -27,6 +29,7 @@ class PruneResult:
     silences: int
     hourly_stats: int = 0
     activities: int = 0
+    counters: int = 0
 
 
 def prune_expired(now: datetime) -> PruneResult:
@@ -45,6 +48,7 @@ def prune_expired(now: datetime) -> PruneResult:
     silences, _ = SilenceLink.objects.filter(expires_at__lt=now).delete()
     hourly_stats, _ = HourlyStat.objects.filter(hour__lt=retention_cutoff).delete()
     activities, _ = IssueActivity.objects.filter(at__lt=retention_cutoff).delete()
+    counters = limits.prune(now - COUNTER_RETENTION)
     store.ensure_partitions(months_ahead=MONTHS_AHEAD)
     database.incremental_vacuum()
     database.refresh_size()
@@ -56,16 +60,18 @@ def prune_expired(now: datetime) -> PruneResult:
         silences=silences,
         hourly_stats=hourly_stats,
         activities=activities,
+        counters=counters,
     )
     logger.info(
         "prune: %s events, %s envelopes, %s processed events, %s silences,"
-        " %s hourly stats, %s activities",
+        " %s hourly stats, %s activities, %s ingest counters",
         result.events,
         result.envelopes,
         result.processed_events,
         result.silences,
         result.hourly_stats,
         result.activities,
+        result.counters,
     )
     return result
 
@@ -78,5 +84,6 @@ class Command(BaseCommand):
         self.stdout.write(
             f"prune: {result.events} events, {result.envelopes} envelopes, "
             f"{result.processed_events} processed events, {result.silences} silences, "
-            f"{result.hourly_stats} hourly stats, {result.activities} activities"
+            f"{result.hourly_stats} hourly stats, {result.activities} activities, "
+            f"{result.counters} ingest counters"
         )

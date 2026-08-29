@@ -29,6 +29,13 @@ AUTO_WBITS = 47
 log = logging.getLogger(__name__)
 
 
+def _refused(verdict: Verdict) -> JsonResponse:
+    response = JsonResponse({"detail": verdict.reason}, status=verdict.status)
+    for name, value in verdict.headers().items():
+        response[name] = value
+    return response
+
+
 @csrf_exempt
 def am_webhook(request: HttpRequest) -> JsonResponse:
     if request.method != "POST":
@@ -45,9 +52,9 @@ def am_webhook(request: HttpRequest) -> JsonResponse:
             status=HTTPStatus.UNAUTHORIZED,
         )
 
-    verdict = get_gate().check(token, _content_length(request))
+    verdict = get_gate().check(token.project_id, _content_length(request))
     if not verdict.allowed:
-        return JsonResponse({"detail": verdict.reason}, status=verdict.status)
+        return _refused(verdict)
 
     try:
         payload = json.loads(request.body)
@@ -93,9 +100,9 @@ def envelope(request: HttpRequest, project_id: int) -> JsonResponse:
             status=HTTPStatus.UNAUTHORIZED,
         )
 
-    verdict = _size_verdict(_content_length(request))
+    verdict = get_gate().check(key.project_id, _content_length(request))
     if not verdict.allowed:
-        return JsonResponse({"detail": verdict.reason}, status=verdict.status)
+        return _refused(verdict)
 
     try:
         body = _decoded(request)
@@ -186,16 +193,6 @@ def _auth_fields(raw: str) -> str:
 
 class _TooLarge(Exception):
     pass
-
-
-def _size_verdict(content_length: int) -> Verdict:
-    if content_length > settings.PANDORA_INGEST_MAX_BYTES:
-        return Verdict(
-            allowed=False,
-            status=HTTPStatus.REQUEST_ENTITY_TOO_LARGE,
-            reason="oversized",
-        )
-    return Verdict(allowed=True)
 
 
 def _decoded(request: HttpRequest) -> bytes:

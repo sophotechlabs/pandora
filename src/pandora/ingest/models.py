@@ -63,3 +63,46 @@ class ProcessedEvent(models.Model):
 
     def __str__(self) -> str:
         return self.event_id
+
+
+class IngestQuota(models.Model):
+    name = models.CharField(max_length=100)
+    project = models.ForeignKey(
+        Project,
+        on_delete=models.CASCADE,
+        related_name="quotas",
+        null=True,
+        blank=True,
+    )
+    limit = models.PositiveIntegerField()
+    window_seconds = models.PositiveIntegerField(default=60)
+    active = models.BooleanField(default=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["active"], name="ingest_quota_active"),
+        ]
+        ordering = ("name",)
+
+    def __str__(self) -> str:
+        return f"{self.name} ({self.limit}/{self.window_seconds}s)"
+
+
+class IngestCounter(models.Model):
+    key = models.CharField(max_length=200)
+    bucket = models.DateTimeField()
+    count = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["key", "bucket"],
+                name="ingest_counter_key_bucket_uq",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["bucket"], name="ingest_counter_bucket"),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.key}@{self.bucket:%Y-%m-%dT%H:%M}Z x{self.count}"

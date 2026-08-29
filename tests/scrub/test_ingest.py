@@ -249,3 +249,50 @@ def _envelope(payload):
     header = json.dumps({"event_id": payload["event_id"]})
     item = json.dumps({"type": "event"})
     return "\n".join([header, item, json.dumps(payload)]).encode()
+
+
+# the doors answer with the protocol's own header
+
+
+def test_a_rate_limited_sdk_event_answers_429_with_the_header(project, dsn_key, client):
+    """Should let an unmodified SDK back off correctly rather than retrying into a wall."""
+    from pandora.ingest.models import IngestQuota
+
+    IngestQuota.objects.create(name="tight", project=project, limit=0)
+    body = _envelope(event_payload())
+
+    response = client.post(
+        f"/api/{project.pk}/envelope/",
+        data=body,
+        content_type="application/x-sentry-envelope",
+        headers={"x-sentry-auth": f"sentry sentry_key={dsn_key.public_key}"},
+    )
+
+    result = (
+        response.status_code,
+        "X-Sentry-Rate-Limits" in response.headers,
+        response.headers.get("Retry-After") is not None,
+        ingest_models.RawEnvelope.objects.count(),
+    )
+    expected = (429, True, True, 0)
+
+    assert result == expected
+
+
+def test_a_rate_limited_alert_group_answers_429_with_the_header(project, token, client):
+    """Should hold the same contract on the Alertmanager door."""
+    from pandora.ingest.models import IngestQuota
+
+    IngestQuota.objects.create(name="tight", project=project, limit=0)
+
+    response = client.post(
+        "/ingest/am/",
+        data=json.dumps({"groupLabels": {"alertname": "TargetDown"}, "alerts": []}),
+        content_type="application/json",
+        headers={"authorization": f"Bearer {token.token}"},
+    )
+
+    result = (response.status_code, "X-Sentry-Rate-Limits" in response.headers)
+    expected = (429, True)
+
+    assert result == expected

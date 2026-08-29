@@ -69,6 +69,7 @@ def test_prune_reports_every_retention_class():
         "silences",
         "hourly_stats",
         "activities",
+        "counters",
     ]
 
     assert result == expected
@@ -227,7 +228,7 @@ def test_the_command_reports_an_empty_run():
     result = run_command()
     expected = (
         "prune: 0 events, 0 envelopes, 0 processed events, 0 silences,"
-        " 0 hourly stats, 0 activities\n"
+        " 0 hourly stats, 0 activities, 0 ingest counters\n"
     )
 
     assert result == expected
@@ -250,7 +251,7 @@ def test_the_command_reports_what_it_removed(project, issue):
     result = run_command()
     expected = (
         "prune: 0 events, 1 envelopes, 0 processed events, 1 silences,"
-        " 0 hourly stats, 0 activities\n"
+        " 0 hourly stats, 0 activities, 0 ingest counters\n"
     )
 
     assert result == expected

@@ -212,7 +212,10 @@ PANDORA_CORRELATION_WINDOW_MINUTES = _int(
     "PANDORA_CORRELATION_WINDOW_MINUTES",
     60,
 )
-PANDORA_GATE = os.environ.get("PANDORA_GATE", "pandora.ingest.gate.PassThroughGate")
+PANDORA_SPIKE_ENABLED = _flag("PANDORA_SPIKE_ENABLED")
+PANDORA_SPIKE_FACTOR = _int("PANDORA_SPIKE_FACTOR", 5)
+PANDORA_SPIKE_FLOOR = _int("PANDORA_SPIKE_FLOOR", 100)
+PANDORA_GATE = os.environ.get("PANDORA_GATE", "pandora.ingest.gate.RateLimitGate")
 PANDORA_QUEUE = os.environ.get("PANDORA_QUEUE", "pandora.ingest.queue.SyncQueue")
 
 _ENVIRONMENT_COLORS = {

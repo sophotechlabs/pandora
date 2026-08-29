@@ -65,12 +65,12 @@ def test_pandora_numeric_settings_come_from_the_env(load_settings):
 
 
 def test_the_seams_default_to_their_pass_through_implementations(load_settings):
-    """Should wire the gate and queue seams to the day-one pass-throughs."""
+    """Should wire the gate to the limiter and the queue to the day-one pass-through."""
     settings = load_settings(PANDORA_GATE=None, PANDORA_QUEUE=None)
 
     result = (settings.PANDORA_GATE, settings.PANDORA_QUEUE)
     expected = (
-        "pandora.ingest.gate.PassThroughGate",
+        "pandora.ingest.gate.RateLimitGate",
         "pandora.ingest.queue.SyncQueue",
     )
 
