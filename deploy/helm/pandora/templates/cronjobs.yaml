@@ -1,0 +1,55 @@
+{{- range $name, $job := .Values.cronJobs }}
+{{- if $job.enabled }}
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "pandora.fullname" $ }}-{{ $name }}
+  labels:
+    {{- include "pandora.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: {{ $name }}
+spec:
+  schedule: {{ $job.schedule | quote }}
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      template:
+        metadata:
+          labels:
+            {{- include "pandora.selectorLabels" $ | nindent 12 }}
+            app.kubernetes.io/component: {{ $name }}
+        spec:
+          restartPolicy: Never
+          {{- with $.Values.imagePullSecrets }}
+          imagePullSecrets:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          securityContext:
+            {{- toYaml $.Values.podSecurityContext | nindent 12 }}
+          containers:
+            - name: {{ $name }}
+              image: {{ include "pandora.image" $ | quote }}
+              imagePullPolicy: {{ $.Values.image.pullPolicy }}
+              securityContext:
+                {{- toYaml $.Values.securityContext | nindent 16 }}
+              command: ["python", "manage.py", {{ $name | quote }}]
+              env:
+                {{- include "pandora.env" $ | nindent 16 }}
+              envFrom:
+                - secretRef:
+                    name: {{ include "pandora.secretName" $ }}
+              resources:
+                requests:
+                  cpu: 25m
+                  memory: 128Mi
+                limits:
+                  memory: 256Mi
+              volumeMounts:
+                {{- include "pandora.volumeMounts" $ | nindent 16 }}
+          volumes:
+            {{- include "pandora.volumes" $ | nindent 12 }}
+{{- end }}
+{{- end }}

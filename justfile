@@ -1,4 +1,8 @@
 compose_local := "docker compose -f docker-compose.yml -f docker-compose.local.yml"
+quickstart_name := "pandora-quickstart"
+quickstart_image := "pandora:quickstart"
+quickstart_volume := "pandora-quickstart-data"
+chart := "deploy/helm/pandora"
 image_tag := env_var_or_default("PANDORA_IMAGE_TAG", file_name(justfile_directory()))
 ci_compose_run := "docker compose run --rm --no-deps"
 ci_compose_run_deps := "docker compose run --rm"
@@ -13,6 +17,39 @@ default:
 # Install pandora with web + dev extras into active venv
 install:
     uv pip install -e ".[web,dev]"
+
+# One container, sqlite on a volume, no compose and no .env — the fastest look
+quickstart:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    port="${PANDORA_WEB_PORT:-8000}"
+    password="${PANDORA_QUICKSTART_PASSWORD:-$(head -c 12 /dev/urandom | base64 | tr -d '/+=')}"
+    docker build -q --target prod -t {{quickstart_image}} .
+    docker rm -f {{quickstart_name}} >/dev/null 2>&1 || true
+    docker volume create {{quickstart_volume}} >/dev/null
+    docker run -d --name {{quickstart_name}} \
+        -p "127.0.0.1:$port:8000" \
+        -v {{quickstart_volume}}:/data \
+        -e DJANGO_DEBUG=False \
+        -e DJANGO_SECURE_COOKIES=0 \
+        -e DJANGO_SECRET_KEY="$(head -c 32 /dev/urandom | base64)" \
+        -e DJANGO_ALLOWED_HOSTS="localhost,127.0.0.1" \
+        -e DJANGO_CSRF_TRUSTED_ORIGINS="http://localhost:$port,http://127.0.0.1:$port" \
+        -e DATABASE_URL=sqlite:////data/pandora.sqlite3 \
+        -e PANDORA_RUN_MIGRATIONS=1 \
+        -e DJANGO_SUPERUSER_USERNAME=admin \
+        -e DJANGO_SUPERUSER_EMAIL=admin@example.test \
+        -e DJANGO_SUPERUSER_PASSWORD="$password" \
+        {{quickstart_image}} >/dev/null
+    echo ""
+    echo "Pandora is starting on http://127.0.0.1:$port/"
+    echo "Sign in as admin / $password"
+    echo "Stop it with: just quickstart-down"
+
+# Remove the quickstart container and its volume
+quickstart-down:
+    -docker rm -f {{quickstart_name}}
+    -docker volume rm {{quickstart_volume}}
 
 # Start full docker stack (rebuilds image; entrypoint runs migrations)
 up:
@@ -261,6 +298,15 @@ ci-fix:
     if [ -n "$(find src -name '*.html' -print -quit)" ]; then
         {{ci_compose_run}} --entrypoint djlint web src --reformat
     fi
+
+# helm lint + kubeconform over the chart (optional extra — needs helm and kubeconform)
+chart-lint:
+    helm lint {{chart}}
+    helm template pandora {{chart}} | kubeconform -strict -summary -ignore-missing-schemas
+
+# Render the chart with the defaults
+chart-template *args:
+    helm template pandora {{chart}} {{args}}
 
 # vulture — dead code detection (optional extra, not in default ci)
 ci-deadcode:

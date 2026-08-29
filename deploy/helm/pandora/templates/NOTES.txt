@@ -1,0 +1,24 @@
+Pandora {{ .Chart.AppVersion }} is installed as {{ include "pandora.fullname" . }}.
+
+{{ if .Values.ingress.enabled -}}
+Open https://{{ .Values.host }}/
+{{- else -}}
+No ingress was created. Reach it with:
+
+  kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "pandora.fullname" . }} 8000:{{ .Values.service.port }}
+
+then open http://127.0.0.1:8000/ — note that DJANGO_ALLOWED_HOSTS is set to
+{{ .Values.host }}, so set host= to whatever you actually reach it on.
+{{- end }}
+
+{{ if .Values.superuser.enabled -}}
+The first sign-in is {{ .Values.superuser.username }}. Read the password with:
+
+  kubectl -n {{ .Release.Namespace }} get secret {{ include "pandora.secretName" . }} \
+    -o jsonpath='{.data.DJANGO_SUPERUSER_PASSWORD}' | base64 -d; echo
+{{- end }}
+
+{{ if not .Values.alertmanager.url -}}
+Alertmanager reconcile is off. Set alertmanager.url and reconcile.enabled to
+close episodes whose webhook never arrived.
+{{- end }}

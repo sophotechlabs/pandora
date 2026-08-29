@@ -1,0 +1,11 @@
+apiVersion: v2
+name: pandora
+description: Self-hosted event tracker on the Sentry model — Alertmanager webhooks and Sentry envelopes grouped into triageable issues
+type: application
+version: 0.1.0
+appVersion: "0.6.0"
+home: https://github.com/sophotechlabs/pandora
+sources:
+  - https://github.com/sophotechlabs/pandora
+maintainers:
+  - name: Sophotech s.r.o.

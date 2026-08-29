@@ -12,6 +12,16 @@ Django · Postgres or SQLite · uv · just. The operator UI is server-rendered t
 
 ## Quickstart
 
+One container, SQLite on a volume, nothing to configure:
+
+```sh
+just quickstart
+```
+
+It prints the URL and a generated admin password, and `just quickstart-down` removes it again.
+
+For development, the compose stack gives you Postgres and a live-reloading source mount:
+
 ```sh
 cp .env.example .env
 just bootstrap
@@ -30,6 +40,16 @@ Nothing binds a fixed host port, so several worktrees can build, test and run at
 Set `PANDORA_WEB_PORT` or `PANDORA_DB_PORT` in a checkout's `.env` to pin one to a predictable address — worth doing in whichever checkout you keep a browser tab on, and worth leaving empty everywhere else.
 
 The rest is already per-checkout: Compose derives its project name from the directory, so containers, networks and the `postgres_data` volume never overlap; the image `just ci-docker-scan` builds is tagged with the directory name (override with `PANDORA_IMAGE_TAG`); and the fake Alertmanager the tests run binds an ephemeral port.
+
+## Deploying
+
+`deploy/helm/pandora` installs Pandora on Kubernetes. It defaults to SQLite on a persistent claim — one pod, no database to run — and takes a `postgres://` URL when you would rather use one.
+
+```sh
+helm install pandora deploy/helm/pandora --set host=pandora.example.com --set ingress.enabled=true
+```
+
+`host` is the one value that has to be right: it fills allowed hosts, the CSRF origin and the base URL. Turn on `reconcile.enabled` with `alertmanager.url` to close episodes whose webhook never arrived, and `serviceMonitor.enabled` if you run the Prometheus operator. The chart generates a secret key and an admin password on install and keeps them across upgrades; `helm template` shows exactly what it will create, and `just chart-lint` validates it.
 
 ## Development
 

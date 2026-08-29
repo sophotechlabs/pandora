@@ -342,3 +342,58 @@ def test_an_unknown_environment_banner_falls_back_to_info(load_settings, rf):
     expected = ("P-MK1", "info")
 
     assert result == expected
+
+
+# cookie security
+
+
+def test_cookies_are_secure_by_default_in_production(load_settings):
+    """Should mark both cookies secure whenever debug is off — the deployed case must not need a flag to be safe."""
+    settings = load_settings(
+        DJANGO_DEBUG="0",
+        DJANGO_SECURE_COOKIES=None,
+        DJANGO_SECRET_KEY="test",
+        DJANGO_ALLOWED_HOSTS="localhost",
+        DATABASE_URL="sqlite:///test.sqlite3",
+    )
+
+    result = (settings.SESSION_COOKIE_SECURE, settings.CSRF_COOKIE_SECURE)
+    expected = (True, True)
+
+    assert result == expected
+
+
+def test_cookies_are_not_secure_by_default_in_debug(load_settings):
+    """Should leave a development server usable over http without asking for a flag."""
+    settings = load_settings(DJANGO_DEBUG="1", DJANGO_SECURE_COOKIES=None)
+
+    result = (settings.SESSION_COOKIE_SECURE, settings.CSRF_COOKIE_SECURE)
+    expected = (False, False)
+
+    assert result == expected
+
+
+def test_secure_cookies_can_be_turned_off_in_production(load_settings):
+    """Should let a plain-http instance on a trusted network sign in — a browser drops a secure cookie on http and the login silently never sticks."""
+    settings = load_settings(
+        DJANGO_DEBUG="0",
+        DJANGO_SECURE_COOKIES="0",
+        DJANGO_SECRET_KEY="test",
+        DJANGO_ALLOWED_HOSTS="localhost",
+        DATABASE_URL="sqlite:///test.sqlite3",
+    )
+
+    result = (settings.SESSION_COOKIE_SECURE, settings.CSRF_COOKIE_SECURE)
+    expected = (False, False)
+
+    assert result == expected
+
+
+def test_secure_cookies_can_be_turned_on_in_debug(load_settings):
+    """Should let a developer reproduce the deployed cookie behaviour without turning debug off."""
+    settings = load_settings(DJANGO_DEBUG="1", DJANGO_SECURE_COOKIES="1")
+
+    result = (settings.SESSION_COOKIE_SECURE, settings.CSRF_COOKIE_SECURE)
+    expected = (True, True)
+
+    assert result == expected

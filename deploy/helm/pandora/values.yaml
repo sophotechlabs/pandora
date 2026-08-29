@@ -1,0 +1,130 @@
+image:
+  repository: ghcr.io/sophotechlabs/pandora
+  tag: ""
+  pullPolicy: IfNotPresent
+imagePullSecrets: []
+
+nameOverride: ""
+fullnameOverride: ""
+
+replicaCount: 1
+
+# The public address Pandora is reached on. Fills DJANGO_ALLOWED_HOSTS,
+# DJANGO_CSRF_TRUSTED_ORIGINS and PANDORA_BASE_URL, so it is the one value
+# that has to be right.
+host: pandora.example.com
+
+# sqlite keeps everything in one file on the persistent volume below.
+# Set url to a postgres:// dsn to use an external database instead, and
+# persistence.enabled to false with it.
+database:
+  url: ""
+  path: /data/pandora.sqlite3
+
+persistence:
+  enabled: true
+  existingClaim: ""
+  size: 8Gi
+  storageClass: ""
+  accessMode: ReadWriteOnce
+
+# Every value here lands in a Secret this chart creates. Leave secretKey empty
+# and one is generated on install and kept across upgrades.
+secrets:
+  secretKey: ""
+  existingSecret: ""
+
+superuser:
+  enabled: true
+  username: admin
+  email: admin@example.com
+  password: ""
+
+settings:
+  debug: false
+  secureCookies: true
+  trustProxyHeader: true
+  retentionDays: 30
+  envelopeRetentionDays: 7
+  ingestMaxBytes: 1048576
+  logLevel: INFO
+  environment: ""
+  correlationKeys: "namespace,pod,node,cluster,service"
+  grafanaUrl: ""
+  lokiQueryUrl: ""
+
+alertmanager:
+  url: ""
+  caBundle:
+    secretName: ""
+    key: ca.crt
+  ignore: "Watchdog,InfoInhibitor"
+
+reconcile:
+  enabled: false
+  interval: 60
+  project: ""
+  environment: ""
+  resources:
+    requests:
+      cpu: 25m
+      memory: 128Mi
+    limits:
+      memory: 256Mi
+
+cronJobs:
+  prune:
+    enabled: true
+    schedule: "17 3 * * *"
+  replay:
+    enabled: true
+    schedule: "*/15 * * * *"
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  tls:
+    enabled: true
+    secretName: ""
+
+service:
+  type: ClusterIP
+  port: 8000
+
+serviceMonitor:
+  enabled: false
+  interval: 30s
+  labels: {}
+
+otel:
+  endpoint: ""
+  protocol: http/protobuf
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    memory: 512Mi
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  runAsGroup: 1000
+  fsGroup: 1000
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+podAnnotations: {}
+extraEnv: []

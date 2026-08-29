@@ -63,8 +63,8 @@ COPY pyproject.toml manage.py LICENSE ./
 COPY docker/ ./docker/
 COPY src/ ./src/
 
-RUN mkdir -p /app/staticfiles \
-    && chown pandora:pandora /app/staticfiles \
+RUN mkdir -p /app/staticfiles /data \
+    && chown pandora:pandora /app/staticfiles /data \
     && DJANGO_DEBUG=False \
        DJANGO_SECRET_KEY=build-time-only \
        DJANGO_ALLOWED_HOSTS=localhost \

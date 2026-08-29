@@ -1,0 +1,66 @@
+{{- if .Values.reconcile.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "pandora.fullname" . }}-reconcile
+  labels:
+    {{- include "pandora.labels" . | nindent 4 }}
+    app.kubernetes.io/component: reconcile
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "pandora.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: reconcile
+  template:
+    metadata:
+      labels:
+        {{- include "pandora.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: reconcile
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: reconcile
+          image: {{ include "pandora.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          command:
+            - python
+            - manage.py
+            - reconcile
+            - --loop
+            - {{ .Values.reconcile.interval | quote }}
+            - --metrics-port
+            - "9090"
+            {{- if .Values.reconcile.project }}
+            - --project
+            - {{ .Values.reconcile.project | quote }}
+            {{- end }}
+            {{- if .Values.reconcile.environment }}
+            - --environment
+            - {{ .Values.reconcile.environment | quote }}
+            {{- end }}
+          env:
+            {{- include "pandora.env" . | nindent 12 }}
+          envFrom:
+            - secretRef:
+                name: {{ include "pandora.secretName" . }}
+          ports:
+            - name: metrics
+              containerPort: 9090
+              protocol: TCP
+          resources:
+            {{- toYaml .Values.reconcile.resources | nindent 12 }}
+          volumeMounts:
+            {{- include "pandora.volumeMounts" . | nindent 12 }}
+      volumes:
+        {{- include "pandora.volumes" . | nindent 8 }}
+{{- end }}
