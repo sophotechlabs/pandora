@@ -368,3 +368,68 @@ def test_the_chart_is_covered_by_a_recipe():
     result = "chart-lint:" in (ROOT / "justfile").read_text()
 
     assert result is True
+
+
+# single sign-on
+
+
+@needs_helm
+def test_a_default_install_carries_no_sso_settings():
+    """Should leave the login page as it was until an operator asks for a provider."""
+    docs = render()
+    container = pod_specs(docs)[0]["containers"][0]
+
+    result = [name for name in env_of(container) if name.startswith("PANDORA_OIDC")]
+    expected = []
+
+    assert result == expected
+
+
+@needs_helm
+def test_naming_an_issuer_configures_the_provider():
+    """Should need one value to switch single sign-on on."""
+    docs = render("--set", "oidc.issuer=https://keycloak.test/realms/pandora")
+    container = pod_specs(docs)[0]["containers"][0]
+
+    result = env_of(container)["PANDORA_OIDC_ISSUER"]
+    expected = "https://keycloak.test/realms/pandora"
+
+    assert result == expected
+
+
+@needs_helm
+def test_the_group_mapping_reaches_the_container():
+    """Should let the provider decide the role, which is the point of mapping groups."""
+    docs = render(
+        "--set",
+        "oidc.issuer=https://keycloak.test/realms/pandora",
+        "--set",
+        "oidc.ownerGroup=platform",
+    )
+    container = pod_specs(docs)[0]["containers"][0]
+
+    result = env_of(container)["PANDORA_OIDC_OWNER_GROUP"]
+    expected = "platform"
+
+    assert result == expected
+
+
+@needs_helm
+def test_the_client_secret_goes_into_the_secret_not_the_pod_spec():
+    """Should never render a client secret into a manifest anyone can read."""
+    docs = render(
+        "--set",
+        "oidc.issuer=https://keycloak.test/realms/pandora",
+        "--set",
+        "oidc.clientSecret=shh",
+    )
+    container = pod_specs(docs)[0]["containers"][0]
+    secrets = [doc for doc in docs if doc["kind"] == "Secret"]
+
+    result = (
+        "PANDORA_OIDC_CLIENT_SECRET" in env_of(container),
+        secrets[0]["stringData"]["PANDORA_OIDC_CLIENT_SECRET"],
+    )
+    expected = (False, "shh")
+
+    assert result == expected

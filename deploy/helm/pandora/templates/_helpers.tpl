@@ -84,6 +84,26 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 - name: PANDORA_LOKI_QUERY_URL
   value: {{ .Values.settings.lokiQueryUrl | quote }}
 {{- end }}
+{{- if .Values.oidc.issuer }}
+- name: PANDORA_OIDC_ISSUER
+  value: {{ .Values.oidc.issuer | quote }}
+- name: PANDORA_OIDC_CLIENT_ID
+  value: {{ .Values.oidc.clientId | quote }}
+- name: PANDORA_OIDC_SCOPES
+  value: {{ .Values.oidc.scopes | quote }}
+- name: PANDORA_OIDC_GROUPS_CLAIM
+  value: {{ .Values.oidc.groupsClaim | quote }}
+- name: PANDORA_OIDC_TEAM
+  value: {{ .Values.oidc.team | quote }}
+- name: PANDORA_OIDC_OWNER_GROUP
+  value: {{ .Values.oidc.ownerGroup | quote }}
+- name: PANDORA_OIDC_MEMBER_GROUP
+  value: {{ .Values.oidc.memberGroup | quote }}
+- name: PANDORA_OIDC_VIEWER_GROUP
+  value: {{ .Values.oidc.viewerGroup | quote }}
+- name: PANDORA_OIDC_DEFAULT_ROLE
+  value: {{ .Values.oidc.defaultRole | quote }}
+{{- end }}
 {{- if .Values.alertmanager.url }}
 - name: PANDORA_AM_URL
   value: {{ .Values.alertmanager.url | quote }}

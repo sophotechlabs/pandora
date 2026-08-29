@@ -53,6 +53,18 @@ settings:
   grafanaUrl: ""
   lokiQueryUrl: ""
 
+oidc:
+  issuer: ""
+  clientId: ""
+  clientSecret: ""
+  scopes: "openid profile email"
+  groupsClaim: "groups"
+  team: "sso"
+  ownerGroup: ""
+  memberGroup: ""
+  viewerGroup: ""
+  defaultRole: "viewer"
+
 alertmanager:
   url: ""
   caBundle:
