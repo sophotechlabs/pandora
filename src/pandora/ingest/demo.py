@@ -166,7 +166,12 @@ def _python_event(suffix: str, transaction_id: str) -> dict[str, Any]:
             "os": {"name": "Linux", "version": "6.8.0"},
             "trace": {"trace_id": transaction_id, "op": "http.server"},
         },
-        "tags": {"handler": "authorise", "acquirer": "northbank"},
+        "tags": {
+            "handler": "authorise",
+            "acquirer": "northbank",
+            "namespace": "storefront",
+            "cluster": "p-mk2",
+        },
         "extra": {"basket_id": "b-91f2c", "attempts": 3},
         "sdk": {"name": "sentry.python.django", "version": "2.24.1"},
     }
@@ -240,16 +245,25 @@ def _browser_event(suffix: str) -> dict[str, Any]:
             "browser": {"name": "Firefox", "version": "141.0"},
             "os": {"name": "Mac OS X", "version": "15.6"},
         },
-        "tags": {"route": "/basket"},
+        "tags": {"route": "/basket", "namespace": "storefront", "cluster": "p-mk2"},
         "sdk": {"name": "sentry.javascript.browser", "version": "9.12.0"},
     }
 
 
-EVENTS = (
-    DemoEvent(minutes_ago=9, payload=_python_event("a1", "7c1e4d9a2b6f4e08")),
-    DemoEvent(minutes_ago=74, payload=_python_event("a2", "1b8f3c0d5e2a49df")),
-    DemoEvent(minutes_ago=23, payload=_browser_event("b1")),
-)
+CHECKOUT_MINUTES = (9, 14, 21, 23, 26, 38, 47, 74)
+
+
+def _checkout_events() -> tuple[DemoEvent, ...]:
+    return tuple(
+        DemoEvent(
+            minutes_ago=minutes,
+            payload=_python_event(f"a{index}", f"7c1e4d9a2b6f4e{index:02d}"),
+        )
+        for index, minutes in enumerate(CHECKOUT_MINUTES)
+    )
+
+
+EVENTS = (*_checkout_events(), DemoEvent(minutes_ago=23, payload=_browser_event("b1")))
 
 
 def seed(project: Project, environment: str, now: datetime) -> int:

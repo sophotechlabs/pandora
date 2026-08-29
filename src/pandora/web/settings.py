@@ -196,6 +196,14 @@ PANDORA_AM_URL = os.environ.get("PANDORA_AM_URL", "")
 PANDORA_AM_CA_BUNDLE = os.environ.get("PANDORA_AM_CA_BUNDLE", "")
 PANDORA_GRAFANA_URL = os.environ.get("PANDORA_GRAFANA_URL", "")
 PANDORA_LOKI_QUERY_URL = os.environ.get("PANDORA_LOKI_QUERY_URL", "")
+PANDORA_CORRELATION_KEYS = os.environ.get(
+    "PANDORA_CORRELATION_KEYS",
+    "namespace,pod,node,cluster,service",
+)
+PANDORA_CORRELATION_WINDOW_MINUTES = _int(
+    "PANDORA_CORRELATION_WINDOW_MINUTES",
+    60,
+)
 PANDORA_GATE = os.environ.get("PANDORA_GATE", "pandora.ingest.gate.PassThroughGate")
 PANDORA_QUEUE = os.environ.get("PANDORA_QUEUE", "pandora.ingest.queue.SyncQueue")
 

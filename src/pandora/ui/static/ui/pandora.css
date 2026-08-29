@@ -1628,3 +1628,50 @@ pre {
   align-items: baseline;
   gap: 8px;
 }
+
+.correlated {
+  margin: 12px 0 0;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  list-style: none;
+}
+
+.correlated-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 10px;
+  padding: 8px 12px;
+}
+
+.correlated-row + .correlated-row {
+  border-top: 1px solid var(--border);
+}
+
+.correlated-title {
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.correlated-title:hover {
+  color: var(--accent);
+}
+
+.correlated-rate {
+  color: var(--warning);
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+.correlated-count {
+  color: var(--text-faint);
+  font-size: 12px;
+}
+
+.correlated-labels {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}

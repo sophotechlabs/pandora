@@ -6,7 +6,7 @@ from datetime import datetime
 from django.conf import settings
 from django.utils import timezone
 
-from pandora.issues import components
+from pandora.issues import components, correlate
 from pandora.issues.models import Episode, Issue
 
 TIMELINE_LIMIT = 20
@@ -50,6 +50,7 @@ class Detail:
     links: tuple[Link, ...]
     activities: tuple[ActivityRow, ...]
     annotations: tuple[tuple[str, str], ...]
+    correlation: correlate.Correlation
 
 
 def build(issue: Issue) -> Detail:
@@ -60,6 +61,7 @@ def build(issue: Issue) -> Detail:
         links=_links(issue, now),
         activities=_activities(issue),
         annotations=_annotations(issue),
+        correlation=correlate.build(issue, now),
     )
 
 

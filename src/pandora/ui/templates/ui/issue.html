@@ -90,6 +90,30 @@
       {% endfor %}
     </svg>
   </section>
+  {% if detail.correlation.matches %}
+    <section class="card">
+      <h2 class="card-title">
+        Firing in the same window
+        <span class="muted">{{ detail.correlation.starts_at|date:"M d, H:i" }} — {{ detail.correlation.ends_at|date:"M d, H:i" }}</span>
+      </h2>
+      <p class="muted">
+        Ranked by how far each rose above its own seven-day rate, not by volume. Shared labels are what
+        joined them; nothing here says one caused the other.
+      </p>
+      <ul class="correlated">
+        {% for match in detail.correlation.matches %}
+          <li class="correlated-row">
+            <a class="correlated-title" href="{% url 'ui:issue' match.issue.pk %}">{{ match.issue.title }}</a>
+            <span class="correlated-rate">&times;{{ match.ratio|floatformat:1 }} its usual rate</span>
+            <span class="correlated-count">{{ match.count }} in window</span>
+            <span class="correlated-labels">
+              {% for key, value in match.shared %}<span class="tag">{{ key }}={{ value }}</span>{% endfor %}
+            </span>
+          </li>
+        {% endfor %}
+      </ul>
+    </section>
+  {% endif %}
   <div class="split">
     <section class="card">
       <nav class="tabs">
