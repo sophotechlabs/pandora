@@ -138,6 +138,7 @@ def issue_page(request: HttpRequest, issue_id: int, tab: str = TABS[0]) -> HttpR
     context = _issue_context(request, issue, tab, now)
     if request.GET.get("partial"):
         return render(request, f"ui/partials/tab_{tab}.html", context)
+    context["latest"] = _latest(issue)
     return render(request, "ui/issue.html", context)
 
 
@@ -252,6 +253,16 @@ def _issue_context(
     if tab == "occurrences":
         context["events"] = _events(issue, request.GET.get("cursor", ""))
     return context
+
+
+def _latest(issue: Issue) -> presenters.EventRow | None:
+    try:
+        found = get_store().fetch(issue.project_id, issue_id=issue.pk, limit=1)
+    except NotImplementedError:
+        return None
+    if not found:
+        return None
+    return presenters.event_row(found[0])
 
 
 def _events(issue: Issue, cursor: str) -> EventPage:

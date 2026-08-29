@@ -1,0 +1,92 @@
+{% for block in body.exceptions %}
+  <section class="exc">
+    <p class="exc-head">
+      {% if block.caused_by %}<span class="exc-cause">Caused by</span>{% endif %}
+      <span class="exc-kind">{{ block.kind }}</span>
+      {% if block.module %}<span class="exc-module">{{ block.module }}</span>{% endif %}
+      {% if block.handled %}<span class="chip chip-{{ block.handled }}">{{ block.handled }}</span>{% endif %}
+      {% if block.mechanism %}<span class="tag">{{ block.mechanism }}</span>{% endif %}
+    </p>
+    {% if block.value %}<p class="exc-value">{{ block.value }}</p>{% endif %}
+    {% if block.frames_omitted %}
+      <p class="muted">{{ block.frames_omitted }} earlier frame(s) dropped at ingest</p>
+    {% endif %}
+    {% if block.frames %}
+      <ol class="frames">
+        {% for frame in block.frames %}
+          <li class="frame{% if frame.in_app %} frame-app{% endif %}">
+            <details {% if frame.expanded %}open{% endif %}>
+              <summary>
+                <span class="frame-loc">{{ frame.location }}</span>
+                <span class="frame-file">{{ frame.filename }}{% if frame.lineno %}:{{ frame.lineno }}{% endif %}</span>
+                {% if frame.in_app %}<span class="tag tag-app">app</span>{% endif %}
+              </summary>
+              <div class="frame-body">
+                {% if frame.context %}
+                  <ol class="source">
+                    {% for line in frame.context %}
+                      <li class="src-line{% if line.current %} src-current{% endif %}">
+                        <span class="src-no">{{ line.number|default_if_none:"" }}</span>
+                        <code class="src-text">{{ line.text }}</code>
+                      </li>
+                    {% endfor %}
+                  </ol>
+                {% endif %}
+                {% if frame.variables %}
+                  <dl class="pairs pairs-mono">
+                    {% for key, value in frame.variables %}
+                      <dt>{{ key }}</dt>
+                      <dd>
+                        {{ value }}
+                      </dd>
+                    {% endfor %}
+                  </dl>
+                {% endif %}
+                {% if not frame.context and not frame.variables %}
+                  <p class="muted">No source context was sent for this frame.</p>
+                {% endif %}
+              </div>
+            </details>
+          </li>
+        {% endfor %}
+      </ol>
+    {% endif %}
+  </section>
+{% endfor %}
+{% if body.breadcrumbs %}
+  <section class="crumbs">
+    <h3 class="card-title">Breadcrumbs</h3>
+    <ol class="crumb-list">
+      {% for crumb in body.breadcrumbs %}
+        <li class="crumb">
+          <span class="crumb-stamp">{{ crumb.stamp }}</span>
+          <span class="chip chip-{{ crumb.level|default:'info' }}">{{ crumb.level|default:"info" }}</span>
+          <span class="crumb-category">{{ crumb.category }}</span>
+          <span class="crumb-message">{{ crumb.message }}</span>
+          {% if crumb.data %}
+            <span class="crumb-data">
+              {% for key, value in crumb.data %}<span class="tag">{{ key }}={{ value }}</span>{% endfor %}
+            </span>
+          {% endif %}
+        </li>
+      {% endfor %}
+    </ol>
+  </section>
+{% endif %}
+{% if body.cards %}
+  <section class="context-cards">
+    {% for card in body.cards %}
+      <div class="context-card">
+        <h3 class="card-title">{{ card.title }}</h3>
+        <dl class="pairs">
+          {% for key, value in card.pairs %}
+            <dt>{{ key }}</dt>
+            <dd>
+              {{ value }}
+            </dd>
+          {% endfor %}
+        </dl>
+      </div>
+    {% endfor %}
+  </section>
+{% endif %}

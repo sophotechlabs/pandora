@@ -7,7 +7,7 @@ from pandora.core import models as core_models
 from pandora.ingest import models as ingest_models
 from pandora.ingest import processor
 from pandora.issues import models as issue_models
-from tests.ingest import fakes
+from tests.ingest import fakes, helpers
 
 SENTRY_ID = "b" * 32
 
@@ -601,4 +601,80 @@ def test_an_overlong_culprit_is_capped_to_the_column(project):
     issue = issue_models.Issue.objects.get()
     result = len(issue.culprit)
     expected = 500
+    assert result == expected
+
+
+# the stored payload
+
+
+@pytest.mark.django_db
+def test_a_stored_event_carries_the_stack_frames(project):
+    """Should keep what makes an error readable — grouping alone is not enough."""
+    payload = event_payload(
+        exception={
+            "values": [
+                {
+                    "type": "ValueError",
+                    "value": "bad input",
+                    "stacktrace": {
+                        "frames": [
+                            {
+                                "module": "app.views",
+                                "function": "handle",
+                                "filename": "app/views.py",
+                                "lineno": 42,
+                                "in_app": True,
+                                "context_line": "    raise ValueError(payload)",
+                            }
+                        ]
+                    },
+                }
+            ]
+        }
+    )
+    _, store = deliver(project, payload)
+
+    result = store.rows[0].payload["exceptions"][0]["frames"][0]
+    expected = {
+        "module": "app.views",
+        "function": "handle",
+        "filename": "app/views.py",
+        "lineno": 42,
+        "in_app": True,
+        "context_line": "    raise ValueError(payload)",
+    }
+
+    assert result == expected
+
+
+@pytest.mark.django_db
+def test_a_stored_event_carries_its_breadcrumbs_and_context(project):
+    """Should keep the timeline and the who, which triage reads before the code."""
+    payload = event_payload(
+        breadcrumbs={"values": [{"category": "db", "message": "SELECT 1"}]},
+        user={"id": "7", "username": "renata"},
+        contexts={"runtime": {"name": "CPython", "version": "3.12.7"}},
+    )
+    _, store = deliver(project, payload)
+
+    stored = store.rows[0].payload
+    result = (
+        stored["breadcrumbs"][0]["message"],
+        stored["user"]["username"],
+        stored["contexts"]["runtime"]["name"],
+    )
+    expected = ("SELECT 1", "renata", "CPython")
+
+    assert result == expected
+
+
+@pytest.mark.django_db
+def test_an_alertmanager_occurrence_stores_no_interfaces(token, am_fixture):
+    """Should leave the column empty for a source that has no stack trace."""
+    store = fakes.RecordingEventStore()
+    helpers.deliver(am_fixture("firing_group"), token, store)
+
+    result = {tuple(row.payload) for row in store.rows}
+    expected = {()}
+
     assert result == expected

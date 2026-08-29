@@ -10,6 +10,7 @@ from django.db.models import OuterRef, Prefetch, QuerySet, Subquery
 from pandora.events.types import Event
 from pandora.issues import components, sparkline
 from pandora.issues.models import Episode, HourlyStat, Issue
+from pandora.ui import event_view
 
 CHART_WINDOW = timedelta(days=30)
 CHART_BUCKETS = 30
@@ -60,7 +61,8 @@ class EventRow:
     level: str
     message: str
     tags: tuple[tuple[str, str], ...]
-    payload: str
+    raw: str
+    body: event_view.EventBody | None
 
 
 def stream_queryset(now: datetime) -> QuerySet[Issue]:
@@ -156,11 +158,12 @@ def event_row(event: Event) -> EventRow:
         level=event.level,
         message=event.message,
         tags=tuple(sorted((event.tags or {}).items())),
-        payload=_payload(event),
+        raw=_raw(event),
+        body=event_view.build(event.payload),
     )
 
 
-def _payload(event: Event) -> str:
+def _raw(event: Event) -> str:
     body: dict[str, Any] = {
         "id": event.id,
         "timestamp": event.timestamp.isoformat(),
@@ -172,5 +175,6 @@ def _payload(event: Event) -> str:
         "fingerprint": list(event.fingerprint or []),
         "tags": dict(event.tags or {}),
         "extra": dict(event.extra or {}),
+        "payload": dict(event.payload or {}),
     }
     return json.dumps(body, indent=2, sort_keys=True, default=str)

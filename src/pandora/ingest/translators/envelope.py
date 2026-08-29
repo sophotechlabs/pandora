@@ -10,6 +10,7 @@ from typing import Any
 from ulid import ULID
 
 from pandora.core.models import Project
+from pandora.events import payload as payload_interfaces
 from pandora.issues import grouping, lifecycle
 from pandora.issues.models import Level
 
@@ -118,6 +119,7 @@ def translate_event(
         timestamp=received_at,
         tags=tags,
         extra=_extra(payload),
+        payload=payload_interfaces.normalize(payload),
         environment=_environment(payload, environment)[:ENVIRONMENT_MAX],
         source="sdk",
     )

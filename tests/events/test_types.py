@@ -22,6 +22,7 @@ def test_event_carries_the_frozen_field_set():
         "extra",
         "source",
         "environment",
+        "payload",
     ]
 
     assert result == expected

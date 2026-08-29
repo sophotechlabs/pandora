@@ -169,6 +169,7 @@ def test_an_event_serialises_to_the_documented_shape(
         "extra": {"generatorURL": "https://example.test/graph"},
         "source": "am",
         "environment": "p-mk1",
+        "payload": {},
     }
 
     assert result == expected
@@ -394,6 +395,7 @@ def test_a_live_event_serialises_to_the_documented_shape(
         "extra": {"generatorURL": "https://example.test/graph"},
         "source": "am",
         "environment": "p-mk1",
+        "payload": {},
     }
 
     assert result == expected

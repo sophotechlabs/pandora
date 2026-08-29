@@ -27,3 +27,4 @@ class Event:
     extra: dict[str, Any] = field(default_factory=dict)
     source: str = "am"
     environment: str = ""
+    payload: dict[str, Any] = field(default_factory=dict)

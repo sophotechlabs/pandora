@@ -65,6 +65,16 @@
       <span class="stat-value">{{ row.state_label }}</span>
     </div>
   </section>
+  {% if latest.body %}
+    <section class="card latest">
+      <h2 class="card-title">
+        Latest event
+        <code class="event-id">{{ latest.short_id }}</code>
+        <span class="muted">{{ latest.timestamp|date:"M d, H:i:s" }}</span>
+      </h2>
+      {% include "ui/partials/event_body.html" with body=latest.body %}
+    </section>
+  {% endif %}
   <section class="card">
     <h2 class="card-title">Activity over 30 days</h2>
     <svg class="chart"

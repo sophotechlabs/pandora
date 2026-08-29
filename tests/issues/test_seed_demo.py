@@ -58,7 +58,13 @@ def test_seed_demo_covers_every_triage_state(seeded):
 
 def test_seed_demo_covers_both_source_states(seeded):
     """Should seed both firing and self-resolved issues."""
-    result = sorted(set(models.Issue.objects.values_list("source_state", flat=True)))
+    result = sorted(
+        set(
+            models.Issue.objects.exclude(source_state=None).values_list(
+                "source_state", flat=True
+            )
+        )
+    )
     expected = ["firing", "resolved"]
 
     assert result == expected
@@ -92,7 +98,7 @@ def test_event_count_equals_the_episode_count(seeded):
     """Should count one occurrence per episode created — never per delivery."""
     result = [
         (issue.event_count, issue.episodes.count())
-        for issue in models.Issue.objects.all()
+        for issue in models.Issue.objects.exclude(source_state=None)
     ]
 
     assert all(counted == actual for counted, actual in result)
@@ -140,7 +146,7 @@ def test_the_alertname_tag_sums_to_the_event_count(seeded):
                 total=db_models.Sum("count")
             )["total"],
         )
-        for issue in models.Issue.objects.all()
+        for issue in models.Issue.objects.exclude(source_state=None)
     ]
 
     assert all(counted == tagged for counted, tagged in result)
@@ -149,7 +155,7 @@ def test_the_alertname_tag_sums_to_the_event_count(seeded):
 def test_first_and_last_seen_bracket_the_episodes(seeded):
     """Should bound the issue window by its own episodes."""
     result = []
-    for issue in models.Issue.objects.all():
+    for issue in models.Issue.objects.exclude(source_state=None):
         window = issue.episodes.aggregate(
             earliest=db_models.Min("starts_at"),
             latest=db_models.Max("last_delivery_at"),
@@ -233,7 +239,7 @@ def test_demo_tokens_are_not_guessable(seeded):
 def test_the_seed_stores_one_event_per_episode(seeded):
     """Should give the occurrences tab something to show on a fresh install."""
     store = get_store()
-    for issue in models.Issue.objects.all():
+    for issue in models.Issue.objects.exclude(source_state=None):
         found = store.fetch(issue.project_id, issue_id=issue.pk, limit=1000)
 
         assert len(found) == issue.episodes.count()

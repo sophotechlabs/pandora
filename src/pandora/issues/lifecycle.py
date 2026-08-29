@@ -31,6 +31,7 @@ class Occurrence:
     timestamp: datetime
     tags: dict[str, str] = field(default_factory=dict)
     extra: dict[str, Any] = field(default_factory=dict)
+    payload: dict[str, Any] = field(default_factory=dict)
     environment: str = ""
     source: str = "am"
 

@@ -60,10 +60,10 @@ def test_insert_ignores_a_conflicting_row_rather_than_failing():
     assert result is True
 
 
-def test_the_three_json_columns_are_cast_to_jsonb():
-    """Should cast fingerprint, tags and extra — the store sends JSON text."""
+def test_the_four_json_columns_are_cast_to_jsonb():
+    """Should cast fingerprint, tags, extra and payload — sent as JSON text."""
     result = postgres_store.INSERT.count("%s::jsonb")
-    expected = 3
+    expected = 4
 
     assert result == expected
 

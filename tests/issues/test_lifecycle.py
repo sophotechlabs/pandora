@@ -106,6 +106,7 @@ def test_occurrence_carries_what_a_translator_produces():
         "timestamp",
         "tags",
         "extra",
+        "payload",
         "environment",
         "source",
     ]

@@ -21,6 +21,7 @@ from pandora.core.models import (
 )
 from pandora.events.store import get_store
 from pandora.events.types import Event, new_event_id
+from pandora.ingest import demo as sdk_demo
 from pandora.ingest.models import RawEnvelope
 from pandora.issues.models import (
     ActivityKind,
@@ -429,7 +430,7 @@ DEMO_SLUGS = [slug for slug, _, _ in DEMO_PROJECTS]
 def _real_data_exists() -> bool:
     if Project.objects.exclude(slug__in=DEMO_SLUGS).exists():
         return True
-    return RawEnvelope.objects.exists()
+    return RawEnvelope.objects.exclude(project__slug__in=DEMO_SLUGS).exists()
 
 
 class Command(BaseCommand):
@@ -490,7 +491,15 @@ class Command(BaseCommand):
             episode_count += len(generated.episodes)
             event_count += len(events)
 
+        sdk_project = projects[DEMO_PROJECTS[1][0]]
+        sdk_count = sdk_demo.seed(
+            sdk_project,
+            environments[sdk_project.slug],
+            now,
+        )
+
         self.stdout.write(
             f"seed_demo: {len(projects)} projects, {issue_count} issues, "
-            f"{episode_count} episodes, {event_count} events"
+            f"{episode_count} episodes, {event_count} events, "
+            f"{sdk_count} sdk events"
         )

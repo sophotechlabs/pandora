@@ -11,6 +11,7 @@ from pandora.events import store, transfer
 from tests.events import support
 
 INITIAL = importlib.import_module("pandora.events.migrations.0001_initial")
+PAYLOAD = importlib.import_module("pandora.events.migrations.0002_event_payload")
 
 
 class FakeStore:
@@ -55,6 +56,7 @@ def source_database_only(tmp_path, django_db_blocker):
     with django_db_blocker.unblock():
         with connection.cursor() as cursor:
             cursor.execute(INITIAL.SQLITE_TABLE)
+            cursor.execute(PAYLOAD.SQLITE_ADD)
         connection.close()
     return f"sqlite:///{path}"
 
@@ -74,6 +76,7 @@ def source_database(tmp_path, django_db_blocker, moment, project):
     with django_db_blocker.unblock():
         with connection.cursor() as cursor:
             cursor.execute(INITIAL.SQLITE_TABLE)
+            cursor.execute(PAYLOAD.SQLITE_ADD)
         source = store.get_store(connection)
         source.insert(support.make_events(5, moment, project_id=project.pk))
         connection.close()

@@ -13,13 +13,13 @@ from pandora.events.types import EVENTS_TABLE, Event
 INSERT = (
     f"INSERT OR IGNORE INTO {EVENTS_TABLE} "
     '(id, project_id, issue_id, episode_id, fingerprint, "timestamp", '
-    "level, message, tags, extra, source, environment) "
-    "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
+    "level, message, tags, extra, source, environment, payload) "
+    "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
 )
 
 SELECT = (
     'SELECT id, project_id, "timestamp", level, message, issue_id, episode_id, '
-    f"fingerprint, tags, extra, source, environment FROM {EVENTS_TABLE}"
+    f"fingerprint, tags, extra, source, environment, payload FROM {EVENTS_TABLE}"
 )
 
 DELETE = (
@@ -60,6 +60,7 @@ def _to_row(event: Event) -> list[Any]:
         json.dumps(event.extra),
         event.source,
         event.environment,
+        json.dumps(event.payload),
     ]
 
 
@@ -77,6 +78,7 @@ def _to_event(row: Mapping[str, Any]) -> Event:
         extra=json.loads(row["extra"]),
         source=row["source"],
         environment=row["environment"],
+        payload=json.loads(row["payload"]),
     )
 
 

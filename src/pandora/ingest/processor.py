@@ -198,6 +198,7 @@ def _apply_event(
         fingerprint=list(occurrence.fingerprint),
         tags=dict(occurrence.tags),
         extra={**occurrence.extra, "event_id": sentry_id},
+        payload=dict(occurrence.payload),
         source=occurrence.source,
         environment=occurrence.environment,
     )

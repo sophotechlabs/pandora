@@ -19,15 +19,15 @@ logger = logging.getLogger(__name__)
 INSERT = (
     f"INSERT INTO {EVENTS_TABLE} "
     '(id, project_id, issue_id, episode_id, fingerprint, "timestamp", '
-    "level, message, tags, extra, source, environment) "
-    "VALUES (%s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s::jsonb, %s::jsonb, %s, %s) "
+    "level, message, tags, extra, source, environment, payload) "
+    "VALUES (%s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s::jsonb, %s::jsonb, %s, %s, %s::jsonb) "
     "ON CONFLICT DO NOTHING"
 )
 
 SELECT = (
     'SELECT id, project_id, "timestamp", level, message, issue_id, episode_id, '
     "fingerprint::text AS fingerprint, tags::text AS tags, extra::text AS extra, "
-    f"source, environment FROM {EVENTS_TABLE}"
+    f"source, environment, payload::text AS payload FROM {EVENTS_TABLE}"
 )
 
 REASSIGN = (
@@ -85,6 +85,7 @@ def _to_row(event: Event) -> list[Any]:
         json.dumps(event.extra),
         event.source,
         event.environment,
+        json.dumps(event.payload),
     ]
 
 
@@ -102,6 +103,7 @@ def _to_event(row: Mapping[str, Any]) -> Event:
         extra=json.loads(row["extra"]),
         source=row["source"],
         environment=row["environment"],
+        payload=json.loads(row["payload"]),
     )
 
 

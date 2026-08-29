@@ -257,6 +257,7 @@ def test_a_firing_alert_translates_field_for_field(parse, am_fixture):
         },
         "environment": "p-mk1",
         "source": "am",
+        "payload": {},
     }
 
     assert result == expected

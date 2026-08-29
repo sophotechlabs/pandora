@@ -52,7 +52,7 @@ Copies stored events out of another pandora database into this one, paging per p
 | Path | What | Status |
 |---|---|---|
 | `/` | issue stream | live |
-| `/issues/<id>/` | one issue: occurrences, episodes, tags, activity | live |
+| `/issues/<id>/` | one issue: latest stack trace, occurrences, episodes, tags, activity | live |
 | `/overview/` | headline numbers, what is firing, what is new | live |
 | `/ingest/` | envelope backlog, failures, replay, tokens | live |
 | `/admin/` | configuration: projects, tokens, DSN keys, grouping rules | live |
@@ -93,6 +93,16 @@ Both ingest routes existed from the first commit and answered 501 until their ph
 An SDK points at Pandora with a DSN of the form `http://<public_key>@<host>/<project_id>`, where the key is a `DsnKey` row. Envelopes arrive gzipped or plain; `event` items become one durable `RawEnvelope` each, and every other item type — transactions, sessions, attachments — is counted, acked with `200` and dropped, so an SDK never retries what Pandora will not keep. Retries are free: the Sentry event id is the dedup key, held in `ProcessedEvent`, and an issue's `event_count` moves only when that row is genuinely new. SDK events carry no episode; the firing/resolved column stays null on an issue that only SDKs feed.
 
 Pandora reimplements the Sentry ingest wire format from public protocol documentation so unmodified MIT-licensed Sentry SDKs can point at it. No Sentry server code is used. "Sentry-compatible" is a statement about the wire format, nothing more.
+
+## Stack traces
+
+An SDK event is stored with its interfaces intact, not only the parts grouping reads. The issue page opens on the newest event: the exception chain innermost-first, each `caused by` link under its own heading, the application frames marked and the first one expanded, source context numbered against the file, frame locals, the breadcrumb timeline newest-first, and one card per context — user, request, headers, SDK, runtime, OS, browser, trace.
+
+Every interface is bounded at ingest, because the sender is not trusted: 25 exceptions in a chain, 25 threads, 250 frames per stack (the outermost are dropped and counted in `frames_omitted`), 20 context lines per side, 50 locals per frame, 100 breadcrumbs, 100 keys and 50 items per structure, five levels of nesting, 4096 characters per string. Source lines are the one thing never stripped — the indentation is the code.
+
+A frame with no `context_line` says so rather than rendering an empty block. That is the honest reading of a minified JavaScript stack today: Pandora does not yet resolve source maps, so the frames are the ones the browser reported.
+
+Every event keeps its raw form too, behind **Raw payload** on the occurrence.
 
 ## Grouping
 
@@ -227,9 +237,12 @@ The event payloads behind an issue, newest first, read through the `EventStore`.
       "tags": {"namespace": "monitoring"},
       "extra": {"generatorURL": "https://prometheus.example/graph"},
       "source": "am",
-      "environment": "p-mk1"
+      "environment": "p-mk1",
+      "payload": {}
     }
   ],
   "next_cursor": "01J8ZQ7X4N0000000000000001"
 }
 ```
+
+`payload` holds the normalised Sentry interfaces of an SDK event — `exceptions`, `threads`, `breadcrumbs`, `user`, `request`, `contexts`, `sdk`, `modules`, `logentry`, `debug_images`, `extra`, and the scalars (`release`, `dist`, `server_name`, `transaction`, `platform`). It is `{}` for an Alertmanager occurrence, which has no stack trace, and for anything stored before 0.7.0.

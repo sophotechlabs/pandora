@@ -345,3 +345,177 @@ def test_a_store_without_a_reader_says_so_rather_than_failing(
     page = body(operator_client, issue)
 
     assert "no event store" in page
+
+
+# the stack trace
+
+
+SDK_PAYLOAD = {
+    "exceptions": [
+        {
+            "type": "ConnectionResetError",
+            "value": "connection reset by peer",
+            "frames": [{"module": "http.client", "function": "read", "in_app": False}],
+        },
+        {
+            "type": "PaymentGatewayError",
+            "value": "acquirer refused the authorisation",
+            "module": "checkout.errors",
+            "mechanism": {"type": "django", "handled": False},
+            "frames": [
+                {
+                    "module": "django.core.handlers",
+                    "function": "inner",
+                    "filename": "django/core/handlers/base.py",
+                    "lineno": 197,
+                    "in_app": False,
+                },
+                {
+                    "module": "checkout.gateway",
+                    "function": "charge",
+                    "filename": "checkout/gateway.py",
+                    "lineno": 141,
+                    "in_app": True,
+                    "pre_context": ["    body = self.body(card)"],
+                    "context_line": "    raise PaymentGatewayError(reason)",
+                    "post_context": ["", "def refund(self):"],
+                    "vars": {"amount": "48250"},
+                },
+            ],
+        },
+    ],
+    "breadcrumbs": [
+        {
+            "category": "httplib",
+            "level": "info",
+            "message": "POST https://acquirer.invalid/v2/authorise",
+            "timestamp": 1786000000,
+        }
+    ],
+    "user": {"id": "44182", "username": "renata.k"},
+    "request": {"url": "https://shop.test/authorise", "method": "POST"},
+    "contexts": {"runtime": {"name": "CPython", "version": "3.12.7"}},
+    "release": "checkout@2026.8.3",
+}
+
+
+@pytest.fixture
+def sdk_issue(make_issue, stored_events):
+    issue = make_issue(title="PaymentGatewayError: checkout.gateway in charge")
+    stored_events(
+        [
+            make_event(
+                issue,
+                index=1,
+                source="sdk",
+                message="PaymentGatewayError: acquirer refused the authorisation",
+                payload=SDK_PAYLOAD,
+            )
+        ]
+    )
+    return issue
+
+
+def test_the_issue_page_shows_the_latest_stack_trace(operator_client, sdk_issue):
+    """Should render the failing frame without the reader opening a tab."""
+    page = body(operator_client, sdk_issue)
+
+    result = (
+        "Latest event" in page,
+        "PaymentGatewayError" in page,
+        "checkout.gateway in charge" in page,
+        "raise PaymentGatewayError(reason)" in page,
+    )
+    expected = (True, True, True, True)
+
+    assert result == expected
+
+
+def test_the_stack_trace_marks_the_failing_line(operator_client, sdk_issue):
+    """Should highlight the context line so the eye lands on it."""
+    page = body(operator_client, sdk_issue)
+
+    result = 'class="src-line src-current"' in page
+
+    assert result is True
+
+
+def test_the_stack_trace_numbers_the_source_context(operator_client, sdk_issue):
+    """Should let the snippet be matched against the file on disk."""
+    page = body(operator_client, sdk_issue)
+
+    result = ('<span class="src-no">140</span>' in page, ">141<" in page)
+    expected = (True, True)
+
+    assert result == expected
+
+
+def test_the_stack_trace_names_the_cause(operator_client, sdk_issue):
+    """Should render the chained exception under a Caused by heading."""
+    page = body(operator_client, sdk_issue)
+
+    result = ("Caused by" in page, "ConnectionResetError" in page)
+    expected = (True, True)
+
+    assert result == expected
+
+
+def test_an_unhandled_exception_is_labelled(operator_client, sdk_issue):
+    """Should say that nothing caught it."""
+    page = body(operator_client, sdk_issue)
+
+    result = "unhandled" in page
+
+    assert result is True
+
+
+def test_the_issue_page_shows_the_breadcrumbs(operator_client, sdk_issue):
+    """Should show what the process did before it failed."""
+    page = body(operator_client, sdk_issue)
+
+    result = (
+        "Breadcrumbs" in page,
+        "POST https://acquirer.invalid/v2/authorise" in page,
+    )
+    expected = (True, True)
+
+    assert result == expected
+
+
+def test_the_issue_page_shows_the_context_cards(operator_client, sdk_issue):
+    """Should show who hit it, what they asked for and what was running."""
+    page = body(operator_client, sdk_issue)
+
+    result = (
+        "renata.k" in page,
+        "https://shop.test/authorise" in page,
+        "CPython" in page,
+        "checkout@2026.8.3" in page,
+    )
+    expected = (True, True, True, True)
+
+    assert result == expected
+
+
+def test_an_alert_issue_shows_no_stack_trace_section(
+    operator_client, make_issue, stored_events
+):
+    """Should leave the page as it was for an occurrence that carries no payload."""
+    issue = make_issue()
+    stored_events([make_event(issue)])
+
+    page = body(operator_client, issue)
+
+    result = "Latest event" in page
+
+    assert result is False
+
+
+def test_the_occurrences_tab_renders_the_frames(operator_client, sdk_issue):
+    """Should give the same reading of an older occurrence, not only the newest."""
+    page = body(operator_client, sdk_issue, tab="occurrences/")
+
+    result = ("checkout.gateway in charge" in page, "Raw payload" in page)
+    expected = (True, True)
+
+    assert result == expected

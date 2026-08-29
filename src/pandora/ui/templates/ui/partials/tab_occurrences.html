@@ -8,7 +8,7 @@
   <ul class="events">
     {% for event in events.rows %}
       <li class="event">
-        <details>
+        <details {% if forloop.first %}open{% endif %}>
           <summary>
             <span class="chip chip-{{ event.level }}">{{ event.level }}</span>
             <span class="event-message">{{ event.message }}</span>
@@ -22,7 +22,13 @@
                 {% for key, value in event.tags %}<span class="tag">{{ key }}={{ value }}</span>{% endfor %}
               </div>
             {% endif %}
-            <pre class="payload">{{ event.payload }}</pre>
+            {% if event.body %}
+              {% include "ui/partials/event_body.html" with body=event.body %}
+            {% endif %}
+            <details class="raw">
+              <summary class="raw-toggle">Raw payload</summary>
+              <pre class="payload">{{ event.raw }}</pre>
+            </details>
           </div>
         </details>
       </li>
