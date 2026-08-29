@@ -110,8 +110,8 @@ def _flag(value: Any) -> bool | None:
     return None
 
 
-def _values(raw: Any, key: str) -> list[Mapping[str, Any]]:
-    holder = raw.get(key) if isinstance(raw, Mapping) else None
+def _values(raw: Mapping[str, Any], key: str) -> list[Mapping[str, Any]]:
+    holder = raw.get(key)
     candidates: Any = None
     if isinstance(holder, Mapping):
         candidates = holder.get("values")

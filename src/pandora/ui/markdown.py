@@ -167,6 +167,8 @@ def _activity(detail: issue_detail.Detail) -> str:
     lines = ["## Activity"]
     for row in detail.activities:
         actor = row.actor or "pandora"
-        note = f" ({row.note})" if row.note else ""
+        note = ""
+        if row.note:
+            note = f" ({row.note})"
         lines.append(f"- `{_stamp(row.at)}` {row.kind} by {actor}{note}")
     return "\n".join(lines)

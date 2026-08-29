@@ -342,3 +342,29 @@ def test_a_global_quota_counts_globally(project):
     expected = "global"
 
     assert result == expected
+
+
+def test_a_quota_reads_as_its_limit_and_window(project):
+    """Should be pickable from a list in the admin."""
+    quota = IngestQuota.objects.create(
+        name="sdk", project=project, limit=100, window_seconds=60
+    )
+
+    result = str(quota)
+    expected = "sdk (100/60s)"
+
+    assert result == expected
+
+
+def test_a_counter_reads_as_its_bucket_and_count():
+    """Should show which minute filled up without opening the row."""
+    counter = IngestCounter.objects.create(
+        key="project:1",
+        bucket=datetime.datetime(2026, 8, 30, 14, 15, tzinfo=datetime.UTC),
+        count=42,
+    )
+
+    result = str(counter)
+    expected = "project:1@2026-08-30T14:15Z x42"
+
+    assert result == expected

@@ -76,7 +76,9 @@ def _lines(deliveries: list[Delivery]) -> list[str]:
 
 def send_chat(destination: Destination, deliveries: list[Delivery]) -> None:
     text = "\n".join(_lines(deliveries))
-    field = "content" if destination.kind == DestinationKind.DISCORD else "text"
+    field = "text"
+    if destination.kind == DestinationKind.DISCORD:
+        field = "content"
     _post(destination, {field: text}, "chat")
 
 
