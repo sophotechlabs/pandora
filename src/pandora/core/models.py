@@ -12,6 +12,10 @@ class TokenSource(models.TextChoices):
 class TokenScope(models.TextChoices):
     INGEST = "ingest", "Ingest"
     READ = "read", "Read"
+    READ_PAYLOAD = "payload", "Read with payloads"
+
+
+READ_SCOPES = (TokenScope.READ, TokenScope.READ_PAYLOAD)
 
 
 class Project(models.Model):
@@ -59,7 +63,7 @@ class IngestToken(models.Model):
         default=TokenSource.AM,
     )
     scope = models.CharField(
-        max_length=8,
+        max_length=16,
         choices=TokenScope.choices,
         default=TokenScope.INGEST,
     )

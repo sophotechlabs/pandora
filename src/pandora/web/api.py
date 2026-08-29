@@ -16,7 +16,7 @@ from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 from django.views.decorators.csrf import csrf_exempt
 
-from pandora.core.models import IngestToken, TokenScope
+from pandora.core.models import READ_SCOPES, IngestToken, TokenScope
 from pandora.events.store import get_store
 from pandora.events.types import Event
 from pandora.issues.models import Episode, Issue, SourceState, TagStat, TriageState
@@ -61,12 +61,16 @@ def authenticate(request: HttpRequest) -> IngestToken:
 
 
 def require_read_scope(token: IngestToken) -> IngestToken:
-    if token.scope != TokenScope.READ:
+    if token.scope not in READ_SCOPES:
         raise ApiError(
             HTTPStatus.FORBIDDEN,
             f"token scope {token.scope!r} cannot read",
         )
     return token
+
+
+def _payloads(token: IngestToken) -> bool:
+    return token.scope == TokenScope.READ_PAYLOAD
 
 
 def api_view(
@@ -264,10 +268,13 @@ def tag_page(stats: Iterable[TagStat]) -> list[TagStat]:
     return page
 
 
-def serialize_event(event: Event) -> dict[str, Any]:
-    payload = dataclasses.asdict(event)
-    payload["timestamp"] = isoformat(event.timestamp)
-    return payload
+def serialize_event(event: Event, with_payload: bool = True) -> dict[str, Any]:
+    body = dataclasses.asdict(event)
+    body["timestamp"] = isoformat(event.timestamp)
+    if not with_payload:
+        body["payload"] = {}
+        body["extra"] = {}
+    return body
 
 
 @api_view
@@ -339,7 +346,7 @@ def issue_events(
         found = found[:limit]
         next_cursor = found[-1].id
     return {
-        "results": [serialize_event(event) for event in found],
+        "results": [serialize_event(event, _payloads(token)) for event in found],
         "next_cursor": next_cursor,
     }
 
@@ -366,7 +373,7 @@ def events_search(request: HttpRequest, token: IngestToken) -> dict[str, Any]:
             HTTPStatus.NOT_IMPLEMENTED,
             "event store is not implemented for this database yet",
         ) from error
-    return {"results": [serialize_event(event) for event in found]}
+    return {"results": [serialize_event(event, _payloads(token)) for event in found]}
 
 
 urlpatterns = [

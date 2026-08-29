@@ -16,6 +16,18 @@ def read_token(project):
         name="spinoza panel",
         token="test-read-token",
         source=core_models.TokenSource.AM,
+        scope=core_models.TokenScope.READ_PAYLOAD,
+        environment="p-mk1",
+    )
+
+
+@pytest.fixture
+def read_only_token(project):
+    return core_models.IngestToken.objects.create(
+        project=project,
+        name="dashboard",
+        token="test-read-only-token",
+        source=core_models.TokenSource.AM,
         scope=core_models.TokenScope.READ,
         environment="p-mk1",
     )

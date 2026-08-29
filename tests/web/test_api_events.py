@@ -481,3 +481,44 @@ def test_a_live_event_of_another_project_stays_out(
     expected = {issue.project_id}
 
     assert result == expected
+
+
+# the payload scope
+
+
+def test_a_read_only_token_gets_the_row_without_the_payload(
+    client, issue, stored_events, read_only_token
+):
+    """Should let a dashboard list occurrences without handing it request headers and frame locals."""
+    auth = {"authorization": f"Bearer {read_only_token.token}"}
+
+    row = client.get(events_url(issue.pk), {"limit": "1"}, headers=auth).json()[
+        "results"
+    ][0]
+
+    result = (row["payload"], row["extra"], row["message"])
+    expected = ({}, {}, row["message"])
+
+    assert result == expected
+
+
+def test_a_read_only_token_still_lists_issues(client, issue, read_only_token):
+    """Should keep the read scope useful — it loses payloads, not the API."""
+    auth = {"authorization": f"Bearer {read_only_token.token}"}
+
+    response = client.get("/api/v1/issues", headers=auth)
+
+    result = (response.status_code, len(response.json()["results"]))
+    expected = (200, 1)
+
+    assert result == expected
+
+
+def test_an_ingest_token_still_cannot_read(client, issue, token):
+    """Should keep the write credential unable to read, which the split must not loosen."""
+    auth = {"authorization": f"Bearer {token.token}"}
+
+    result = client.get("/api/v1/issues", headers=auth).status_code
+    expected = 403
+
+    assert result == expected

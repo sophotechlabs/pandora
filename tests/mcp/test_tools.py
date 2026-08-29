@@ -19,7 +19,7 @@ def read_token(project):
         name="mcp",
         token="read-token-value",
         source=core_models.TokenSource.SDK,
-        scope=core_models.TokenScope.READ,
+        scope=core_models.TokenScope.READ_PAYLOAD,
     )
 
 
@@ -47,10 +47,17 @@ def make_issue(project):
 # the token is the boundary
 
 
-def test_a_read_scoped_token_resolves(read_token):
-    """Should accept the credential the JSON API already uses, not invent a second one."""
-    result = tools.resolve_token("read-token-value").pk
-    expected = read_token.pk
+@pytest.mark.parametrize(
+    "scope", [core_models.TokenScope.READ, core_models.TokenScope.READ_PAYLOAD]
+)
+def test_either_read_scope_resolves(project, scope):
+    """Should accept the credentials the JSON API already uses, not invent a second kind."""
+    token = core_models.IngestToken.objects.create(
+        project=project, name=f"mcp-{scope}", token=f"token-{scope}", scope=scope
+    )
+
+    result = tools.resolve_token(token.token).pk
+    expected = token.pk
 
     assert result == expected
 
@@ -287,3 +294,36 @@ def test_markdown_survives_a_store_that_cannot_fetch(read_token, make_issue, moc
     result = tools.issue_as_markdown(read_token, issue.pk).startswith("# alert")
 
     assert result is True
+
+
+def test_a_read_only_token_gets_no_payloads(project, make_issue, mocker):
+    """Should let a dashboard list issues without handing it request headers and frame locals."""
+    token = core_models.IngestToken.objects.create(
+        project=project,
+        name="dashboard",
+        token="plain-read",
+        scope=core_models.TokenScope.READ,
+    )
+    issue = make_issue("boom")
+    event = types.Event(
+        id="01J8ZQ7X4N0000000000000002",
+        project_id=issue.project_id,
+        timestamp=timezone.now(),
+        level="error",
+        message="boom",
+        issue_id=issue.pk,
+        source="sdk",
+        environment="p-mk1",
+        extra={"note": "kept for the api contract"},
+        payload={"user": {"email": "a@b.test"}},
+    )
+    mocker.patch(
+        "pandora.mcp.tools.get_store", return_value=fakes.FakeEventStore([event])
+    )
+
+    row = tools.get_issue_events(token, issue.pk)["results"][0]
+
+    result = (row["payload"], row["extra"], row["message"])
+    expected = ({}, {}, "boom")
+
+    assert result == expected

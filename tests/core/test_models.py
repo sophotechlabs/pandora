@@ -27,9 +27,9 @@ def test_token_sources_are_the_two_front_doors():
 
 
 def test_token_scopes_separate_ingest_from_read():
-    """Should offer exactly the ingest and read scopes."""
+    """Should offer exactly ingest, read, and read-with-payloads — the split exists so a token can list issues without seeing what an SDK sent."""
     result = list(models.TokenScope.values)
-    expected = ["ingest", "read"]
+    expected = ["ingest", "read", "payload"]
 
     assert result == expected
 
