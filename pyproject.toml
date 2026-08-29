@@ -148,6 +148,7 @@ mypy_path = "src"
 packages = [
     "pandora.mcp",
     "pandora.scrub",
+    "pandora.notify",
     "pandora.core",
     "pandora.ingest",
     "pandora.issues",

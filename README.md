@@ -160,6 +160,32 @@ An occurrence can also be **deleted one at a time** from the occurrences tab, be
 
 **Drop rules** refuse a payload before the durable write, so the saving is disk rather than only noise. Each matches a field — `alertname`, `namespace`, `severity`, `type`, `value`, `message`, `release`, `environment`, `server_name`, `transaction`, `platform` — against a regular expression, counts what it refused, and works on both ingest doors. An invalid pattern never matches rather than taking ingest down.
 
+## Getting told
+
+Pandora had no way to tell anyone anything until now, which means the default could be chosen rather than retrofitted. **Notification is a property of the issue's state machine, not a rules engine.** There are five events and no condition builder:
+
+| | |
+|---|---|
+| `issue.new` | something broke that was not broken before |
+| `issue.regression` | something you resolved came back |
+| `issue.unsnoozed` | a snooze expired and the issue is still live |
+| `issue.milestone` | the 10th, 100th, 1000th, 10000th occurrence |
+| `issue.resolved` | a person closed it |
+
+Nothing fires on the second occurrence of an open issue. That is the behaviour that gets a tool muted.
+
+A **destination** is a row: a webhook, an email list, or a Slack, Discord or Teams incoming-webhook URL. It picks which events it wants, a minimum level, an optional project, and a digest window. Webhooks are signed with HMAC-SHA256 in `X-Pandora-Signature` when a secret is set, so a receiver can prove the call came from this Pandora.
+
+Deliveries are queued to a table, not sent on the ingest request, and a worker drains them:
+
+```sh
+python manage.py deliver --loop 15 --metrics-port 9110
+```
+
+Failures back off — 30s, 2m, 10m, 1h — and give up after five attempts, with the reason kept on the row. A digest window collects a storm into one message; without one, a pass still batches whatever is already queued for a destination into a single call. `prune` clears sent rows at the normal retention.
+
+**No rules engine, no on-call rotations, no first-party integration catalogue.** Anything else takes the webhook, whose event vocabulary is the table above.
+
 ## Holding the door
 
 An **ingest quota** caps how much a project may send in a window — a row in the admin naming a limit and a window in seconds, scoped to one project or to the whole install, tightest wins. Past the limit the door answers `429` with `X-Sentry-Rate-Limits` and `Retry-After`, which unmodified Sentry SDKs already honour, so a client backs off instead of retrying into a wall. Both doors hold the same contract.

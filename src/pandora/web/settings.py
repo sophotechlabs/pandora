@@ -81,6 +81,7 @@ INSTALLED_APPS = [
     "pandora.ui",
     "pandora.mcp",
     "pandora.scrub",
+    "pandora.notify",
 ]
 
 if importlib.util.find_spec("django_migration_linter"):
@@ -211,6 +212,19 @@ PANDORA_CORRELATION_KEYS = os.environ.get(
 PANDORA_CORRELATION_WINDOW_MINUTES = _int(
     "PANDORA_CORRELATION_WINDOW_MINUTES",
     60,
+)
+PANDORA_EMAIL_FROM = os.environ.get("PANDORA_EMAIL_FROM", "")
+PANDORA_ISSUE_HOOKS = os.environ.get(
+    "PANDORA_ISSUE_HOOKS",
+    "pandora.notify.hooks.on_transition",
+)
+PANDORA_WAKE_HOOKS = os.environ.get(
+    "PANDORA_WAKE_HOOKS",
+    "pandora.notify.hooks.on_wake",
+)
+PANDORA_RESOLVE_HOOKS = os.environ.get(
+    "PANDORA_RESOLVE_HOOKS",
+    "pandora.notify.hooks.on_resolve",
 )
 PANDORA_SPIKE_ENABLED = _flag("PANDORA_SPIKE_ENABLED")
 PANDORA_SPIKE_FACTOR = _int("PANDORA_SPIKE_FACTOR", 5)

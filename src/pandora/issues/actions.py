@@ -8,8 +8,8 @@ from django.db import transaction
 
 from pandora.am import client as am_client
 from pandora.am import silences
+from pandora.issues import hooks, triage
 from pandora.issues import snooze as snooze_module
-from pandora.issues import triage
 from pandora.issues.models import Issue, IssueActivity
 
 SILENCE_WINDOWS = {
@@ -41,6 +41,7 @@ def apply_triage(issue: Issue, target_state: str, actor: str, at: datetime) -> b
     plan = triage.plan_triage(issue.triage_state, target_state, at)
     if not plan.changed:
         return False
+    resolving = target_state == triage.RESOLVED
 
     previous_state = issue.triage_state
     with transaction.atomic():
@@ -54,6 +55,8 @@ def apply_triage(issue: Issue, target_state: str, actor: str, at: datetime) -> b
             at=at,
             data={"previous_triage_state": previous_state},
         )
+    if resolving:
+        hooks.fire("PANDORA_RESOLVE_HOOKS", issue, actor)
     return True
 
 
@@ -125,4 +128,5 @@ def wake(issue: Issue, at: datetime) -> bool:
         issue.snoozed_past_count = None
         issue.save(update_fields=["snoozed_until", "snoozed_past_count"])
         IssueActivity.objects.create(issue=issue, kind="unsnoozed", at=at)
+    hooks.fire("PANDORA_WAKE_HOOKS", issue)
     return True

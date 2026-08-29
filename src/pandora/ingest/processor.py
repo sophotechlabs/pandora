@@ -12,7 +12,7 @@ from pandora.events.types import Event
 from pandora.ingest.models import EnvelopeState, ProcessedEvent, RawEnvelope
 from pandora.ingest.translators import am
 from pandora.ingest.translators import envelope as envelope_translator
-from pandora.issues import aggregates, lifecycle
+from pandora.issues import aggregates, hooks, lifecycle
 from pandora.issues.models import Episode, Issue, IssueActivity, SourceState
 
 ENVELOPES = Counter(
@@ -294,6 +294,7 @@ def _write_issue(
     transition: lifecycle.Transition,
     occurrence: lifecycle.Occurrence,
 ) -> None:
+    before = issue.event_count
     for field, value in transition.issue_fields.items():
         setattr(issue, field, value)
     if transition.count_occurrence:
@@ -305,6 +306,7 @@ def _write_issue(
     issue.save(update_fields=fields)
     if transition.count_occurrence:
         aggregates.count_occurrence(issue, occurrence.starts_at, occurrence.tags)
+    hooks.fire("PANDORA_ISSUE_HOOKS", issue, transition, occurrence, before)
 
 
 def _record(
