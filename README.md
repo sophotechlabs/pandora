@@ -115,12 +115,13 @@ The stream opens on `is:unresolved`. The search box takes a query rather than a 
 | `is:snoozed` | `is:snoozed` | quiet on purpose, by time or by occurrence count |
 | `is:awake` | `is:awake` | everything not currently snoozed |
 | `age:` | `age:1d` | first seen inside the window |
+| `owner:` | `owner:platform` `owner:me` `owner:none` | the team or person an ownership rule routed it to |
 
 Anything else is matched against the title and the culprit, and a bare hash prefix matches the fingerprint. Repeating a key widens it (`level:error level:fatal`); different keys narrow together. A term Pandora does not understand is named back above the table rather than silently returning nothing.
 
 Selecting rows raises an action bar: acknowledge, resolve, ignore, snooze, or silence in Alertmanager for 1h, 4h or 1d. `/` focuses the search box, `j` and `k` move through the rows, `x` selects one, `Enter` opens it.
 
-Triage needs the `issues.change_issue` permission and replay needs `ingest.change_rawenvelope`, the same permissions the admin checks — a staff account without them gets a read-only UI.
+Triage needs the `issues.change_issue` permission and replay needs `ingest.change_rawenvelope`, the same permissions the admin checks — a staff account without them gets a read-only UI. A team role grants the same permissions without touching the admin; see [More than one person](#more-than-one-person).
 
 Both ingest routes existed from the first commit and answered 501 until their phase landed — the URL and auth scheme are what SDKs and Alertmanager configs hard-code, so they were pinned before anything was written behind them. Both doors are open now.
 
@@ -194,6 +195,55 @@ An **ingest quota** caps how much a project may send in a window — a row in th
 
 With no quota configured and spike protection off, the gate does exactly what it did before — a size check and nothing else, with no counter written. Counters live in one small table, bucketed by window, and `prune` drops them after two days.
 
+## More than one person
+
+An install with one operator needs none of this — a staff account sees everything and may do everything, exactly as before. The moment a second person has an account, three things become available.
+
+**Teams and roles.** A team holds people and, optionally, projects. A member of a team scoped to a project sees only that project's issues; a team with no projects named is install-wide. Three roles: a **viewer** reads, a **member** triages, snoozes and silences, an **owner** may also replay the ingest queue. The stream hides the buttons a role cannot press rather than answering `403` on the click, and an issue outside someone's projects answers `404` — the same answer as an issue that does not exist, so the scope leaks nothing.
+
+A superuser is never scoped and never refused.
+
+**Ownership rules** route an issue to a team or a person when it is first seen, matching on the stack-frame path, the request URL, the culprit or a tag:
+
+```yaml
+teams:
+  - name: platform
+    projects: [infrastructure]
+    members:
+      - user: dev
+        role: member
+      - user: boss
+        role: owner
+ownership_rules:
+  - name: payments
+    pattern: src/payments/*
+    team: platform
+  - name: checkout-pages
+    pattern: https://shop.example.com/checkout*
+    field: url
+    user: dev
+```
+
+`field` is `path` (the default), `url`, `culprit` or `tag`; a tag pattern matches `key=value`. Patterns are shell globs and case-sensitive. **A rule assigns only when it is the only rule that matches** — two rules claiming the same issue assign nobody and the issue page lists both, because a wrongly-routed page is worse than an unrouted one. The stream carries an owner column and `owner:` filters on it: `owner:platform`, `owner:dev`, `owner:me`, `owner:none` for what nothing routed. The notification payload carries the owner too.
+
+**Single sign-on** against any OpenID Connect provider. Set three variables and a Sign in with single sign-on button appears on the login page:
+
+```sh
+PANDORA_OIDC_ISSUER=https://keycloak.example.com/realms/pandora
+PANDORA_OIDC_CLIENT_ID=pandora
+PANDORA_OIDC_CLIENT_SECRET=...
+```
+
+The rest is discovered from the issuer. An account is created on first sign-in with no usable password, so the provider stays the only way in. Name a group per role — `PANDORA_OIDC_OWNER_GROUP`, `..._MEMBER_GROUP`, `..._VIEWER_GROUP` — and the role follows the provider on every sign-in, including a revocation; `PANDORA_OIDC_DEFAULT_ROLE` (viewer) covers everyone else. `PANDORA_OIDC_GROUPS_CLAIM` names the claim to read when the provider does not call it `groups`.
+
+The callback is `/sso/callback/`.
+
+## What happened, and who did it
+
+Every action a person takes is recorded and shown at `/history/`: sign-ins and sign-outs with the route taken, triage, snoozes, silences, occurrence deletions, replays, `apply_config` runs and `redact` runs. Each entry names the actor, what it touched and the terms — a snooze records its spec, a replay records how many envelopes it moved. Filter by action or by person. `prune` drops entries past the retention window along with everything else.
+
+Actions that were refused record nothing, so a permission failure cannot fill the log a real one would be found in.
+
 ## An agent's view
 
 Pandora ships a read-only MCP server as an optional extra, so an agent can look at issues without being handed a browser session:
@@ -234,7 +284,7 @@ service_links:
 python manage.py apply_config --path /etc/pandora/config.yaml --dry-run
 ```
 
-`PANDORA_CONFIG` supplies the path when the flag is absent. Secrets go in by reference — any field takes a `_env` suffix naming the variable to read — so the file itself is committable.
+Two more sections, `teams` and `ownership_rules`, are described under [More than one person](#more-than-one-person). `PANDORA_CONFIG` supplies the path when the flag is absent. Secrets go in by reference — any field takes a `_env` suffix naming the variable to read — so the file itself is committable.
 
 **It reconciles rather than creates.** A token dropped from the file is deactivated, not left live; rows are never deleted, so the episodes and issues pointing at them survive. A run either applies completely or leaves nothing behind, and `--dry-run` prints the diff and rolls back.
 
@@ -322,6 +372,8 @@ Authorization: Bearer <IngestToken with scope=read>
 ```
 
 A token belongs to one project and every response is scoped to it: another project's issues are absent from the list and answer 404 by id. A token with the wrong scope gets 403, an unknown or deactivated one 401, an unsafe verb 405. Errors are `{"detail": "..."}` with the matching status.
+
+Two read scopes. `read` returns the issue and everything around it with the event `payload` and `extra` blanked; `payload` returns the stored event whole. Reading an issue and reading what an event carried — a request body, a user, frame locals — are different permissions, so a dashboard or an agent can have the first without the second. The MCP tools honour the same split.
 
 ### `GET /api/v1/issues`
 
