@@ -79,6 +79,7 @@ INSTALLED_APPS = [
     "pandora.events",
     "pandora.am",
     "pandora.ui",
+    "pandora.mcp",
 ]
 
 if importlib.util.find_spec("django_migration_linter"):

@@ -46,6 +46,10 @@ quickstart:
     echo "Sign in as admin / $password"
     echo "Stop it with: just quickstart-down"
 
+# Serve the read-only MCP tools over stdio (needs the mcp extra)
+mcp:
+    python manage.py mcp
+
 # Remove the quickstart container and its volume
 quickstart-down:
     -docker rm -f {{quickstart_name}}

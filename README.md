@@ -136,6 +136,17 @@ A frame with no `context_line` says so rather than rendering an empty block. Tha
 
 Every event keeps its raw form too, behind **Raw payload** on the occurrence.
 
+## An agent's view
+
+Pandora ships a read-only MCP server as an optional extra, so an agent can look at issues without being handed a browser session:
+
+```sh
+pip install 'pandora[mcp]'
+PANDORA_MCP_TOKEN=<a read-scoped ingest token> python manage.py mcp
+```
+
+Four tools over stdio: `search_issues` (the same query language the UI uses), `get_issue`, `get_issue_events` — occurrences with their stack traces — and `issue_as_markdown`. Everything is scoped to the token's project, nothing writes, and an ingest-scoped token is refused. The extra is not in the image; the base install does not carry it.
+
 ## Configuration as a file
 
 Everything an operator would otherwise click into the admin can live in a file the deployment mounts:

@@ -30,11 +30,16 @@ web = [
     "opentelemetry-instrumentation-requests>=0.65b0",
     "opentelemetry-instrumentation-psycopg>=0.65b0",
 ]
+mcp = [
+    "mcp>=2.0",
+]
 dev = [
+    "mcp>=2.0",
     "pytest>=8.0",
     "pytest-cov>=5.0",
     "pytest-mock>=3.14",
     "pytest-django>=4.9",
+    "pytest-asyncio>=0.24",
     "freezegun>=1.5",
     "ruff==0.16.0",
     "mypy>=1.13",
@@ -60,6 +65,7 @@ ignore_name = ["0003_remove_issue_issues_issue_fingerprint_uq_and_more"]
 testpaths = ["tests"]
 filterwarnings = ["ignore:No directory at.*staticfiles:UserWarning"]
 DJANGO_SETTINGS_MODULE = "tests.settings"
+asyncio_mode = "auto"
 python_files = ["test_*.py"]
 addopts = ""
 
@@ -139,6 +145,7 @@ python_version = "3.12"
 plugins = ["mypy_django_plugin.main"]
 mypy_path = "src"
 packages = [
+    "pandora.mcp",
     "pandora.core",
     "pandora.ingest",
     "pandora.issues",
