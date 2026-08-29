@@ -98,7 +98,7 @@ def test_the_enrichment_urls_default_to_empty(load_settings):
 
 
 def test_every_pandora_app_is_installed(load_settings):
-    """Should install all seven pandora apps plus the metrics exporter."""
+    """Should install all eight pandora apps plus the metrics exporter."""
     settings = load_settings()
 
     result = [app for app in settings.INSTALLED_APPS if app.startswith("pandora.")]
@@ -110,6 +110,7 @@ def test_every_pandora_app_is_installed(load_settings):
         "pandora.am",
         "pandora.ui",
         "pandora.mcp",
+        "pandora.scrub",
     ]
 
     assert result == expected

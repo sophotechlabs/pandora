@@ -13,6 +13,7 @@ from pandora.core.models import Project
 from pandora.events import payload as payload_interfaces
 from pandora.issues import grouping, lifecycle
 from pandora.issues.models import Level
+from pandora.scrub import service as scrub
 
 EVENT_ITEM = "event"
 DEFAULT_LEVEL = Level.ERROR
@@ -113,13 +114,13 @@ def translate_event(
         title=title[:TITLE_MAX],
         culprit=_culprit(exception)[:CULPRIT_MAX],
         level=_level(payload),
-        message=_message(payload, exception, title),
+        message=scrub.scrub_message(_message(payload, exception, title)),
         starts_at=timestamp,
         ends_at=None,
         timestamp=received_at,
-        tags=tags,
-        extra=_extra(payload),
-        payload=payload_interfaces.normalize(payload),
+        tags=scrub.scrub_payload(tags, project),
+        extra=scrub.scrub_payload(_extra(payload), project),
+        payload=scrub.scrub_payload(payload_interfaces.normalize(payload), project),
         environment=_environment(payload, environment)[:ENVIRONMENT_MAX],
         source="sdk",
     )

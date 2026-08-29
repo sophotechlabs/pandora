@@ -147,6 +147,7 @@ plugins = ["mypy_django_plugin.main"]
 mypy_path = "src"
 packages = [
     "pandora.mcp",
+    "pandora.scrub",
     "pandora.core",
     "pandora.ingest",
     "pandora.issues",

@@ -15,6 +15,7 @@ from pandora.ingest.gate import Verdict, get_gate
 from pandora.ingest.models import RawEnvelope
 from pandora.ingest.queue import get_queue
 from pandora.ingest.translators import envelope as envelope_translator
+from pandora.scrub import service as scrub
 
 BEARER_PREFIX = "Bearer "
 SENTRY_AUTH_HEADER = "X-Sentry-Auth"
@@ -60,6 +61,11 @@ def am_webhook(request: HttpRequest) -> JsonResponse:
             {"detail": "body is not a JSON object"},
             status=HTTPStatus.BAD_REQUEST,
         )
+
+    rule = scrub.dropped_by(payload, token.project)
+    if rule is not None:
+        scrub.record_drop(rule, TokenSource.AM)
+        return JsonResponse({"dropped": rule.name}, status=HTTPStatus.OK)
 
     envelope = RawEnvelope.objects.create(
         project=token.project,
@@ -129,6 +135,11 @@ def _accept_event(key: DsnKey, item: envelope_translator.Item, fallback: str) ->
         log.warning("envelope ingest dropped an event item that is not a JSON object")
         return
     payload.setdefault("event_id", fallback)
+
+    rule = scrub.dropped_by(payload, key.project)
+    if rule is not None:
+        scrub.record_drop(rule, TokenSource.SDK)
+        return
 
     stored = RawEnvelope.objects.create(
         project=key.project,

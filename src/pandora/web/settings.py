@@ -80,6 +80,7 @@ INSTALLED_APPS = [
     "pandora.am",
     "pandora.ui",
     "pandora.mcp",
+    "pandora.scrub",
 ]
 
 if importlib.util.find_spec("django_migration_linter"):
@@ -199,6 +200,10 @@ PANDORA_AM_CA_BUNDLE = os.environ.get("PANDORA_AM_CA_BUNDLE", "")
 PANDORA_GRAFANA_URL = os.environ.get("PANDORA_GRAFANA_URL", "")
 PANDORA_LOKI_QUERY_URL = os.environ.get("PANDORA_LOKI_QUERY_URL", "")
 PANDORA_CONFIG = os.environ.get("PANDORA_CONFIG", "")
+PANDORA_SCRUB_ENABLED = _flag("PANDORA_SCRUB_ENABLED", "1")
+PANDORA_SCRUB_ANONYMISE_IP = _flag("PANDORA_SCRUB_ANONYMISE_IP", "1")
+PANDORA_SCRUB_KEYWORDS = os.environ.get("PANDORA_SCRUB_KEYWORDS", "")
+PANDORA_SCRUB_SAFE_KEYS = os.environ.get("PANDORA_SCRUB_SAFE_KEYS", "")
 PANDORA_CORRELATION_KEYS = os.environ.get(
     "PANDORA_CORRELATION_KEYS",
     "namespace,pod,node,cluster,service",

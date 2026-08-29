@@ -136,6 +136,18 @@ A frame with no `context_line` says so rather than rendering an empty block. Tha
 
 Every event keeps its raw form too, behind **Raw payload** on the occurrence.
 
+## What Pandora refuses to keep
+
+**Scrubbing is on by default.** Before an SDK event is written, any key whose name looks like a credential — `password`, `secret`, `token`, `auth`, `api_key`, `cookie`, `session` and the rest of Sentry's own list — is replaced, card numbers are masked wherever they appear (checked against the Luhn digit, so a long request id survives), and client IP addresses lose their last octet. It walks frame locals, request headers, contexts and the tag breakdown, not just the top level.
+
+`PANDORA_SCRUB_KEYWORDS` adds names, `PANDORA_SCRUB_SAFE_KEYS` exempts them, `PANDORA_SCRUB_ANONYMISE_IP=0` keeps the full address, and `PANDORA_SCRUB_ENABLED=0` turns the lot off.
+
+Beyond the defaults, **scrub rules** name a dotted path — `user.email`, `request.headers.*`, `**.vars` — and either remove or mask what they match.
+
+**The fingerprint is computed before scrubbing.** Microsoft's App Center shipped the other order and split every issue in two when a redacted value was part of the grouping key; there is a test that pins ours.
+
+**Drop rules** refuse a payload before the durable write, so the saving is disk rather than only noise. Each matches a field — `alertname`, `namespace`, `severity`, `type`, `value`, `message`, `release`, `environment`, `server_name`, `transaction`, `platform` — against a regular expression, counts what it refused, and works on both ingest doors. An invalid pattern never matches rather than taking ingest down.
+
 ## An agent's view
 
 Pandora ships a read-only MCP server as an optional extra, so an agent can look at issues without being handed a browser session:
