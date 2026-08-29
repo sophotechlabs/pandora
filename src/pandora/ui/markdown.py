@@ -147,7 +147,7 @@ def _correlated(detail: issue_detail.Detail) -> str:
     for match in matches:
         shared = ", ".join(f"{key}={value}" for key, value in match.shared)
         lines.append(
-            f"- {match.issue.title} — ×{match.ratio:.1f} its usual rate, "
+            f"- {match.issue.title} — x{match.ratio:.1f} its usual rate, "
             f"{match.count} in window ({shared})"
         )
     return "\n".join(lines)

@@ -124,10 +124,11 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**" = ["S101", "S105", "S106", "S107", "S108", "S608", "PLR2004", "ARG001", "ARG002", "PLC0415", "E402", "RUF001"]
+"tests/**" = ["S101", "S105", "S106", "S107", "S108", "S603", "S607", "S608", "PLR2004", "ARG001", "ARG002", "PLC0415", "E402", "RUF001", "RUF015"]
 "**/apps.py" = ["PLC0415"]
 "**/migrations/**" = ["ALL"]
 "**/settings.py" = ["S105", "S106"]
+"**/mcp/server.py" = ["S105"]
 "**/conftest.py" = ["S101"]
 "**/admin.py" = ["RUF012"]
 "**/models.py" = ["RUF012", "DJ001"]

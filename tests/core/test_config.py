@@ -237,7 +237,7 @@ def test_a_token_dropped_from_the_file_is_deactivated(write):
     result = models.IngestToken.objects.get(name="alertmanager").active
     expected = False
 
-    assert result is False
+    assert result == expected
 
 
 def test_a_deactivated_row_is_not_deleted(write):
