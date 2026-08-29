@@ -7,6 +7,7 @@ from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
 
 from pandora.core import config
+from pandora.people import audit
 
 
 class Command(BaseCommand):
@@ -51,6 +52,17 @@ class Command(BaseCommand):
         )
         if options["dry_run"]:
             summary = f"{summary} (dry run, rolled back)"
+        else:
+            audit.record(
+                "",
+                audit.CONFIG,
+                str(path),
+                {
+                    "created": len(report.created),
+                    "updated": len(report.updated),
+                    "deactivated": len(report.deactivated),
+                },
+            )
         self.stdout.write(summary)
 
     def _apply(self, document: Any, dry_run: bool) -> config.Report:

@@ -15,11 +15,13 @@ from pandora.ingest import limits
 from pandora.ingest.models import EnvelopeState, ProcessedEvent, RawEnvelope
 from pandora.issues.models import HourlyStat, IssueActivity, SilenceLink
 from pandora.notify import deliver as notify_deliver
+from pandora.people import audit as people_audit
 
 logger = logging.getLogger(__name__)
 
 MONTHS_AHEAD = 2
 COUNTER_RETENTION = timedelta(days=2)
+AUDIT_RETENTION = timedelta(days=365)
 
 
 @dataclass(frozen=True)
@@ -32,6 +34,7 @@ class PruneResult:
     activities: int = 0
     counters: int = 0
     deliveries: int = 0
+    audit_entries: int = 0
 
 
 def prune_expired(now: datetime) -> PruneResult:
@@ -52,6 +55,7 @@ def prune_expired(now: datetime) -> PruneResult:
     activities, _ = IssueActivity.objects.filter(at__lt=retention_cutoff).delete()
     counters = limits.prune(now - COUNTER_RETENTION)
     deliveries = notify_deliver.prune(retention_cutoff)
+    audit_entries = people_audit.prune(now - AUDIT_RETENTION)
     store.ensure_partitions(months_ahead=MONTHS_AHEAD)
     database.incremental_vacuum()
     database.refresh_size()
@@ -65,10 +69,12 @@ def prune_expired(now: datetime) -> PruneResult:
         activities=activities,
         counters=counters,
         deliveries=deliveries,
+        audit_entries=audit_entries,
     )
     logger.info(
         "prune: %s events, %s envelopes, %s processed events, %s silences,"
-        " %s hourly stats, %s activities, %s ingest counters, %s deliveries",
+        " %s hourly stats, %s activities, %s ingest counters, %s deliveries,"
+        " %s audit entries",
         result.events,
         result.envelopes,
         result.processed_events,
@@ -77,6 +83,7 @@ def prune_expired(now: datetime) -> PruneResult:
         result.activities,
         result.counters,
         result.deliveries,
+        result.audit_entries,
     )
     return result
 
@@ -90,5 +97,6 @@ class Command(BaseCommand):
             f"prune: {result.events} events, {result.envelopes} envelopes, "
             f"{result.processed_events} processed events, {result.silences} silences, "
             f"{result.hourly_stats} hourly stats, {result.activities} activities, "
-            f"{result.counters} ingest counters, {result.deliveries} deliveries"
+            f"{result.counters} ingest counters, {result.deliveries} deliveries, "
+            f"{result.audit_entries} audit entries"
         )

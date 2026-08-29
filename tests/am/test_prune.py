@@ -1,6 +1,7 @@
 import datetime
 import io
 
+import freezegun
 import pytest
 from django import test
 from django.conf import settings
@@ -71,6 +72,7 @@ def test_prune_reports_every_retention_class():
         "activities",
         "counters",
         "deliveries",
+        "audit_entries",
     ]
 
     assert result == expected
@@ -229,7 +231,8 @@ def test_the_command_reports_an_empty_run():
     result = run_command()
     expected = (
         "prune: 0 events, 0 envelopes, 0 processed events, 0 silences,"
-        " 0 hourly stats, 0 activities, 0 ingest counters, 0 deliveries\n"
+        " 0 hourly stats, 0 activities, 0 ingest counters, 0 deliveries, "
+        "0 audit entries\n"
     )
 
     assert result == expected
@@ -252,7 +255,8 @@ def test_the_command_reports_what_it_removed(project, issue):
     result = run_command()
     expected = (
         "prune: 0 events, 1 envelopes, 0 processed events, 1 silences,"
-        " 0 hourly stats, 0 activities, 0 ingest counters, 0 deliveries\n"
+        " 0 hourly stats, 0 activities, 0 ingest counters, 0 deliveries, "
+        "0 audit entries\n"
     )
 
     assert result == expected
@@ -350,3 +354,28 @@ def test_prune_reclaims_freed_pages_and_publishes_the_size(monkeypatch):
     expected = ["vacuum", "refresh"]
 
     assert result == expected
+
+
+def test_an_old_audit_entry_is_dropped(project):
+    """Should bound the history page rather than keep every sign-in forever."""
+    from pandora.people import audit
+    from pandora.people.models import AuditEntry
+
+    with freezegun.freeze_time("2024-01-01 10:00:00"):
+        audit.record("dev", audit.SIGN_IN)
+    with freezegun.freeze_time("2026-08-30 12:00:00"):
+        management.call_command("prune", stdout=io.StringIO())
+
+    assert AuditEntry.objects.count() == 0
+
+
+def test_a_recent_audit_entry_survives(project):
+    """Should keep a year of history, which is what makes it worth reading."""
+    from pandora.people import audit
+    from pandora.people.models import AuditEntry
+
+    with freezegun.freeze_time("2026-08-30 12:00:00"):
+        audit.record("dev", audit.SIGN_IN)
+        management.call_command("prune", stdout=io.StringIO())
+
+    assert AuditEntry.objects.count() == 1

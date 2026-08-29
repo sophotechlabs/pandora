@@ -82,6 +82,7 @@ INSTALLED_APPS = [
     "pandora.mcp",
     "pandora.scrub",
     "pandora.notify",
+    "pandora.people",
 ]
 
 if importlib.util.find_spec("django_migration_linter"):
@@ -184,6 +185,11 @@ STORAGES = {
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
+AUTHENTICATION_BACKENDS = [
+    "django.contrib.auth.backends.ModelBackend",
+    "pandora.people.backends.TeamRoleBackend",
+]
+
 LOGIN_URL = "/login/"
 LOGIN_REDIRECT_URL = "/"
 
@@ -214,9 +220,19 @@ PANDORA_CORRELATION_WINDOW_MINUTES = _int(
     60,
 )
 PANDORA_EMAIL_FROM = os.environ.get("PANDORA_EMAIL_FROM", "")
+PANDORA_OIDC_ISSUER = os.environ.get("PANDORA_OIDC_ISSUER", "")
+PANDORA_OIDC_CLIENT_ID = os.environ.get("PANDORA_OIDC_CLIENT_ID", "")
+PANDORA_OIDC_CLIENT_SECRET = os.environ.get("PANDORA_OIDC_CLIENT_SECRET", "")
+PANDORA_OIDC_SCOPES = os.environ.get("PANDORA_OIDC_SCOPES", "openid profile email")
+PANDORA_OIDC_GROUPS_CLAIM = os.environ.get("PANDORA_OIDC_GROUPS_CLAIM", "groups")
+PANDORA_OIDC_TEAM = os.environ.get("PANDORA_OIDC_TEAM", "sso")
+PANDORA_OIDC_OWNER_GROUP = os.environ.get("PANDORA_OIDC_OWNER_GROUP", "")
+PANDORA_OIDC_MEMBER_GROUP = os.environ.get("PANDORA_OIDC_MEMBER_GROUP", "")
+PANDORA_OIDC_VIEWER_GROUP = os.environ.get("PANDORA_OIDC_VIEWER_GROUP", "")
+PANDORA_OIDC_DEFAULT_ROLE = os.environ.get("PANDORA_OIDC_DEFAULT_ROLE", "viewer")
 PANDORA_ISSUE_HOOKS = os.environ.get(
     "PANDORA_ISSUE_HOOKS",
-    "pandora.notify.hooks.on_transition",
+    "pandora.people.hooks.on_transition,pandora.notify.hooks.on_transition",
 )
 PANDORA_WAKE_HOOKS = os.environ.get(
     "PANDORA_WAKE_HOOKS",

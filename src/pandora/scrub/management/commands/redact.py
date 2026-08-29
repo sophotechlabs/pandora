@@ -10,6 +10,7 @@ from django.db import transaction
 from pandora.core.models import Project
 from pandora.events.store import get_store
 from pandora.events.types import Event
+from pandora.people import audit
 from pandora.scrub import service
 
 BATCH = 500
@@ -85,6 +86,13 @@ class Command(BaseCommand):
         summary = f"redact: {report.scanned} scanned, {report.rewritten} rewritten"
         if options["dry_run"]:
             summary = f"{summary} (dry run, rolled back)"
+        else:
+            audit.record(
+                "",
+                audit.REDACT,
+                options["project"],
+                {"scanned": report.scanned, "rewritten": report.rewritten},
+            )
         self.stdout.write(summary)
 
     def _run(self, projects: list[Project], batch: int, dry_run: bool) -> RedactReport:
