@@ -136,6 +136,39 @@ A frame with no `context_line` says so rather than rendering an empty block. Tha
 
 Every event keeps its raw form too, behind **Raw payload** on the occurrence.
 
+## Configuration as a file
+
+Everything an operator would otherwise click into the admin can live in a file the deployment mounts:
+
+```yaml
+projects:
+  - slug: infrastructure
+    name: Infrastructure
+tokens:
+  - name: alertmanager-p-mk1
+    project: infrastructure
+    token_env: PANDORA_TOKEN_AM_PMK1
+    environment: p-mk1
+dsn_keys:
+  - project: infrastructure
+    public_key_env: PANDORA_DSN_INFRA
+grouping_rules:
+  - priority: 100
+    mode: denylist
+    labels: [pod, instance, container, endpoint, replicaset, uid, node, job_name]
+service_links:
+  - name: Loki
+    url_template: https://grafana.example.com/explore?q={pod}&from={padded_from_iso}&to={padded_to_iso}
+```
+
+```sh
+python manage.py apply_config --path /etc/pandora/config.yaml --dry-run
+```
+
+`PANDORA_CONFIG` supplies the path when the flag is absent. Secrets go in by reference — any field takes a `_env` suffix naming the variable to read — so the file itself is committable.
+
+**It reconciles rather than creates.** A token dropped from the file is deactivated, not left live; rows are never deleted, so the episodes and issues pointing at them survive. A run either applies completely or leaves nothing behind, and `--dry-run` prints the diff and rolls back.
+
 ## Taking an issue somewhere else
 
 `?format=md` on any issue page renders it as Markdown — title, the facts table, the newest occurrences with their stack traces and breadcrumbs, episode history, tags, what else was firing in the same window, the outbound links and the activity trail. It is the artefact you paste into a chat, a ticket or an agent, and the page carries a button for it.

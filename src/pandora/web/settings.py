@@ -197,6 +197,7 @@ PANDORA_AM_URL = os.environ.get("PANDORA_AM_URL", "")
 PANDORA_AM_CA_BUNDLE = os.environ.get("PANDORA_AM_CA_BUNDLE", "")
 PANDORA_GRAFANA_URL = os.environ.get("PANDORA_GRAFANA_URL", "")
 PANDORA_LOKI_QUERY_URL = os.environ.get("PANDORA_LOKI_QUERY_URL", "")
+PANDORA_CONFIG = os.environ.get("PANDORA_CONFIG", "")
 PANDORA_CORRELATION_KEYS = os.environ.get(
     "PANDORA_CORRELATION_KEYS",
     "namespace,pod,node,cluster,service",
