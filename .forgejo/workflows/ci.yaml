@@ -25,8 +25,8 @@ jobs:
         run: uv sync --frozen --extra web --extra dev
       - name: Lint, types, templates
         run: |
-          uv run ruff check src tests
-          uv run ruff format --check src tests
+          uv run ruff check src tests e2e
+          uv run ruff format --check src tests e2e
           uv run mypy --config-file pyproject.toml
           if [ -n "$(find src -name '*.html' -print -quit)" ]; then
             uv run djlint src --check

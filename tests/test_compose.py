@@ -6,6 +6,7 @@ import pytest
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 BASE = ROOT / "docker-compose.yml"
 LOCAL = ROOT / "docker-compose.local.yml"
+E2E = ROOT / "docker-compose.e2e.yml"
 JUSTFILE = ROOT / "justfile"
 
 CREATING_RECIPES = ("up", "up-nobuild", "up-fg", "bootstrap")
@@ -149,5 +150,62 @@ def test_the_override_mounts_the_source_for_a_live_reload():
 def test_the_image_builds_on_the_host_network():
     """Should let apt resolve on a box whose forward chain drops docker's default bridge — the same reason the forgejo image workflow passes --network host."""
     result = "network: host" in BASE.read_text(encoding="utf-8")
+
+    assert result is True
+
+
+# the e2e stack
+
+
+def test_the_e2e_override_publishes_no_host_port():
+    """Should let the browser suite run beside every other checkout."""
+    result = PUBLISHED.findall(E2E.read_text(encoding="utf-8"))
+    expected = []
+
+    assert result == expected
+
+
+def test_the_e2e_service_waits_for_the_stack_to_be_healthy():
+    """Should not open a browser at a server that is still migrating."""
+    result = "condition: service_healthy" in E2E.read_text(encoding="utf-8")
+
+    assert result is True
+
+
+def test_the_e2e_service_is_told_where_the_stack_is():
+    """Should reach the web container by name, not by a host port."""
+    result = "http://web:8000" in E2E.read_text(encoding="utf-8")
+
+    assert result is True
+
+
+def test_the_e2e_service_runs_against_the_real_settings():
+    """Should exercise the settings a deployment uses, not the test ones."""
+    result = "pandora.web.settings" in E2E.read_text(encoding="utf-8")
+
+    assert result is True
+
+
+def test_the_e2e_recipe_uses_the_e2e_override():
+    """Should compose the two files — the base alone has no browser."""
+    result = "compose_e2e" in recipe_body("ci-e2e")
+
+    assert result is True
+
+
+def test_the_default_gate_leaves_the_browser_suite_out():
+    """Should keep the fast gate fast — the browser image is a gigabyte."""
+    match = re.search(r"^ci:(.*)$", justfile_text(), re.MULTILINE)
+
+    result = "ci-e2e" in match.group(1)
+
+    assert result is False
+
+
+def test_the_browser_suite_is_not_collected_by_the_unit_run():
+    """Should not try to open a browser during `just ci-test`."""
+    text = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+
+    result = 'testpaths = ["tests"]' in text
 
     assert result is True

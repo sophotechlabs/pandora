@@ -55,6 +55,26 @@ ENTRYPOINT ["/app/docker/entrypoint.sh"]
 CMD ["python", "manage.py", "runserver", "0.0.0.0:8000"]
 
 
+FROM mcr.microsoft.com/playwright/python:v1.56.0-noble AS e2e
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    VIRTUAL_ENV=/opt/venv \
+    UV_PROJECT_ENVIRONMENT=/opt/venv \
+    PATH=/opt/venv/bin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+COPY --from=ghcr.io/astral-sh/uv:0.11.33 /uv /usr/local/bin/uv
+
+WORKDIR /app
+
+COPY pyproject.toml uv.lock ./
+RUN uv sync --frozen --extra web --extra e2e --no-install-project
+
+COPY . .
+RUN uv sync --frozen --extra web --extra e2e
+
+
 FROM base AS prod
 
 COPY --from=builder --chown=root:root /opt/venv /opt/venv

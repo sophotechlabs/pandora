@@ -1,4 +1,5 @@
 compose_local := "docker compose -f docker-compose.yml -f docker-compose.local.yml"
+compose_e2e := "docker compose -f docker-compose.yml -f docker-compose.e2e.yml"
 quickstart_name := "pandora-quickstart"
 quickstart_image := "pandora:quickstart"
 quickstart_volume := "pandora-quickstart-data"
@@ -205,12 +206,12 @@ coverage-html:
 
 # Ruff check locally (no docker) — quick dev feedback
 lint:
-    ruff check src tests
+    ruff check src tests e2e
 
 # Auto-format with ruff locally (no docker)
 format:
-    ruff check --fix src tests
-    ruff format src tests
+    ruff check --fix src tests e2e
+    ruff format src tests e2e
 
 # Remove Python artifacts and caches (not volumes)
 clean:
@@ -233,11 +234,11 @@ ci-image:
 
 # ruff check (lint rules) — in docker
 ci-lint:
-    {{ci_compose_run}} --entrypoint ruff web check src tests
+    {{ci_compose_run}} --entrypoint ruff web check src tests e2e
 
 # ruff format --check — in docker
 ci-format-check:
-    {{ci_compose_run}} --entrypoint ruff web format --check src tests
+    {{ci_compose_run}} --entrypoint ruff web format --check src tests e2e
 
 # mypy with django-stubs — in docker
 ci-typecheck:
@@ -296,12 +297,21 @@ ci-upgrade-check:
 ci-fix:
     #!/usr/bin/env bash
     set -euo pipefail
-    {{ci_compose_run}} --entrypoint ruff web check --fix src tests
-    {{ci_compose_run}} --entrypoint ruff web format src tests
+    {{ci_compose_run}} --entrypoint ruff web check --fix src tests e2e
+    {{ci_compose_run}} --entrypoint ruff web format src tests e2e
     {{ci_compose_run}} --entrypoint sh web -c 'django-upgrade --target-version 6.0 $(find src -name "*.py")'
     if [ -n "$(find src -name '*.html' -print -quit)" ]; then
         {{ci_compose_run}} --entrypoint djlint web src --reformat
     fi
+
+# End-to-end: a real browser against the running stack (optional extra, not in default ci)
+ci-e2e:
+    {{compose_e2e}} build e2e
+    {{compose_e2e}} run --rm e2e
+
+# Tear down the e2e stack and its volumes
+ci-e2e-down:
+    {{compose_e2e}} down -v
 
 # helm lint + kubeconform over the chart (optional extra — needs helm and kubeconform)
 chart-lint:
