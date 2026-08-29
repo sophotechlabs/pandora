@@ -171,3 +171,51 @@ def test_extra_fields_reach_the_payload(make_issue, make_destination):
     expected = 100
 
     assert result == expected
+
+
+def test_the_payload_names_the_owning_team(make_issue, make_destination):
+    """Should let the receiving chat channel route without a second lookup."""
+    from pandora.people.models import Assignment, Team
+
+    make_destination()
+    issue = make_issue()
+    Assignment.objects.create(issue=issue, team=Team.objects.create(name="payments"))
+
+    events.queue(issue, models.NEW)
+
+    result = Delivery.objects.get().payload["owner"]
+    expected = {"team": "payments", "user": None}
+
+    assert result == expected
+
+
+def test_the_payload_names_the_owning_person(make_issue, make_destination):
+    """Should name whoever a rule routed it to, team or not."""
+    from django.contrib.auth import models as auth_models
+
+    from pandora.people.models import Assignment
+
+    make_destination()
+    issue = make_issue()
+    Assignment.objects.create(
+        issue=issue,
+        user=auth_models.User.objects.create_user(username="dev", password="x"),
+    )
+
+    events.queue(issue, models.NEW)
+
+    result = Delivery.objects.get().payload["owner"]
+    expected = {"team": None, "user": "dev"}
+
+    assert result == expected
+
+
+def test_an_unowned_issue_carries_no_owner(make_issue, make_destination):
+    """Should say nobody owns it rather than inventing a team name."""
+    make_destination()
+
+    events.queue(make_issue(), models.NEW)
+
+    result = Delivery.objects.get().payload["owner"]
+
+    assert result is None

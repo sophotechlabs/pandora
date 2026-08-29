@@ -42,11 +42,25 @@ def destinations_for(issue: Issue, event: str) -> list[Destination]:
     ]
 
 
+def _owner(issue: Issue) -> dict[str, Any] | None:
+    assignment = getattr(issue, "assignment", None)
+    if assignment is None:
+        return None
+    team = None
+    if assignment.team_id:
+        team = assignment.team.name
+    user = None
+    if assignment.user_id:
+        user = assignment.user.get_username()
+    return {"team": team, "user": user}
+
+
 def payload_for(
     issue: Issue, event: str, extra: dict[str, Any] | None = None
 ) -> dict[str, Any]:
     body = {
         "event": event,
+        "owner": _owner(issue),
         "issue": {
             "id": issue.pk,
             "title": issue.title,
