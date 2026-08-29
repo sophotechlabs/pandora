@@ -130,3 +130,24 @@ def test_the_scan_image_tag_defaults_to_the_checkout():
     )
 
     assert result is True
+
+
+def test_the_base_compose_mounts_no_host_directory():
+    """Should run CI against the code baked into the image — a bind mount writes as the container's uid, which is not the uid that owns a checkout on a build box."""
+    result = "- .:/app" in BASE.read_text(encoding="utf-8")
+
+    assert result is False
+
+
+def test_the_override_mounts_the_source_for_a_live_reload():
+    """Should keep `just up` editing without a rebuild, which is the reason the mount exists."""
+    result = "- .:/app" in LOCAL.read_text(encoding="utf-8")
+
+    assert result is True
+
+
+def test_the_image_builds_on_the_host_network():
+    """Should let apt resolve on a box whose forward chain drops docker's default bridge — the same reason the forgejo image workflow passes --network host."""
+    result = "network: host" in BASE.read_text(encoding="utf-8")
+
+    assert result is True
