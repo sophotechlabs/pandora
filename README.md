@@ -17,7 +17,17 @@ just superuser
 just seed-demo
 ```
 
-The UI is at http://localhost:8000/, the config admin at http://localhost:8000/admin/.
+`bootstrap` prints the URL it came up on; `just url` prints it again, and `just dburl` gives the connection string for a local `psql`. The config admin is `/admin/` on the same address.
+
+## Running more than one checkout
+
+Nothing binds a fixed host port, so several worktrees can build, test and run at once — on a laptop or on one CI box.
+
+`docker-compose.yml` publishes nothing at all. Ports come from `docker-compose.local.yml`, which only the container-creating recipes (`up`, `up-nobuild`, `up-fg`, `bootstrap`) add, and it leaves the host side of both empty so Docker picks a free port per checkout. `just ci-test-pg` starts Postgres on the compose network and reaches it at `db:5432`, so the gate never binds anything and two checkouts can run it simultaneously.
+
+Set `PANDORA_WEB_PORT` or `PANDORA_DB_PORT` in a checkout's `.env` to pin one to a predictable address — worth doing in whichever checkout you keep a browser tab on, and worth leaving empty everywhere else.
+
+The rest is already per-checkout: Compose derives its project name from the directory, so containers, networks and the `postgres_data` volume never overlap; the image `just ci-docker-scan` builds is tagged with the directory name (override with `PANDORA_IMAGE_TAG`); and the fake Alertmanager the tests run binds an ephemeral port.
 
 ## Development
 

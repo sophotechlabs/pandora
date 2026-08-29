@@ -1,3 +1,5 @@
+compose_local := "docker compose -f docker-compose.yml -f docker-compose.local.yml"
+image_tag := env_var_or_default("PANDORA_IMAGE_TAG", file_name(justfile_directory()))
 ci_compose_run := "docker compose run --rm --no-deps"
 ci_compose_run_deps := "docker compose run --rm"
 hadolint_image := "hadolint/hadolint:latest-debian"
@@ -14,22 +16,46 @@ install:
 
 # Start full docker stack (rebuilds image; entrypoint runs migrations)
 up:
-    docker compose up -d --build
+    {{compose_local}} up -d --build
 
 # Start stack without rebuilding (faster; use if image is current)
 up-nobuild:
-    docker compose up -d
+    {{compose_local}} up -d
 
 # Start stack in foreground (useful for logs)
 up-fg:
-    docker compose up --build
+    {{compose_local}} up --build
 
 # First-run setup: build + start; web's entrypoint runs migrations, --wait blocks until healthy
 bootstrap:
-    docker compose up -d --wait --build
-    @echo ""
-    @echo "Stack healthy. Open http://localhost:8000/"
-    @echo "If you need a superuser: just superuser"
+    #!/usr/bin/env bash
+    set -euo pipefail
+    {{compose_local}} up -d --wait --build
+    echo ""
+    echo "Stack healthy. Open $(just url)"
+    echo "If you need a superuser: just superuser"
+
+# Print the URL the web container is published on
+url:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    address=$(docker compose port web 8000 2>/dev/null || true)
+    if [ -z "$address" ]; then
+        echo "web is not running — just up" >&2
+        exit 1
+    fi
+    echo "http://$address/"
+
+# Print the postgres URL the db container is published on
+dburl:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    address=$(docker compose port db 5432 2>/dev/null || true)
+    if [ -z "$address" ]; then
+        echo "db is not published — just up, or set PANDORA_DB_PORT" >&2
+        exit 1
+    fi
+    echo "postgres://pandora:pandora@$address/pandora"
 
 # Stop and remove containers (keeps volumes; backs up DB first)
 down: backup
@@ -207,14 +233,14 @@ ci-security:
 ci-docker-lint:
     docker run --rm -i {{hadolint_image}} hadolint --failure-threshold error - < Dockerfile
 
-# Build image tagged pandora-web:ci for scanning
+# Build image tagged pandora-web:<checkout> for scanning
 ci-image-build:
-    docker build -t pandora-web:ci .
+    docker build -t pandora-web:{{image_tag}} .
 
 # Scan built image for CVEs (high/critical, fixable only)
 ci-docker-scan: ci-image-build
     docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
-        {{trivy_image}} image {{trivy_common}} pandora-web:ci
+        {{trivy_image}} image {{trivy_common}} pandora-web:{{image_tag}}
 
 # Scan filesystem for CVEs, secrets, IaC misconfigs
 ci-fs-scan:

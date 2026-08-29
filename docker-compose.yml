@@ -7,8 +7,6 @@ services:
       POSTGRES_PASSWORD: pandora
     volumes:
       - postgres_data:/var/lib/postgresql
-    ports:
-      - "127.0.0.1:5433:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U pandora -d pandora"]
       interval: 5s
@@ -21,8 +19,6 @@ services:
     command: python manage.py runserver 0.0.0.0:8000
     volumes:
       - .:/app
-    ports:
-      - "127.0.0.1:8001:8000"
     env_file: .env
     environment:
       PANDORA_RUN_MIGRATIONS: "1"

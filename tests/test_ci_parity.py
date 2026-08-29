@@ -6,6 +6,7 @@ import pytest
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 JUSTFILE = ROOT / "justfile"
 WORKFLOW_DIR = ROOT / ".forgejo" / "workflows"
+MISEFILE = ROOT / "mise.toml"
 
 RECIPE_COMMANDS = {
     "ci-image": "",
@@ -66,6 +67,23 @@ def test_mapped_gates_run_in_ci(recipe):
         f"`just {recipe}` runs {command!r} locally but no workflow in "
         f"{WORKFLOW_DIR.name} does — CI would silently skip this gate"
     )
+
+
+# the host toolchain
+
+
+def test_the_host_tools_the_gate_needs_are_pinned():
+    """Should let the gate run somewhere other than one laptop.
+
+    A runner that resolves tools through mise finds nothing to activate without
+    this file, and `just` fails to exec before any recipe starts.
+    """
+    text = MISEFILE.read_text(encoding="utf-8")
+
+    result = [tool for tool in ("just", "uv") if f"\n{tool} = " not in text]
+    expected = []
+
+    assert result == expected
 
 
 # both-backend coverage
