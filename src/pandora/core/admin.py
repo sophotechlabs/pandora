@@ -6,7 +6,7 @@ from django.contrib import admin, messages
 from django.db.models import Count, Q
 from unfold.admin import ModelAdmin
 
-from pandora.core.models import DsnKey, IngestToken, Project
+from pandora.core.models import DsnKey, IngestToken, Project, ServiceLink
 from pandora.issues.models import SourceState
 
 TOKEN_BYTES = 32
@@ -124,3 +124,11 @@ class IngestTokenAdmin(ModelAdmin):
             SHOW_ONCE.format(name=token.name, value=token.token),
             messages.WARNING,
         )
+
+
+@admin.register(ServiceLink)
+class ServiceLinkAdmin(ModelAdmin):
+    list_display = ("name", "project", "ordering", "active")
+    list_filter = ("active", "project")
+    search_fields = ("name", "url_template")
+    ordering = ("ordering", "name")

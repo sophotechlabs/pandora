@@ -77,3 +77,29 @@ class IngestToken(models.Model):
 
     def __str__(self) -> str:
         return f"{self.project.slug}/{self.name}"
+
+
+class ServiceLink(models.Model):
+    name = models.CharField(max_length=100)
+    url_template = models.TextField()
+    project = models.ForeignKey(
+        Project,
+        on_delete=models.CASCADE,
+        related_name="service_links",
+        null=True,
+        blank=True,
+    )
+    ordering = models.IntegerField(default=100)
+    active = models.BooleanField(default=True)
+
+    class Meta:
+        indexes = [
+            models.Index(
+                fields=["active", "ordering"],
+                name="core_link_active_order",
+            ),
+        ]
+        ordering = ("ordering", "name")
+
+    def __str__(self) -> str:
+        return self.name

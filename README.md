@@ -136,6 +136,19 @@ A frame with no `context_line` says so rather than rendering an empty block. Tha
 
 Every event keeps its raw form too, behind **Raw payload** on the occurrence.
 
+## Outbound links
+
+An issue is a starting point, not a destination. **Service links** are URL templates in the admin, rendered as buttons on the issue page with the issue's own values already filled in:
+
+```
+https://grafana.example.com/d/pods?var-namespace={namespace}&from={padded_from_ms}&to={padded_to_ms}
+https://loki.example.com/explore?q={pod}&from={from_iso}&to={to_iso}
+```
+
+Available names: every grouping label, every label of the newest episode, the most frequent value of every tag key the breakdown holds, plus `project`, `environment`, `issue`, `fingerprint`, and the window as `from_ms` / `to_ms` / `from_iso` / `to_iso` with `padded_` variants five minutes either side. A template naming something the issue does not have renders no button rather than a broken one. Leave the project blank for a template that applies to every project.
+
+`PANDORA_GRAFANA_URL` and `PANDORA_LOKI_QUERY_URL` still work and read the same names.
+
 ## Grouping
 
 An occurrence becomes an issue through a fingerprint, and neither door puts anything per-instance in one.

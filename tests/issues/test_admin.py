@@ -50,13 +50,13 @@ def test_the_triage_surfaces_are_registered(seeded_client):
 
 
 def test_the_project_surfaces_are_registered(seeded_client):
-    """Should expose projects, DSN keys and ingest tokens."""
+    """Should expose projects, DSN keys, ingest tokens and the outbound link templates."""
     response = seeded_client.get(reverse("admin:app_list", args=["core"]))
 
     result = sorted(
         model["object_name"] for model in response.context["app_list"][0]["models"]
     )
-    expected = ["DsnKey", "IngestToken", "Project"]
+    expected = ["DsnKey", "IngestToken", "Project", "ServiceLink"]
     assert result == expected
 
 

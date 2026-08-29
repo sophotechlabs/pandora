@@ -1,17 +1,20 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from django.conf import settings
+from django.db import models
 from django.utils import timezone
 
+from pandora.core.models import ServiceLink
 from pandora.issues import components, correlate
-from pandora.issues.models import Episode, Issue
+from pandora.issues.models import TAG_OVERFLOW_VALUE, Episode, Issue
 
 TIMELINE_LIMIT = 20
 ACTIVITY_LIMIT = 20
 TAG_VALUE_LIMIT = 5
+LINK_PADDING = timedelta(minutes=5)
 
 TIMELINE_COLUMNS = (
     components.Column("Started"),
@@ -130,20 +133,38 @@ def _tag_groups(issue: Issue) -> tuple[TagGroup, ...]:
     return tuple(groups)
 
 
+def _tag_values(issue: Issue) -> dict[str, str]:
+    values: dict[str, str] = {}
+    for stat in issue.tag_stats.all().order_by("key", "-count", "value"):
+        if stat.value == TAG_OVERFLOW_VALUE:
+            continue
+        values.setdefault(stat.key, stat.value)
+    return values
+
+
 def _link_values(issue: Issue, now: datetime) -> dict[str, object]:
     episode = issue.episodes.first()
     start, end = _episode_range(issue, episode, now)
+    padded_start = start - LINK_PADDING
+    padded_end = end + LINK_PADDING
 
     values: dict[str, object] = {}
+    values.update(_tag_values(issue))
     values.update(issue.grouping_labels)
     if episode is not None:
         values.update(episode.labels)
     values["project"] = issue.project.slug
     values["environment"] = issue.environment
+    values["issue"] = issue.pk
+    values["fingerprint"] = issue.fingerprint_hash
     values["from_ms"] = int(start.timestamp() * 1000)
     values["to_ms"] = int(end.timestamp() * 1000)
     values["from_iso"] = start.isoformat()
     values["to_iso"] = end.isoformat()
+    values["padded_from_ms"] = int(padded_start.timestamp() * 1000)
+    values["padded_to_ms"] = int(padded_end.timestamp() * 1000)
+    values["padded_from_iso"] = padded_start.isoformat()
+    values["padded_to_iso"] = padded_end.isoformat()
     return values
 
 
@@ -156,12 +177,20 @@ def _expand(template: str, values: dict[str, object]) -> str:
         return ""
 
 
+def _configured(issue: Issue) -> list[tuple[str, str]]:
+    rows = ServiceLink.objects.filter(active=True).filter(
+        models.Q(project=None) | models.Q(project_id=issue.project_id)
+    )
+    return [(row.name, row.url_template) for row in rows]
+
+
 def _links(issue: Issue, now: datetime) -> tuple[Link, ...]:
     values = _link_values(issue, now)
-    templates = (
+    templates = [
         ("Grafana", settings.PANDORA_GRAFANA_URL),
         ("Loki", settings.PANDORA_LOKI_QUERY_URL),
-    )
+    ]
+    templates.extend(_configured(issue))
     links = []
     for label, template in templates:
         href = _expand(template, values)

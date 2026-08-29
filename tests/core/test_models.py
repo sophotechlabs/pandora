@@ -82,3 +82,17 @@ def test_dsn_key_shows_a_truncated_public_key(project):
     expected = "infrastructure/01234567"
 
     assert result == expected
+
+
+@pytest.mark.django_db
+def test_a_service_link_is_named_by_its_label():
+    """Should read as the button it becomes in the admin's own listings."""
+    link = models.ServiceLink.objects.create(
+        name="Grafana",
+        url_template="https://grafana.test/?ns={namespace}",
+    )
+
+    result = str(link)
+    expected = "Grafana"
+
+    assert result == expected
