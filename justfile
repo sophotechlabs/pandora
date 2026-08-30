@@ -318,7 +318,28 @@ logs-once:
     {{ compose_e2e }} logs --no-color --tail 200
 
 # Everything a GitHub runner runs, on the host toolchain rather than in compose
-gh: gh-lint gh-migrations gh-audit gh-test gh-test-pg chart-lint gh-dockerfile
+gh: gh-lint gh-migrations gh-audit gh-test gh-test-pg chart-lint gh-dockerfile gh-go
+
+# The command wrapper: vet, format check and tests
+gh-go:
+    gofmt -l cmd
+    go vet ./cmd/...
+    go test ./cmd/... -cover
+
+# Build the wrapper for the platforms the release ships
+wrap-build:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    mkdir -p dist/release
+    version="${PANDORA_VERSION:-dev}"
+    for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64; do
+        os="${target%/*}"
+        arch="${target#*/}"
+        CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" go build \
+            -trimpath -ldflags "-s -w" \
+            -o "dist/release/pandora-wrap_${version}_${os}_${arch}" ./cmd/pandora-wrap
+    done
+    ls -1 dist/release/pandora-wrap_*
 
 # Install the project from the lockfile with both extras
 deps:

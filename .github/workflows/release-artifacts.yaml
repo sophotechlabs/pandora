@@ -95,6 +95,11 @@ jobs:
           docker push "$image:$VERSION"
           docker push "$image:latest"
 
+      - name: Build the command wrapper for every platform it ships on
+        env:
+          PANDORA_VERSION: ${{ needs.version.outputs.version }}
+        run: just wrap-build
+
       - name: Package the chart and the bill of materials
         env:
           VERSION: ${{ needs.version.outputs.version }}
@@ -111,6 +116,7 @@ jobs:
           subject-path: |
             dist/release/*.tgz
             dist/release/*_sbom.cdx.json
+            dist/release/pandora-wrap_*
 
       - name: Attach them to the release and publish it
         env:

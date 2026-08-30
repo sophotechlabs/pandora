@@ -27,6 +27,7 @@ RECIPE_COMMANDS = {
 HOST_TOOLS = (
     "just",
     "uv",
+    "go",
     "node",
     "actionlint",
     "editorconfig-checker",

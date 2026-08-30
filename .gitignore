@@ -220,3 +220,5 @@ __marimo__/
 pandora.sqlite3
 staticfiles/
 backups/
+/pandora-wrap
+/artifacts/
