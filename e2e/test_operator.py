@@ -9,6 +9,9 @@ from pandora.people import models as people_models
 pytestmark = pytest.mark.e2e
 
 
+TITLE = "GatewayError: charge"
+
+
 def send_event(base_url, dsn_key, message="e2e checkout failure"):
     envelope = "\n".join(
         [
@@ -66,7 +69,7 @@ def test_an_sdk_envelope_becomes_an_issue_on_the_page(
 
     page.goto(base_url)
 
-    assert page.get_by_text("e2e checkout failure").is_visible()
+    assert page.get_by_role("link", name=TITLE).is_visible()
 
 
 def test_the_stack_trace_reaches_the_issue_page(
@@ -77,9 +80,9 @@ def test_the_stack_trace_reaches_the_issue_page(
     sign_in(make_user("operator", is_superuser=True))
     page.goto(base_url)
 
-    page.get_by_text("e2e checkout failure").click()
+    page.get_by_role("link", name=TITLE).click()
 
-    assert page.get_by_text("src/payments/charge.py").first.is_visible()
+    assert page.get_by_text("charge.py").first.is_visible()
 
 
 # signing in
@@ -147,7 +150,7 @@ def test_a_member_can_resolve_an_issue_from_the_stream(
 
     page.locator("input[name=issue]").first.check()
     page.get_by_role("button", name="Resolve").click()
-    page.wait_for_load_state("networkidle")
+    page.wait_for_url(f"{base_url}/")
 
     result = issue_models.Issue.objects.get().triage_state
     expected = issue_models.TriageState.RESOLVED
@@ -164,11 +167,11 @@ def test_the_action_is_recorded_in_the_history_page(
     page.goto(base_url)
     page.locator("input[name=issue]").first.check()
     page.get_by_role("button", name="Resolve").click()
-    page.wait_for_load_state("networkidle")
+    page.wait_for_url(f"{base_url}/")
 
     page.goto(f"{base_url}/history/")
 
-    assert page.get_by_text("issue.triage").first.is_visible()
+    assert page.locator("code", has_text="issue.triage").first.is_visible()
 
 
 # ownership
@@ -208,7 +211,7 @@ def test_the_owner_filter_narrows_the_stream(
     page.get_by_role("link", name="e2e-payments").click()
     page.wait_for_load_state("networkidle")
 
-    assert page.get_by_text("e2e checkout failure").is_visible()
+    assert page.get_by_role("link", name=TITLE).is_visible()
 
 
 # the rest of the surface
@@ -221,7 +224,7 @@ def test_the_overview_page_renders(page, base_url, dsn_key, make_user, sign_in):
 
     page.goto(f"{base_url}/overview/")
 
-    assert page.get_by_text("Firing now").is_visible()
+    assert page.locator(".kpi-label", has_text="Firing now").is_visible()
 
 
 def test_the_ingest_page_renders(page, base_url, dsn_key, make_user, sign_in):
@@ -231,7 +234,7 @@ def test_the_ingest_page_renders(page, base_url, dsn_key, make_user, sign_in):
 
     page.goto(f"{base_url}/ingest/")
 
-    assert page.get_by_text("Ingest backlog").is_visible()
+    assert page.locator(".kpi-label", has_text="Backlog").first.is_visible()
 
 
 def test_the_markdown_export_is_served(page, base_url, dsn_key, make_user, sign_in):
