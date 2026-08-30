@@ -1,5 +1,8 @@
 # Pandora
 
+[![python](https://img.shields.io/github/actions/workflow/status/sophotechlabs/pandora/python.yaml?branch=main&label=python)](https://github.com/sophotechlabs/pandora/actions/workflows/python.yaml)
+[![e2e](https://img.shields.io/github/actions/workflow/status/sophotechlabs/pandora/e2e.yaml?branch=main&label=e2e)](https://github.com/sophotechlabs/pandora/actions/workflows/e2e.yaml)
+[![repo](https://img.shields.io/github/actions/workflow/status/sophotechlabs/pandora/repo.yaml?branch=main&label=repo)](https://github.com/sophotechlabs/pandora/actions/workflows/repo.yaml)
 [![license](https://img.shields.io/badge/license-FSL--1.1--ALv2-blue)](LICENSE)
 
 Self-hosted, k8s-native event tracker on the Sentry model: occurrences grouped into issues with first/last-seen, counts, sparkline and triage state. Two front doors into one core — Alertmanager webhooks and the Sentry envelope protocol — and one operator UI over both. SQLite and Postgres are both first-class.
@@ -48,6 +51,8 @@ The rest is already per-checkout: Compose derives its project name from the dire
 ```sh
 helm install pandora deploy/helm/pandora --set host=pandora.example.com --set ingress.enabled=true
 ```
+
+The chart pulls `ghcr.io/sophotechlabs/pandora`, published on every release and on every commit to `main` — `image.tag` defaults to the chart's app version, `:main` is the tip and `:sha-<commit>` pins one build.
 
 `host` is the one value that has to be right: it fills allowed hosts, the CSRF origin and the base URL. Turn on `reconcile.enabled` with `alertmanager.url` to close episodes whose webhook never arrived, and `serviceMonitor.enabled` if you run the Prometheus operator. The chart generates a secret key and an admin password on install and keeps them across upgrades; `helm template` shows exactly what it will create, and `just chart-lint` validates it.
 
