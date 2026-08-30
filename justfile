@@ -25,12 +25,12 @@ quickstart:
     set -euo pipefail
     port="${PANDORA_WEB_PORT:-8000}"
     password="${PANDORA_QUICKSTART_PASSWORD:-$(head -c 12 /dev/urandom | base64 | tr -d '/+=')}"
-    docker build -q --target prod -t {{quickstart_image}} .
-    docker rm -f {{quickstart_name}} >/dev/null 2>&1 || true
-    docker volume create {{quickstart_volume}} >/dev/null
-    docker run -d --name {{quickstart_name}} \
+    docker build -q --target prod -t {{ quickstart_image }} .
+    docker rm -f {{ quickstart_name }} >/dev/null 2>&1 || true
+    docker volume create {{ quickstart_volume }} >/dev/null
+    docker run -d --name {{ quickstart_name }} \
         -p "127.0.0.1:$port:8000" \
-        -v {{quickstart_volume}}:/data \
+        -v {{ quickstart_volume }}:/data \
         -e DJANGO_DEBUG=False \
         -e DJANGO_SECURE_COOKIES=0 \
         -e DJANGO_SECRET_KEY="$(head -c 32 /dev/urandom | base64)" \
@@ -41,7 +41,7 @@ quickstart:
         -e DJANGO_SUPERUSER_USERNAME=admin \
         -e DJANGO_SUPERUSER_EMAIL=admin@example.test \
         -e DJANGO_SUPERUSER_PASSWORD="$password" \
-        {{quickstart_image}} >/dev/null
+        {{ quickstart_image }} >/dev/null
     echo ""
     echo "Pandora is starting on http://127.0.0.1:$port/"
     echo "Sign in as admin / $password"
@@ -53,26 +53,26 @@ mcp:
 
 # Remove the quickstart container and its volume
 quickstart-down:
-    -docker rm -f {{quickstart_name}}
-    -docker volume rm {{quickstart_volume}}
+    -docker rm -f {{ quickstart_name }}
+    -docker volume rm {{ quickstart_volume }}
 
 # Start full docker stack (rebuilds image; entrypoint runs migrations)
 up:
-    {{compose_local}} up -d --build
+    {{ compose_local }} up -d --build
 
 # Start stack without rebuilding (faster; use if image is current)
 up-nobuild:
-    {{compose_local}} up -d
+    {{ compose_local }} up -d
 
 # Start stack in foreground (useful for logs)
 up-fg:
-    {{compose_local}} up --build
+    {{ compose_local }} up --build
 
 # First-run setup: build + start; web's entrypoint runs migrations, --wait blocks until healthy
 bootstrap:
     #!/usr/bin/env bash
     set -euo pipefail
-    {{compose_local}} up -d --wait --build
+    {{ compose_local }} up -d --wait --build
     echo ""
     echo "Stack healthy. Open $(just url)"
     echo "If you need a superuser: just superuser"
@@ -148,8 +148,8 @@ backup:
 
 # Restore from backup file (usage: just restore backups/pandora-XXXX.dump)
 restore file:
-    docker compose exec -T db pg_restore -U pandora -d pandora --clean --if-exists < {{file}}
-    @echo "Restored from {{file}}"
+    docker compose exec -T db pg_restore -U pandora -d pandora --clean --if-exists < {{ file }}
+    @echo "Restored from {{ file }}"
 
 # List backups newest-first
 backup-ls:
@@ -234,98 +234,202 @@ ci-image:
 
 # ruff check (lint rules) — in docker
 ci-lint:
-    {{ci_compose_run}} --entrypoint ruff web check src tests e2e
+    {{ ci_compose_run }} --entrypoint ruff web check src tests e2e
 
 # ruff format --check — in docker
 ci-format-check:
-    {{ci_compose_run}} --entrypoint ruff web format --check src tests e2e
+    {{ ci_compose_run }} --entrypoint ruff web format --check src tests e2e
 
 # mypy with django-stubs — in docker
 ci-typecheck:
-    {{ci_compose_run}} --entrypoint mypy web --config-file pyproject.toml
+    {{ ci_compose_run }} --entrypoint mypy web --config-file pyproject.toml
 
 # djlint Django templates — in docker (no-op if no templates)
 ci-djlint:
     #!/usr/bin/env bash
     set -euo pipefail
     if [ -n "$(find src -name '*.html' -print -quit)" ]; then
-        {{ci_compose_run}} --entrypoint djlint web src --check
+        {{ ci_compose_run }} --entrypoint djlint web src --check
     else
         echo "ci-djlint: no .html templates in src/ — skipping"
     fi
 
 # django-migration-linter — safe migrations gate (config in pyproject.toml)
 ci-migration-lint:
-    {{ci_compose_run_deps}} --entrypoint python web manage.py makemigrations --check --dry-run
-    {{ci_compose_run_deps}} --entrypoint python web manage.py lintmigrations
+    {{ ci_compose_run_deps }} --entrypoint python web manage.py makemigrations --check --dry-run
+    {{ ci_compose_run_deps }} --entrypoint python web manage.py lintmigrations
 
 # pytest against SQLite (the default backend, no services needed)
 ci-test:
-    {{ci_compose_run}} --entrypoint pytest web
+    {{ ci_compose_run }} --entrypoint pytest web
 
 # pytest against postgres — runs both event stores, so this is the run that gates coverage
 ci-test-pg:
-    {{ci_compose_run_deps}} -e TEST_DATABASE_URL={{pg_test_url}} --entrypoint pytest web --cov --cov-report=term-missing --cov-report=xml
+    {{ ci_compose_run_deps }} -e TEST_DATABASE_URL={{ pg_test_url }} --entrypoint pytest web --cov --cov-report=term-missing --cov-report=xml
 
 # pip-audit dependency CVE scan (installed env; skip editable self)
 ci-security:
-    {{ci_compose_run}} --entrypoint pip-audit web --skip-editable
+    {{ ci_compose_run }} --entrypoint pip-audit web --skip-editable
 
 # hadolint the Dockerfile — fail only on error-level findings
 ci-docker-lint:
-    docker run --rm -i {{hadolint_image}} hadolint --failure-threshold error - < Dockerfile
+    docker run --rm -i {{ hadolint_image }} hadolint --failure-threshold error - < Dockerfile
 
 # Build image tagged pandora-web:<checkout> for scanning
 ci-image-build:
-    docker build -t pandora-web:{{image_tag}} .
+    docker build -t pandora-web:{{ image_tag }} .
 
 # Scan built image for CVEs (high/critical, fixable only)
 ci-docker-scan: ci-image-build
     docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
-        {{trivy_image}} image {{trivy_common}} pandora-web:{{image_tag}}
+        {{ trivy_image }} image {{ trivy_common }} pandora-web:{{ image_tag }}
 
 # Scan filesystem for CVEs, secrets, IaC misconfigs
 ci-fs-scan:
-    docker run --rm -v "$PWD":/src {{trivy_image}} \
-        fs {{trivy_common}} --scanners vuln,secret,misconfig /src
+    docker run --rm -v "$PWD":/src {{ trivy_image }} \
+        fs {{ trivy_common }} --scanners vuln,secret,misconfig /src
 
 # django-upgrade dry-run (informational — shows modernization opportunities)
 ci-upgrade-check:
-    {{ci_compose_run}} --entrypoint sh web -c 'django-upgrade --target-version 6.0 $(find src -name "*.py")'
+    {{ ci_compose_run }} --entrypoint sh web -c 'django-upgrade --target-version 6.0 $(find src -name "*.py")'
 
 # Auto-fix everything auto-fixable (ruff, djlint, django-upgrade)
 ci-fix:
     #!/usr/bin/env bash
     set -euo pipefail
-    {{ci_compose_run}} --entrypoint ruff web check --fix src tests e2e
-    {{ci_compose_run}} --entrypoint ruff web format src tests e2e
-    {{ci_compose_run}} --entrypoint sh web -c 'django-upgrade --target-version 6.0 $(find src -name "*.py")'
+    {{ ci_compose_run }} --entrypoint ruff web check --fix src tests e2e
+    {{ ci_compose_run }} --entrypoint ruff web format src tests e2e
+    {{ ci_compose_run }} --entrypoint sh web -c 'django-upgrade --target-version 6.0 $(find src -name "*.py")'
     if [ -n "$(find src -name '*.html' -print -quit)" ]; then
-        {{ci_compose_run}} --entrypoint djlint web src --reformat
+        {{ ci_compose_run }} --entrypoint djlint web src --reformat
     fi
 
 # End-to-end: a real browser against the running stack (optional extra, not in default ci)
 ci-e2e:
-    {{compose_e2e}} build e2e
-    {{compose_e2e}} run --rm e2e
+    {{ compose_e2e }} build e2e
+    {{ compose_e2e }} run --rm e2e
 
 # Tear down the e2e stack and its volumes
 ci-e2e-down:
-    {{compose_e2e}} down -v
+    {{ compose_e2e }} down -v
+
+# Print what the stack logged and stop — for a CI runner with no terminal to tail
+logs-once:
+    {{ compose_e2e }} logs --no-color --tail 200
+
+# Everything a GitHub runner runs, on the host toolchain rather than in compose
+gh: gh-lint gh-migrations gh-audit gh-test gh-test-pg chart-lint gh-dockerfile
+
+# Install the project from the lockfile with both extras
+deps:
+    uv sync --frozen --extra web --extra dev
+
+# ruff, formatting, types and templates on the host
+gh-lint: deps
+    uv run ruff check src tests e2e
+    uv run ruff format --check src tests e2e
+    uv run mypy --config-file pyproject.toml
+    uv run djlint src --check
+
+# migrations are in step with the models, and safe to apply
+gh-migrations: deps
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [ -z "${DATABASE_URL:-}" ]; then
+        echo "gh-migrations needs DATABASE_URL: the linter's rules differ by backend, and sqlite's are not the ones a deployment runs" >&2
+        exit 1
+    fi
+    DJANGO_DEBUG=True uv run python manage.py makemigrations --check --dry-run
+    DJANGO_DEBUG=True uv run python manage.py lintmigrations
+
+# dependency CVEs
+gh-audit: deps
+    uv run pip-audit --skip-editable
+
+# pytest against sqlite, the default backend
+gh-test: deps
+    uv run pytest
+
+# pytest against postgres — both event stores, so this run gates coverage
+gh-test-pg: deps
+    uv run pytest --cov --cov-report=term-missing --cov-report=xml
+
+# hadolint on the host
+gh-dockerfile:
+    hadolint --failure-threshold error Dockerfile
+
+# Conventional Commits on whatever range CI is looking at
+commits:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    from=$(node -p "try { const e = require(process.env.GITHUB_EVENT_PATH); (e.pull_request ? e.pull_request.base.sha : e.before) || '' } catch (e) { '' }")
+    if [ -z "$from" ] || ! git cat-file -e "$from^{commit}" 2>/dev/null; then
+        from=HEAD~1
+    fi
+    npx --yes --package @commitlint/cli@21.2.2 --package @commitlint/config-conventional@21.2.2 commitlint --from "$from" --to HEAD
+
+# Credentials in the tree and in the history
+secrets:
+    gitleaks dir . --no-banner --redact -v
+    gitleaks git . --no-banner --redact -v
+
+# Static analysis of the application code
+sast:
+    semgrep scan --config p/python --config p/django --config p/secrets --error --quiet src
+
+# Known vulnerabilities and misconfiguration in the tree
+vulns:
+    trivy fs --exit-code 1 --scanners secret,misconfig --ignorefile .trivyignore.yaml .
+    osv-scanner scan source --recursive .
+
+# The workflow files themselves
+workflows:
+    yamllint .forgejo .github
+    actionlint -config-file .forgejo/actionlint.yaml .forgejo/workflows/*.yaml
+    actionlint .github/workflows/*.yaml
+    zizmor --no-online-audits --config .forgejo/zizmor.yml .forgejo/workflows/*.yaml
+    zizmor --no-online-audits .github/workflows/*.yaml
+
+# Spelling, whitespace, shell and the justfile's own formatting
+hygiene:
+    typos
+    just editorconfig
+    shellcheck docker/entrypoint.sh
+    just --unstable --fmt --check
+
+# editorconfig-checker ships under two names depending on how it was installed
+editorconfig:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    for name in ec editorconfig-checker; do
+        if command -v "$name" > /dev/null 2>&1; then
+            exec "$name"
+        fi
+    done
+    echo "editorconfig-checker is not installed" >&2
+    exit 1
+
+# A bill of materials for the tree, and its known vulnerabilities
+sbom:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    mkdir -p dist
+    syft scan dir:. --source-name pandora --exclude './.venv/**' --exclude './dist/**' --exclude './htmlcov/**' --output cyclonedx-json=dist/sbom.cdx.json
+    grype sbom:dist/sbom.cdx.json --fail-on medium
 
 # helm lint + kubeconform over the chart (optional extra — needs helm and kubeconform)
 chart-lint:
-    helm lint {{chart}}
-    helm template pandora {{chart}} | kubeconform -strict -summary -ignore-missing-schemas
+    helm lint {{ chart }}
+    helm template pandora {{ chart }} | kubeconform -strict -summary -ignore-missing-schemas
 
 # Render the chart with the defaults
 chart-template *args:
-    helm template pandora {{chart}} {{args}}
+    helm template pandora {{ chart }} {{ args }}
 
 # vulture — dead code detection (optional extra, not in default ci)
 ci-deadcode:
-    {{ci_compose_run}} --entrypoint vulture web src --min-confidence 80
+    {{ ci_compose_run }} --entrypoint vulture web src --min-confidence 80
 
 # xenon — fail on cyclomatic complexity regressions (optional extra)
 ci-complexity:
-    {{ci_compose_run}} --entrypoint xenon web --max-absolute B --max-modules A --max-average A src
+    {{ ci_compose_run }} --entrypoint xenon web --max-absolute B --max-modules A --max-average A src
