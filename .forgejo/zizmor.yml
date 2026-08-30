@@ -1,0 +1,18 @@
+rules:
+  # The Forgejo runner resolves actions from code.forgejo.org, whose commits are
+  # not GitHub's — a GitHub digest here would not resolve at all.
+  unpinned-uses:
+    ignore:
+      - ci.yaml
+      - image.yaml
+      - scan.yaml
+  excessive-permissions:
+    ignore:
+      - ci.yaml
+      - image.yaml
+      - scan.yaml
+  unpinned-images:
+    ignore:
+      - ci.yaml
+      - image.yaml
+      - scan.yaml

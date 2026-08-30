@@ -21,6 +21,8 @@ jobs:
           --health-retries 10
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - name: Install from the lockfile
         run: uv sync --frozen --extra web --extra dev
       - name: Lint, types, templates
