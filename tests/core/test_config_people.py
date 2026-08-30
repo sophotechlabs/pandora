@@ -469,7 +469,7 @@ def test_an_ownership_rule_naming_an_unknown_team_is_refused(write):
         ownership_rules:
           - name: payments
             pattern: src/payments/*
-            team: platfrom
+            team: pltfrm
         """,
         )
     )

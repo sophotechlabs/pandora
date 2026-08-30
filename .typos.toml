@@ -1,0 +1,26 @@
+[files]
+extend-exclude = [
+  "uv.lock",
+  "mise.lock",
+  "coverage.xml",
+  "htmlcov/",
+  "staticfiles/",
+  "backups/",
+  "tests/fixtures/",
+]
+
+[default]
+# typos is here for prose. Hashes and hex identifiers are not prose: fingerprint
+# digests, ULIDs and the hex suffix kubernetes gives every pod name will keep
+# producing false hits forever, so they are ignored by shape.
+extend-ignore-re = [
+  "\\b[0-9a-f]{7,64}\\b",
+  "\\b[0-9A-HJKMNP-TV-Z]{26}\\b",
+]
+
+[default.extend-words]
+crds = "crds"
+iam = "iam"
+ro = "ro"
+unparseable = "unparseable"
+Unparseable = "Unparseable"

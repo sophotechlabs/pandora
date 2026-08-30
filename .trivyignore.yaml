@@ -1,0 +1,32 @@
+misconfigurations:
+  - id: KSV-0011
+    statement: >-
+      A CPU limit throttles a latency-sensitive web process instead of protecting
+      the node; the memory limit, which prevents the OOM that would, is set. The
+      chart exposes `resources` for an operator who wants a different answer.
+
+  - id: KSV-0020
+    statement: >-
+      The image runs as uid 1000, which is not root. Moving it above 10000 would
+      break every existing volume's ownership on upgrade for no gain the
+      runAsNonRoot the chart already sets does not deliver.
+
+  - id: KSV-0021
+    statement: >-
+      Same as KSV-0020, for the group.
+
+  - id: KSV-0110
+    statement: >-
+      A chart that hardcodes a namespace cannot be installed into another one.
+      `helm install -n` is where the namespace belongs.
+
+  - id: KSV-0125
+    statement: >-
+      ghcr.io is where this project publishes. The list of registries trivy
+      considers trusted by default does not include it.
+
+  - id: DS-0026
+    statement: >-
+      A HEALTHCHECK inside the image would have to guess the host header the
+      deployment allows, and answer 400 when it guessed wrong. Compose and the
+      chart both define a real probe against /health/ with the host they know.

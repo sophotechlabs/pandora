@@ -4,3 +4,8 @@ useDefault = true
 [[allowlists]]
 description = "Alertmanager webhook fixtures carry synthetic tokens and label sets, not credentials"
 paths = ['''tests/fixtures/am/.*\.json''']
+
+[[allowlists]]
+description = "generic-api-key scores entropy near any identifier called token; in the suite that is a fixture name, not a credential. Every provider-specific rule still applies here."
+targetRules = ["generic-api-key"]
+paths = ['''^tests/''', '''^e2e/''']

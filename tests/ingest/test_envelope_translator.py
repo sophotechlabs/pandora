@@ -899,7 +899,7 @@ def test_an_explicit_tag_is_not_overwritten_by_the_field(project):
 def test_context_is_kept_in_extra(project):
     """Should retain the payload's context for the detail page."""
     payload = event_payload(
-        extra={"order_id": 7}, contexts={"runtime": {"name": "cpy"}}
+        extra={"order_id": 7}, contexts={"runtime": {"name": "CPython"}}
     )
 
     occurrence = envelope.translate_event(payload, project, received_at=RECEIVED_AT)

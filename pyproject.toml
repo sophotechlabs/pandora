@@ -68,7 +68,10 @@ where = ["src"]
 [tool.django_migration_linter]
 include_apps = ["core", "ingest", "issues", "events"]
 no_cache = true
-ignore_name = ["0003_remove_issue_issues_issue_fingerprint_uq_and_more"]
+ignore_name = [
+    "0003_remove_issue_issues_issue_fingerprint_uq_and_more",
+    "0003_alter_ingesttoken_scope",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

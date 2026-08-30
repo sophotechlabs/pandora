@@ -1,0 +1,17 @@
+{
+  "Exclude": [
+    "^LICENSE$",
+    "^uv\\.lock$",
+    "^mise\\.lock$",
+    "^coverage\\.xml$",
+    "^backups/",
+    "^staticfiles/",
+    "^htmlcov/",
+    "\\.svg$",
+    "\\.png$"
+  ],
+  "Disable": {
+    "IndentSize": true
+  },
+  "IgnoreDefaults": false
+}
