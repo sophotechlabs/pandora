@@ -33,4 +33,5 @@ STORAGES = {
     "default": {"BACKEND": "django.core.files.storage.FileSystemStorage"},
     "staticfiles": {"BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage"},
 }
+MEDIA_ROOT = "/pandora-test-media-root-replaced-per-test"
 PASSWORD_HASHERS = ["django.contrib.auth.hashers.MD5PasswordHasher"]

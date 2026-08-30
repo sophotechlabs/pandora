@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
+from pandora.artifacts import service as artifacts
+
 VALUE_MAX = 400
 BREADCRUMB_MAX = 100
 CARD_ORDER = ("sdk",)
@@ -19,6 +21,9 @@ SCALAR_KEYS = (
     ("platform", "Platform"),
     ("culprit", "Culprit"),
 )
+
+
+CONTEXT_RADIUS = 5
 
 
 @dataclass(frozen=True)
@@ -38,6 +43,7 @@ class FrameRow:
     context: tuple[SourceLine, ...]
     variables: tuple[tuple[str, str], ...]
     expanded: bool
+    minified: str = ""
 
 
 @dataclass(frozen=True)
@@ -74,11 +80,13 @@ class EventBody:
     cards: tuple[ContextCard, ...]
 
 
-def build(payload: Any) -> EventBody | None:
+def build(payload: Any, project_id: int | None = None) -> EventBody | None:
     if not isinstance(payload, Mapping) or not payload:
         return None
 
-    exceptions = _exceptions(payload)
+    exceptions = _exceptions(
+        payload, _debug_ids(payload) if project_id else {}, project_id
+    )
     if not exceptions:
         exceptions = _threads(payload)
     body = EventBody(
@@ -98,15 +106,50 @@ def _entries(payload: Mapping[str, Any], key: str) -> list[Mapping[str, Any]]:
     return [entry for entry in raw if isinstance(entry, Mapping)]
 
 
-def _exceptions(payload: Mapping[str, Any]) -> tuple[ExceptionBlock, ...]:
+def _debug_ids(payload: Mapping[str, Any]) -> dict[str, str]:
+    """Which bundle each minified file belongs to, from the stored debug images."""
+    found: dict[str, str] = {}
+    images = payload.get("debug_images")
+    if not isinstance(images, list):
+        return found
+    for image in images:
+        if not isinstance(image, Mapping):
+            continue
+        if str(image.get("type", "")) != "sourcemap":
+            continue
+        code_file = str(image.get("code_file", ""))
+        debug_id = str(image.get("debug_id", ""))
+        if code_file and debug_id:
+            found[code_file] = debug_id
+    return found
+
+
+def _exceptions(
+    payload: Mapping[str, Any],
+    debug_ids: dict[str, str] | None = None,
+    project_id: int | None = None,
+) -> tuple[ExceptionBlock, ...]:
     entries = _entries(payload, "exceptions")
     blocks = []
     for position, entry in enumerate(reversed(entries)):
-        blocks.append(_exception(entry, caused_by=position > 0))
+        blocks.append(
+            _exception(
+                entry,
+                caused_by=position > 0,
+                debug_ids=debug_ids or {},
+                project_id=project_id,
+            )
+        )
     return tuple(blocks)
 
 
-def _exception(entry: Mapping[str, Any], *, caused_by: bool) -> ExceptionBlock:
+def _exception(
+    entry: Mapping[str, Any],
+    *,
+    caused_by: bool,
+    debug_ids: dict[str, str] | None = None,
+    project_id: int | None = None,
+) -> ExceptionBlock:
     mechanism = entry.get("mechanism")
     kind = ""
     handled = ""
@@ -122,7 +165,7 @@ def _exception(entry: Mapping[str, Any], *, caused_by: bool) -> ExceptionBlock:
         module=str(entry.get("module", "")),
         mechanism=kind,
         handled=handled,
-        frames=_frames(entry),
+        frames=_frames(entry, debug_ids or {}, project_id),
         frames_omitted=int(entry.get("frames_omitted", 0) or 0),
         caused_by=caused_by,
     )
@@ -159,14 +202,24 @@ def _thread_title(entry: Mapping[str, Any]) -> str:
     return "Thread"
 
 
-def _frames(entry: Mapping[str, Any]) -> tuple[FrameRow, ...]:
+def _frames(
+    entry: Mapping[str, Any],
+    debug_ids: dict[str, str] | None = None,
+    project_id: int | None = None,
+) -> tuple[FrameRow, ...]:
     raw = entry.get("frames")
     if not isinstance(raw, list):
         return ()
     usable = [frame for frame in reversed(raw) if isinstance(frame, Mapping)]
     expanded = _expanded_index(usable)
     return tuple(
-        _frame(frame, expanded=index == expanded) for index, frame in enumerate(usable)
+        _frame(
+            frame,
+            expanded=index == expanded,
+            debug_ids=debug_ids or {},
+            project_id=project_id,
+        )
+        for index, frame in enumerate(usable)
     )
 
 
@@ -179,10 +232,19 @@ def _expanded_index(frames: Sequence[Mapping[str, Any]]) -> int:
     return -1
 
 
-def _frame(raw: Mapping[str, Any], *, expanded: bool) -> FrameRow:
+def _frame(
+    raw: Mapping[str, Any],
+    *,
+    expanded: bool,
+    debug_ids: dict[str, str] | None = None,
+    project_id: int | None = None,
+) -> FrameRow:
     lineno = raw.get("lineno")
     if not isinstance(lineno, int):
         lineno = None
+    resolved = _resolved(raw, lineno, debug_ids or {}, project_id)
+    if resolved is not None:
+        return resolved
     return FrameRow(
         location=_location(raw),
         filename=str(raw.get("filename") or raw.get("abs_path") or ""),
@@ -192,7 +254,73 @@ def _frame(raw: Mapping[str, Any], *, expanded: bool) -> FrameRow:
         context=_context(raw, lineno),
         variables=_pairs(raw.get("vars")),
         expanded=expanded,
+        minified=_minified_note(raw, debug_ids or {}),
     )
+
+
+def _resolved(
+    raw: Mapping[str, Any],
+    lineno: int | None,
+    debug_ids: dict[str, str],
+    project_id: int | None,
+) -> FrameRow | None:
+    """Swap a minified frame for the original, at read time.
+
+    A map uploaded after the error still fixes it, the stored event stays what
+    the SDK sent, and the write path stays short.
+    """
+    if project_id is None or lineno is None:
+        return None
+    address = str(raw.get("abs_path") or raw.get("filename") or "")
+    debug_id = debug_ids.get(address)
+    if not debug_id:
+        return None
+    colno = raw.get("colno")
+    if not isinstance(colno, int):
+        colno = 0
+
+    position = artifacts.resolve(project_id, debug_id, lineno, colno)
+    if position is None:
+        return None
+    function = position.name or str(raw.get("function", ""))
+    return FrameRow(
+        location=f"{position.source} in {function}" if function else position.source,
+        filename=position.source,
+        lineno=position.line,
+        in_app=raw.get("in_app") is True,
+        package=str(raw.get("package", "")),
+        context=_source_context(position),
+        variables=_pairs(raw.get("vars")),
+        expanded=True,
+        minified="",
+    )
+
+
+def _source_context(position: Any) -> tuple[SourceLine, ...]:
+    if not position.context:
+        return ()
+    lines = position.context
+    index = position.line - 1
+    if index < 0 or index >= len(lines):
+        return ()
+    start = max(0, index - CONTEXT_RADIUS)
+    end = min(len(lines), index + CONTEXT_RADIUS + 1)
+    return tuple(
+        SourceLine(
+            number=number + 1,
+            text=lines[number],
+            current=number == index,
+        )
+        for number in range(start, end)
+    )
+
+
+def _minified_note(raw: Mapping[str, Any], debug_ids: dict[str, str]) -> str:
+    address = str(raw.get("abs_path") or raw.get("filename") or "")
+    debug_id = debug_ids.get(address)
+    if debug_id:
+        return debug_id
+    return ""
 
 
 def _location(raw: Mapping[str, Any]) -> str:

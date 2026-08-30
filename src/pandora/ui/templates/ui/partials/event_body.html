@@ -43,7 +43,14 @@
                   </dl>
                 {% endif %}
                 {% if not frame.context and not frame.variables %}
-                  <p class="muted">No source context was sent for this frame.</p>
+                  {% if frame.minified %}
+                    <p class="muted">
+                      This frame is minified and no source map with debug id
+                      <code>{{ frame.minified }}</code> has been uploaded.
+                    </p>
+                  {% else %}
+                    <p class="muted">No source context was sent for this frame.</p>
+                  {% endif %}
                 {% endif %}
               </div>
             </details>

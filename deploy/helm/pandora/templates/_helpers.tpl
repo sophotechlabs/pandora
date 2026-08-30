@@ -76,6 +76,10 @@ app.kubernetes.io/instance: {{ .Release.Name }}
   value: {{ include "pandora.databaseUrl" . | quote }}
 - name: PROMETHEUS_MULTIPROC_DIR
   value: /tmp/prometheus
+{{- if .Values.persistence.enabled }}
+- name: PANDORA_ARTIFACT_DIR
+  value: /data/artifacts
+{{- end }}
 {{- if .Values.settings.grafanaUrl }}
 - name: PANDORA_GRAFANA_URL
   value: {{ .Values.settings.grafanaUrl | quote }}

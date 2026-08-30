@@ -243,6 +243,39 @@ def test_an_external_database_replaces_the_claim():
     assert result == expected
 
 
+@needs_helm
+def test_bundles_land_on_the_persistent_volume():
+    """Should keep uploaded source maps across a restart, not in the container."""
+    docs = render()
+    container = [doc for doc in docs if doc["kind"] == "Deployment"][0]["spec"][
+        "template"
+    ]["spec"]["containers"][0]
+
+    result = env_of(container)["PANDORA_ARTIFACT_DIR"]
+    expected = "/data/artifacts"
+
+    assert result == expected
+
+
+@needs_helm
+def test_no_artifact_dir_is_set_without_a_volume():
+    """Should not point at a path nothing is mounted on."""
+    docs = render(
+        "--set",
+        "database.url=postgres://pandora:pandora@db:5432/pandora",
+        "--set",
+        "persistence.enabled=false",
+    )
+    container = [doc for doc in docs if doc["kind"] == "Deployment"][0]["spec"][
+        "template"
+    ]["spec"]["containers"][0]
+
+    result = "PANDORA_ARTIFACT_DIR" in env_of(container)
+    expected = False
+
+    assert result is expected
+
+
 # secrets
 
 

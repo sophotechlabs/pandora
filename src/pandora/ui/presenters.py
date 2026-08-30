@@ -174,7 +174,7 @@ def event_row(event: Event) -> EventRow:
         message=event.message,
         tags=tuple(sorted((event.tags or {}).items())),
         raw=_raw(event),
-        body=event_view.build(event.payload),
+        body=event_view.build(event.payload, event.project_id),
     )
 
 
