@@ -1,0 +1,123 @@
+name: release artifacts
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - .release-please-manifest.json
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-artifacts
+  cancel-in-progress: false
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.read.outputs.tag }}
+      version: ${{ steps.read.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - id: read
+        run: |
+          version=$(jq -r '.["."]' .release-please-manifest.json)
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=v$version" >> "$GITHUB_OUTPUT"
+
+  artifacts:
+    needs: version
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+
+      - name: Wait for the draft release release-please cuts
+        env:
+          TAG: ${{ needs.version.outputs.tag }}
+          GH_REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          for _ in $(seq 1 60); do
+            if gh release view "$TAG" >/dev/null 2>&1; then
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "$TAG still has no release after ten minutes"
+          exit 1
+
+      - uses: jdx/mise-action@3c2e0cf82a5b2e5249f0d3635a4d83d0ae861518
+
+      - name: Build the released image
+        env:
+          REPO: ${{ github.repository }}
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          image="ghcr.io/$(echo "$REPO" | tr '[:upper:]' '[:lower:]')"
+          docker build --target prod -t "$image:$VERSION" -t "$image:latest" .
+
+      - name: No release goes out with a fixable high or critical in it
+        env:
+          REPO: ${{ github.repository }}
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          image="ghcr.io/$(echo "$REPO" | tr '[:upper:]' '[:lower:]')"
+          trivy image --exit-code 1 --severity HIGH,CRITICAL --ignore-unfixed "$image:$VERSION"
+
+      - name: Sign in to the registry
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ACTOR: ${{ github.actor }}
+        run: echo "$TOKEN" | docker login ghcr.io -u "$ACTOR" --password-stdin
+
+      - name: Push the released image
+        env:
+          REPO: ${{ github.repository }}
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          image="ghcr.io/$(echo "$REPO" | tr '[:upper:]' '[:lower:]')"
+          docker push "$image:$VERSION"
+          docker push "$image:latest"
+
+      - name: Package the chart and the bill of materials
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist/release
+          helm package deploy/helm/pandora --destination dist/release
+          syft scan dir:. --source-name pandora --source-version "$VERSION" \
+            --exclude './.venv/**' --exclude './dist/**' \
+            --output cyclonedx-json=dist/release/pandora_sbom.cdx.json
+
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8
+        with:
+          subject-path: |
+            dist/release/*.tgz
+            dist/release/*_sbom.cdx.json
+
+      - name: Attach them to the release and publish it
+        env:
+          TAG: ${{ needs.version.outputs.tag }}
+          GH_REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh release upload "$TAG" dist/release/* --clobber
+          gh release edit "$TAG" --draft=false --latest

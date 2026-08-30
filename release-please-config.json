@@ -1,0 +1,62 @@
+{
+  "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
+  "bootstrap-sha": "ddacb39261fedc83cfb4af9aa3a405571fb7aa7e",
+  "packages": {
+    ".": {
+      "release-type": "python",
+      "draft": true,
+      "changelog-sections": [
+        {
+          "type": "feat",
+          "section": "Features"
+        },
+        {
+          "type": "fix",
+          "section": "Bug Fixes"
+        },
+        {
+          "type": "chore",
+          "section": "Miscellaneous"
+        },
+        {
+          "type": "ci",
+          "section": "CI"
+        },
+        {
+          "type": "docs",
+          "section": "Documentation"
+        },
+        {
+          "type": "style",
+          "section": "Styles"
+        },
+        {
+          "type": "refactor",
+          "section": "Refactoring"
+        },
+        {
+          "type": "perf",
+          "section": "Performance"
+        },
+        {
+          "type": "test",
+          "section": "Tests"
+        },
+        {
+          "type": "build",
+          "section": "Build"
+        },
+        {
+          "type": "revert",
+          "section": "Reverts"
+        }
+      ],
+      "extra-files": [
+        {
+          "type": "generic",
+          "path": "deploy/helm/pandora/Chart.yaml"
+        }
+      ]
+    }
+  }
+}
