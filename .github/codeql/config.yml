@@ -1,0 +1,8 @@
+name: pandora
+
+# Test code is never shipped, and the fixtures under tests/ and e2e/ carry
+# deliberately unsafe payloads so the scrubber and the parser have something to
+# refuse; scanning them fails the build on findings we put there.
+paths-ignore:
+  - tests
+  - e2e
