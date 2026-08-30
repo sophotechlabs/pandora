@@ -73,6 +73,7 @@ def test_prune_reports_every_retention_class():
         "counters",
         "deliveries",
         "audit_entries",
+        "bundles",
     ]
 
     assert result == expected
@@ -232,7 +233,8 @@ def test_the_command_reports_an_empty_run():
     expected = (
         "prune: 0 events, 0 envelopes, 0 processed events, 0 silences,"
         " 0 hourly stats, 0 activities, 0 ingest counters, 0 deliveries, "
-        "0 audit entries\n"
+        "0 audit entries, "
+        "0 artifact bundles\n"
     )
 
     assert result == expected
@@ -256,7 +258,8 @@ def test_the_command_reports_what_it_removed(project, issue):
     expected = (
         "prune: 0 events, 1 envelopes, 0 processed events, 1 silences,"
         " 0 hourly stats, 0 activities, 0 ingest counters, 0 deliveries, "
-        "0 audit entries\n"
+        "0 audit entries, "
+        "0 artifact bundles\n"
     )
 
     assert result == expected
@@ -379,3 +382,74 @@ def test_a_recent_audit_entry_survives(project):
         management.call_command("prune", stdout=io.StringIO())
 
     assert AuditEntry.objects.count() == 1
+
+
+def test_relevance_thinning_is_off_by_default(project, settings):
+    """Should not change what an install deletes until it is turned on."""
+    settings.PANDORA_RETENTION_BY_RELEVANCE = False
+    settings.PANDORA_RELEVANCE_BUDGET = 2
+    issue, kept = _noisy_issue(project, "f" * 64, count=6)
+
+    management.call_command("prune", stdout=io.StringIO())
+
+    result = len(kept.fetch(project.pk, issue_id=issue.pk, limit=50))
+    expected = 6
+
+    assert result == expected
+
+
+def _noisy_issue(project, fingerprint, count):
+    moment = timezone.now()
+    issue = issue_models.Issue.objects.create(
+        project=project,
+        fingerprint_hash=fingerprint,
+        title="noisy",
+        event_count=count,
+        first_seen=moment,
+        last_seen=moment,
+    )
+    kept = store.get_store()
+    kept.insert(
+        [
+            support.make_event(
+                index,
+                moment,
+                project_id=project.pk,
+                issue_id=issue.pk,
+                episode_id=None,
+                id=f"01J{issue.pk:011d}{index:012d}",
+                timestamp=moment,
+            )
+            for index in range(count)
+        ]
+    )
+    return issue, kept
+
+
+def test_relevance_thinning_drops_the_excess(project, settings):
+    """Should thin a noisy old issue rather than keep or delete all of it."""
+    settings.PANDORA_RETENTION_BY_RELEVANCE = True
+    settings.PANDORA_RELEVANCE_BUDGET = 2
+    settings.PANDORA_RELEVANCE_HALF_LIFE_DAYS = 7
+    issue, kept = _noisy_issue(project, "d" * 64, count=6)
+
+    management.call_command("prune", stdout=io.StringIO())
+
+    result = len(kept.fetch(project.pk, issue_id=issue.pk, limit=50))
+    expected = 2
+
+    assert result == expected
+
+
+def test_an_issue_inside_its_relevance_budget_is_left_alone(project, settings):
+    """Should not touch an issue that is already within what it may keep."""
+    settings.PANDORA_RETENTION_BY_RELEVANCE = True
+    settings.PANDORA_RELEVANCE_BUDGET = 50
+    issue, kept = _noisy_issue(project, "e" * 64, count=2)
+
+    management.call_command("prune", stdout=io.StringIO())
+
+    result = len(kept.fetch(project.pk, issue_id=issue.pk, limit=50))
+    expected = 2
+
+    assert result == expected

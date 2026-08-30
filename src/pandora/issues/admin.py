@@ -17,6 +17,7 @@ from pandora.issues.models import (
     HourlyStat,
     Issue,
     IssueActivity,
+    PathRule,
     SilenceLink,
     SourceState,
     TriageState,
@@ -370,6 +371,15 @@ class EpisodeAdmin(ModelAdmin):
         if obj.ends_at is None:
             return components.format_duration(timezone.now() - obj.starts_at)
         return components.format_duration(obj.ends_at - obj.starts_at)
+
+
+@admin.register(PathRule)
+class PathRuleAdmin(ModelAdmin):
+    list_display = ("ordering", "name", "pattern", "replacement", "project", "active")
+    list_filter = ("active", "project")
+    list_select_related = ("project",)
+    search_fields = ("name", "pattern")
+    ordering = ("ordering", "id")
 
 
 @admin.register(GroupingRule)

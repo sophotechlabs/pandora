@@ -11,8 +11,8 @@ from ulid import ULID
 
 from pandora.core.models import Project
 from pandora.events import payload as payload_interfaces
-from pandora.issues import grouping, lifecycle
-from pandora.issues.models import Level
+from pandora.issues import grouping, lifecycle, normalise, paths
+from pandora.issues.models import GroupingRule, GroupingSource, Level, PathRule
 from pandora.scrub import service as scrub
 
 EVENT_ITEM = "event"
@@ -91,14 +91,28 @@ def translate_event(
     *,
     environment: str = "",
     received_at: datetime,
+    path_rules: Sequence[PathRule] | None = None,
+    rules: Sequence[GroupingRule] | None = None,
 ) -> lifecycle.Occurrence:
     if not isinstance(payload, Mapping):
         raise EnvelopeError("event item is not a JSON object")
 
+    if path_rules is None:
+        path_rules = paths.load_rules(project)
+    if rules is None:
+        rules = grouping.load_rules(project)
     exception = _first_exception(payload)
-    fingerprint = _fingerprint(payload, exception)
-    title = _title(payload, exception)
+    raw_fingerprint, grouping_source = _fingerprint(payload, exception, path_rules)
     tags = _tags(payload)
+    document = _document(payload, tags)
+    rule = grouping.select(rules, document=document, require_declaration=True)
+    stored = grouping.source_of(rule)
+    if stored == GroupingSource.RULE and rule.fingerprint:
+        grouping_source = stored
+    fingerprint = normalise.parts(
+        grouping.fingerprint_for(rule, document, raw_fingerprint)
+    )
+    title = grouping.title_for(rule, document, _title(payload, exception))
 
     timestamp = _timestamp(payload.get("timestamp"))
     if timestamp is None:
@@ -108,6 +122,10 @@ def translate_event(
         fingerprint=fingerprint,
         fingerprint_hash=grouping.fingerprint_hash(fingerprint),
         grouping_labels={},
+        grouping_source=grouping_source,
+        grouping_rule_id=rule.pk,
+        release=str(payload.get("release", "")).strip(),
+        dist=str(payload.get("dist", "")).strip(),
         am_fingerprint="",
         labels={},
         status=lifecycle.STATUS_FIRING,
@@ -183,53 +201,61 @@ def _first_exception(payload: Mapping[str, Any]) -> Mapping[str, Any] | None:
 
 
 def _fingerprint(
-    payload: Mapping[str, Any], exception: Mapping[str, Any] | None
-) -> list[str]:
+    payload: Mapping[str, Any],
+    exception: Mapping[str, Any] | None,
+    path_rules: Sequence[PathRule],
+) -> tuple[list[str], str]:
     declared = payload.get("fingerprint")
     if not isinstance(declared, list):
-        return _default_fingerprint(payload, exception)
+        return _default_fingerprint(payload, exception, path_rules)
 
     parts = []
     for entry in declared:
         text = str(entry)
         if text == DEFAULT_PLACEHOLDER:
-            parts.extend(_default_fingerprint(payload, exception))
+            parts.extend(_default_fingerprint(payload, exception, path_rules)[0])
             continue
         parts.append(text)
     if not parts:
-        return _default_fingerprint(payload, exception)
-    return parts
+        return _default_fingerprint(payload, exception, path_rules)
+    return parts, GroupingSource.CLIENT
 
 
 def _default_fingerprint(
-    payload: Mapping[str, Any], exception: Mapping[str, Any] | None
-) -> list[str]:
+    payload: Mapping[str, Any],
+    exception: Mapping[str, Any] | None,
+    path_rules: Sequence[PathRule],
+) -> tuple[list[str], str]:
     if exception is not None:
         kind = str(exception.get("type", "")).strip()
         module = str(exception.get("module", "")).strip()
         if kind:
-            parts = (module, kind, *_frame_parts(exception))
-            return [part for part in parts if part]
+            parts = (module, kind, *_frame_parts(exception, path_rules))
+            return [part for part in parts if part], GroupingSource.STACK
     template = _logentry_template(payload)
     if template:
-        return [part for part in (_logger(payload), template) if part]
+        parts = tuple(part for part in (_logger(payload), template) if part)
+        return list(parts), GroupingSource.LOGENTRY
     message = str(payload.get("message", "")).strip()
     if message:
-        return [message]
-    return [UNKNOWN_TITLE]
+        return [message], GroupingSource.MESSAGE
+    return [UNKNOWN_TITLE], GroupingSource.MESSAGE
 
 
-def _frame_parts(exception: Mapping[str, Any]) -> tuple[str, ...]:
+def _frame_parts(
+    exception: Mapping[str, Any], path_rules: Sequence[PathRule]
+) -> tuple[str, ...]:
     frame = _top_frame(exception)
     if frame is None:
         return ()
-    module = str(frame.get("module", "")).strip()
+    module = paths.canonical(str(frame.get("module", "")).strip(), path_rules)
     function = str(frame.get("function", "")).strip()
     if module:
         return (module, function)
     if function:
         return (function,)
-    return (str(frame.get("filename", "")).strip(),)
+    filename = str(frame.get("filename", "")).strip()
+    return (paths.canonical(filename, path_rules),)
 
 
 def _title(payload: Mapping[str, Any], exception: Mapping[str, Any] | None) -> str:
@@ -348,6 +374,21 @@ def _environment(payload: Mapping[str, Any], fallback: str) -> str:
     if environment:
         return environment
     return fallback
+
+
+def _document(payload: Mapping[str, Any], tags: Mapping[str, str]) -> dict[str, Any]:
+    """What a grouping rule's conditions and templates read.
+
+    The normalised payload plus the tags, so a path is the same one a reader
+    would write after looking at the occurrence in the UI.
+    """
+    document = dict(payload_interfaces.normalize(payload))
+    document["tags"] = dict(tags)
+    document["level"] = _level(payload)
+    document["message"] = str(payload.get("message", ""))
+    document["platform"] = str(payload.get("platform", ""))
+    document["source"] = "sdk"
+    return document
 
 
 def _tags(payload: Mapping[str, Any]) -> dict[str, str]:

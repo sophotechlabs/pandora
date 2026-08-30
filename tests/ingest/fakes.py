@@ -59,6 +59,9 @@ class RecordingEventStore:
     def prune(self, before):
         return 0
 
+    def thin(self, issue_id, keep):
+        return 0
+
     def ensure_partitions(self, months_ahead=2):
         return None
 

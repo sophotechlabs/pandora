@@ -45,7 +45,14 @@ def test_the_triage_surfaces_are_registered(seeded_client):
     result = sorted(
         model["object_name"] for model in response.context["app_list"][0]["models"]
     )
-    expected = ["Episode", "GroupingRule", "Issue", "IssueActivity", "SilenceLink"]
+    expected = [
+        "Episode",
+        "GroupingRule",
+        "Issue",
+        "IssueActivity",
+        "PathRule",
+        "SilenceLink",
+    ]
     assert result == expected
 
 

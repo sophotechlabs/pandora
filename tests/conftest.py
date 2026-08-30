@@ -6,6 +6,7 @@ import pytest
 from django.utils import timezone
 
 from pandora.core import models as core_models
+from pandora.issues import environments
 from pandora.issues import models as issue_models
 
 FIXTURE_DIR = pathlib.Path(__file__).resolve().parent / "fixtures"
@@ -43,7 +44,7 @@ def token(project):
 @pytest.fixture
 def issue(project):
     now = timezone.now()
-    return issue_models.Issue.objects.create(
+    built = issue_models.Issue.objects.create(
         project=project,
         fingerprint_hash="a" * 64,
         fingerprint=["alertname:TargetDown", "namespace:monitoring"],
@@ -59,6 +60,8 @@ def issue(project):
         source_state=issue_models.SourceState.FIRING,
         triage_state=issue_models.TriageState.NEW,
     )
+    environments.record(built, built.environment, built.last_seen)
+    return built
 
 
 @pytest.fixture
@@ -75,3 +78,9 @@ def episode(issue):
         delivery_count=2,
         last_delivery_at=now,
     )
+
+
+@pytest.fixture(autouse=True)
+def artifact_root(settings, tmp_path):
+    """Keep uploaded bundles in the test's own directory, never in the checkout."""
+    settings.MEDIA_ROOT = str(tmp_path / "artifacts")

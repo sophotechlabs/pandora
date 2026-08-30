@@ -141,11 +141,23 @@ def _occurrence(
 
     labels = _strings(alert.get("labels"))
     annotations = _strings(alert.get("annotations"))
-    rule = grouping.match_rule(labels.get(grouping.ALERTNAME, ""), rules)
+    document = {
+        "labels": labels,
+        "annotations": annotations,
+        "status": status,
+        "source": "am",
+    }
+    rule = grouping.select(
+        rules, alertname=labels.get(grouping.ALERTNAME, ""), document=document
+    )
     grouping_labels = grouping.surviving_labels(rule, labels)
-    fingerprint = grouping.compute_fingerprint(rule, labels)
+    fingerprint = grouping.fingerprint_for(
+        rule, document, grouping.compute_fingerprint(rule, labels)
+    )
     summary = annotations.get(SUMMARY_ANNOTATION, "")
-    title = grouping.derive_title(grouping_labels, summary)
+    title = grouping.title_for(
+        rule, document, grouping.derive_title(grouping_labels, summary)
+    )
     message = annotations.get(DESCRIPTION_ANNOTATION, "")
     if not message:
         message = title
@@ -158,6 +170,8 @@ def _occurrence(
         fingerprint=fingerprint,
         fingerprint_hash=grouping.fingerprint_hash(fingerprint),
         grouping_labels=grouping_labels,
+        grouping_source=grouping.source_of(rule),
+        grouping_rule_id=rule.pk,
         am_fingerprint=am_fingerprint,
         labels=labels,
         status=status,

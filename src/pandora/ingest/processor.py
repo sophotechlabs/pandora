@@ -12,8 +12,16 @@ from pandora.events.types import Event
 from pandora.ingest.models import EnvelopeState, ProcessedEvent, RawEnvelope
 from pandora.ingest.translators import am
 from pandora.ingest.translators import envelope as envelope_translator
-from pandora.issues import aggregates, hooks, lifecycle
+from pandora.issues import (
+    aggregates,
+    environments,
+    hooks,
+    lifecycle,
+    merge,
+    search,
+)
 from pandora.issues.models import Episode, Issue, IssueActivity, SourceState
+from pandora.releases import service as releases
 
 ENVELOPES = Counter(
     "pandora_ingest_envelopes_total",
@@ -28,6 +36,7 @@ OCCURRENCES = Counter(
 ERROR_MAX = 2000
 
 log = logging.getLogger(__name__)
+EVENT_SOURCES = (TokenSource.SDK, TokenSource.LOG, TokenSource.OTLP)
 
 
 def process_envelope(envelope_id: int, *, store: EventStore | None = None) -> None:
@@ -51,7 +60,7 @@ def process_envelope(envelope_id: int, *, store: EventStore | None = None) -> No
 
 
 def _consume(envelope: RawEnvelope, store: EventStore) -> None:
-    if envelope.source == TokenSource.SDK:
+    if envelope.source in EVENT_SOURCES:
         _consume_event(envelope, store)
         return
     _consume_webhook(envelope, store)
@@ -109,12 +118,7 @@ def _fail(envelope: RawEnvelope, error: Exception) -> None:
 
 def _apply(envelope: RawEnvelope, occurrence: lifecycle.Occurrence) -> Event | None:
     project = envelope.project
-    issue, issue_created = Issue.objects.select_for_update().get_or_create(
-        project=project,
-        environment=occurrence.environment,
-        fingerprint_hash=occurrence.fingerprint_hash,
-        defaults=lifecycle.new_issue_fields(occurrence),
-    )
+    issue, issue_created = _issue_for(project, occurrence)
     episode, episode_created = Episode.objects.get_or_create(
         project=project,
         am_fingerprint=occurrence.am_fingerprint,
@@ -142,6 +146,7 @@ def _apply(envelope: RawEnvelope, occurrence: lifecycle.Occurrence) -> Event | N
     transition = lifecycle.apply_occurrence(issue_state, episode_state, occurrence)
     _write_episode(episode, transition, occurrence)
     _write_issue(issue, transition, occurrence)
+    environments.record(issue, occurrence.environment, occurrence.timestamp)
     _record(issue, transition, occurrence)
     if not _changed_episode(transition):
         return None
@@ -172,18 +177,25 @@ def _apply_event(
         OCCURRENCES.labels(source=occurrence.source, outcome="duplicate").inc()
         return None
 
-    issue, issue_created = Issue.objects.select_for_update().get_or_create(
-        project=project,
-        environment=occurrence.environment,
-        fingerprint_hash=occurrence.fingerprint_hash,
-        defaults=lifecycle.new_issue_fields(occurrence),
-    )
+    issue, issue_created = _issue_for(project, occurrence)
     issue_state = None
     if not issue_created:
         issue_state = _issue_state(issue)
 
+    ProcessedEvent.objects.filter(project=project, event_id=sentry_id).update(
+        issue=issue
+    )
     transition = lifecycle.apply_event(issue_state, occurrence)
+    transition = _release_aware(issue, issue_state, transition, occurrence)
+    releases.record(
+        project,
+        occurrence.release,
+        occurrence.dist,
+        occurrence.environment,
+        occurrence.starts_at,
+    )
     _write_issue(issue, transition, occurrence)
+    environments.record(issue, occurrence.environment, occurrence.starts_at)
     _record(issue, transition, occurrence)
     OCCURRENCES.labels(source=occurrence.source, outcome="stored").inc()
 
@@ -201,6 +213,34 @@ def _apply_event(
         payload=dict(occurrence.payload),
         source=occurrence.source,
         environment=occurrence.environment,
+    )
+
+
+def _release_aware(
+    issue: Issue,
+    issue_state: lifecycle.IssueState | None,
+    transition: lifecycle.Transition,
+    occurrence: lifecycle.Occurrence,
+) -> lifecycle.Transition:
+    if issue_state is None:
+        return transition
+    if not lifecycle.has_regression(transition):
+        return transition
+    if releases.regressed(issue, occurrence.release):
+        return transition
+    return lifecycle.suppress_regression(transition, issue_state)
+
+
+def _issue_for(
+    project: Project, occurrence: lifecycle.Occurrence
+) -> tuple[Issue, bool]:
+    alias = merge.resolve_alias(project.pk, occurrence.fingerprint_hash)
+    if alias is not None:
+        return Issue.objects.select_for_update().get(pk=alias.pk), False
+    return Issue.objects.select_for_update().get_or_create(
+        project=project,
+        fingerprint_hash=occurrence.fingerprint_hash,
+        defaults=lifecycle.new_issue_fields(occurrence),
     )
 
 
@@ -302,7 +342,10 @@ def _write_issue(
     issue.open_episode_count = max(
         0, issue.open_episode_count + transition.open_episode_delta
     )
-    fields = sorted({*transition.issue_fields, "event_count", "open_episode_count"})
+    issue.search_text = search.text_for(issue, occurrence)
+    fields = sorted(
+        {*transition.issue_fields, "event_count", "open_episode_count", "search_text"}
+    )
     issue.save(update_fields=fields)
     if transition.count_occurrence:
         aggregates.count_occurrence(issue, occurrence.starts_at, occurrence.tags)

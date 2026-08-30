@@ -678,3 +678,215 @@ def test_an_alertmanager_occurrence_stores_no_interfaces(token, am_fixture):
     expected = {()}
 
     assert result == expected
+
+
+@pytest.mark.django_db
+def test_a_stack_grouped_issue_says_so(project):
+    """Should tell a reader the fingerprint came from the exception, not a rule."""
+    deliver(project)
+
+    issue = issue_models.Issue.objects.get()
+    result = (issue.grouping_source, issue.grouping_rule_id)
+    expected = (issue_models.GroupingSource.STACK, None)
+
+    assert result == expected
+
+
+@pytest.mark.django_db
+def test_a_client_declared_fingerprint_says_so(project):
+    """Should make an SDK's own fingerprint visible rather than silently obeyed."""
+    deliver(project, event_payload(fingerprint=["tenant-42"]))
+
+    result = issue_models.Issue.objects.get().grouping_source
+    expected = issue_models.GroupingSource.CLIENT
+
+    assert result == expected
+
+
+@pytest.mark.django_db
+def test_a_message_only_event_groups_on_the_message(project):
+    """Should still record how it grouped when there is no exception at all."""
+    deliver(project, {"event_id": "d" * 32, "message": "disk filling"})
+
+    result = issue_models.Issue.objects.get().grouping_source
+    expected = issue_models.GroupingSource.MESSAGE
+
+    assert result == expected
+
+
+def message_payload(event_id, message):
+    return {"event_id": event_id, "level": "error", "message": message}
+
+
+@pytest.mark.django_db
+def test_normalisation_collapses_two_ids_into_one_issue(project, settings):
+    """Should be the whole point — one fault, not one issue per order id."""
+    settings.PANDORA_GROUPING_NORMALISE = True
+    deliver(project, message_payload("1" * 32, "order 8891 failed"))
+    deliver(project, message_payload("2" * 32, "order 4417 failed"))
+
+    result = issue_models.Issue.objects.count()
+    expected = 1
+
+    assert result == expected
+
+
+@pytest.mark.django_db
+def test_the_same_two_events_stay_apart_while_it_is_off(project, settings):
+    """Should change nothing until an operator turns it on deliberately."""
+    settings.PANDORA_GROUPING_NORMALISE = False
+    deliver(project, message_payload("1" * 32, "order 8891 failed"))
+    deliver(project, message_payload("2" * 32, "order 4417 failed"))
+
+    result = issue_models.Issue.objects.count()
+    expected = 2
+
+    assert result == expected
+
+
+@pytest.mark.django_db
+def test_the_event_keeps_the_id_the_fingerprint_dropped(project, settings):
+    """Should never lose the value — it leaves the key, not the record."""
+    settings.PANDORA_GROUPING_NORMALISE = True
+    store = fakes.RecordingEventStore()
+    envelope = store_event(project, message_payload(SENTRY_ID, "order 8891 failed"))
+    processor.process_envelope(envelope.pk, store=store)
+
+    result = store.rows[0].message
+
+    assert "8891" in result
+
+
+@pytest.mark.django_db
+def test_the_normalised_fingerprint_is_what_the_issue_shows(project, settings):
+    """Should show the key it grouped on, so a reader can see why."""
+    settings.PANDORA_GROUPING_NORMALISE = True
+    deliver(project, message_payload(SENTRY_ID, "order 8891 failed"))
+
+    result = issue_models.Issue.objects.get().fingerprint
+    expected = ["order <n> failed"]
+
+    assert result == expected
+
+
+@pytest.mark.django_db
+def test_a_rule_can_split_one_issue_by_a_tag(project):
+    """Should refine the built-in key rather than replacing it, which is the point."""
+    issue_models.GroupingRule.objects.create(
+        priority=10,
+        conditions={"path": "exceptions.*.type", "value": "ValueError"},
+        fingerprint=["{{ default }}", "{{ tags.tenant }}"],
+    )
+    deliver(project, event_payload(event_id="1" * 32, tags={"tenant": "acme"}))
+    deliver(project, event_payload(event_id="2" * 32, tags={"tenant": "globex"}))
+
+    result = issue_models.Issue.objects.count()
+    expected = 2
+
+    assert result == expected
+
+
+@pytest.mark.django_db
+def test_the_same_events_are_one_issue_without_the_rule(project):
+    """Should show the split is the rule's doing, not the payload's."""
+    deliver(project, event_payload(event_id="1" * 32, tags={"tenant": "acme"}))
+    deliver(project, event_payload(event_id="2" * 32, tags={"tenant": "globex"}))
+
+    result = issue_models.Issue.objects.count()
+    expected = 1
+
+    assert result == expected
+
+
+@pytest.mark.django_db
+def test_a_rule_can_set_the_title(project):
+    """Should let an operator name an issue in the words their team uses."""
+    issue_models.GroupingRule.objects.create(
+        priority=10,
+        conditions={"path": "exceptions.*.type", "value": "ValueError"},
+        title_template="checkout broke for {{ tags.tenant }}",
+    )
+    deliver(project, event_payload(tags={"tenant": "acme"}))
+
+    result = issue_models.Issue.objects.get().title
+    expected = "checkout broke for acme"
+
+    assert result == expected
+
+
+@pytest.mark.django_db
+def test_a_rule_that_regrouped_an_sdk_issue_is_recorded_on_it(project):
+    """Should point at the rule to change when the grouping is wrong."""
+    rule = issue_models.GroupingRule.objects.create(
+        priority=10,
+        conditions={"path": "exceptions.*.type", "value": "ValueError"},
+        fingerprint=["checkout"],
+    )
+    deliver(project)
+
+    issue = issue_models.Issue.objects.get()
+    result = (issue.grouping_source, issue.grouping_rule_id)
+    expected = (issue_models.GroupingSource.RULE, rule.pk)
+
+    assert result == expected
+
+
+@pytest.mark.django_db
+def test_a_merged_fingerprint_lands_on_the_keeper(project):
+    """Should hold the merge — otherwise what an operator merged comes straight back."""
+    from pandora.issues import merge
+
+    deliver(project, event_payload(event_id="1" * 32))
+    deliver(
+        project,
+        event_payload(
+            event_id="2" * 32,
+            exception={"values": [{"type": "TimeoutError", "value": "slow"}]},
+        ),
+    )
+    keeper, other = issue_models.Issue.objects.order_by("pk")
+    merge.merge(keeper, [other])
+
+    deliver(
+        project,
+        event_payload(
+            event_id="3" * 32,
+            exception={"values": [{"type": "TimeoutError", "value": "slow"}]},
+        ),
+    )
+
+    result = issue_models.Issue.objects.count()
+    expected = 1
+
+    assert result == expected
+
+
+@pytest.mark.django_db
+def test_the_merged_occurrence_is_counted_on_the_keeper(project):
+    """Should add to the issue it landed on, not vanish into the alias."""
+    from pandora.issues import merge
+
+    deliver(project, event_payload(event_id="1" * 32))
+    deliver(
+        project,
+        event_payload(
+            event_id="2" * 32,
+            exception={"values": [{"type": "TimeoutError", "value": "slow"}]},
+        ),
+    )
+    keeper, other = issue_models.Issue.objects.order_by("pk")
+    merge.merge(keeper, [other])
+    before = issue_models.Issue.objects.get().event_count
+
+    deliver(
+        project,
+        event_payload(
+            event_id="3" * 32,
+            exception={"values": [{"type": "TimeoutError", "value": "slow"}]},
+        ),
+    )
+
+    result = issue_models.Issue.objects.get().event_count
+    expected = before + 1
+
+    assert result == expected

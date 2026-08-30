@@ -5,8 +5,10 @@ from importlib import metadata
 
 from django import db
 from django.http import HttpRequest, JsonResponse
+from django.utils import timezone
 
 from pandora.core import database
+from pandora.issues import reporting
 
 DISTRIBUTION = "pandora"
 UNKNOWN_VERSION = "unknown"
@@ -33,4 +35,5 @@ def ready(request: HttpRequest) -> JsonResponse:
             status=HTTPStatus.SERVICE_UNAVAILABLE,
         )
     database.refresh_size()
+    reporting.refresh(timezone.now())
     return JsonResponse({"status": "ok", "version": version()})

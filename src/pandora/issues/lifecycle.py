@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from typing import Any
 
@@ -34,6 +34,10 @@ class Occurrence:
     payload: dict[str, Any] = field(default_factory=dict)
     environment: str = ""
     source: str = "am"
+    grouping_source: str = ""
+    grouping_rule_id: int | None = None
+    release: str = ""
+    dist: str = ""
 
 
 @dataclass(frozen=True)
@@ -80,6 +84,8 @@ def new_issue_fields(occurrence: Occurrence) -> dict[str, Any]:
         "environment": occurrence.environment,
         "fingerprint": list(occurrence.fingerprint),
         "grouping_labels": dict(occurrence.grouping_labels),
+        "grouping_source": occurrence.grouping_source,
+        "grouping_rule_id": occurrence.grouping_rule_id,
         "first_seen": occurrence.starts_at,
         "last_seen": occurrence.timestamp,
         "event_count": 0,
@@ -115,6 +121,24 @@ def apply_occurrence(
         issue_fields=issue_fields,
         activities=activities,
     )
+
+
+def has_regression(transition: Transition) -> bool:
+    return _has_regression(transition.activities)
+
+
+def suppress_regression(transition: Transition, issue_state: IssueState) -> Transition:
+    """Undo a regression the release boundary says did not happen.
+
+    The lifecycle is pure and knows nothing about releases; the caller does, so
+    it hands the decision back here rather than reimplementing the transition.
+    """
+    activities = tuple(
+        record for record in transition.activities if record.kind != ACTIVITY_REGRESSION
+    )
+    fields = dict(transition.issue_fields)
+    fields["triage_state"] = issue_state.triage_state
+    return replace(transition, issue_fields=fields, activities=activities)
 
 
 def apply_event(

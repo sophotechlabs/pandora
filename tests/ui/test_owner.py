@@ -224,3 +224,26 @@ def test_a_stored_event_is_used_for_the_suggestions(
     body = operator_client.get(f"/issues/{issue.pk}/").content.decode()
 
     assert "team-a, team-b each claim it" in body
+
+
+def test_the_issue_page_lists_every_environment(operator_client, make_issue):
+    """Should say the issue fires on both clusters, not only the newest one."""
+    from pandora.issues import environments
+
+    issue = make_issue(environment="p-mk1")
+    environments.record(issue, "p-mk2", issue.last_seen)
+
+    body = operator_client.get(f"/issues/{issue.pk}/").content.decode()
+
+    assert "p-mk1" in body and "p-mk2" in body
+
+
+def test_an_environment_on_the_issue_page_links_to_its_queue(
+    operator_client, make_issue
+):
+    """Should be one click from 'it fires here' to 'what else fires here'."""
+    issue = make_issue(environment="p-mk1")
+
+    body = operator_client.get(f"/issues/{issue.pk}/").content.decode()
+
+    assert "?q=environment:p-mk1" in body

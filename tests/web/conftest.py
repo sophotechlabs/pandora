@@ -4,6 +4,7 @@ import itertools
 import pytest
 
 from pandora.core import models as core_models
+from pandora.issues import environments
 from pandora.issues import models as issue_models
 
 BASE_TIME = datetime.datetime(2026, 8, 4, 12, 0, tzinfo=datetime.UTC)
@@ -66,7 +67,9 @@ def make_issue(project):
             "triage_state": issue_models.TriageState.NEW,
         }
         fields.update(overrides)
-        return issue_models.Issue.objects.create(**fields)
+        built = issue_models.Issue.objects.create(**fields)
+        environments.record(built, built.environment, built.last_seen)
+        return built
 
     return build
 

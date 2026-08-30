@@ -19,9 +19,9 @@ def envelope(project, am_fixture):
 
 
 def test_envelope_states_cover_the_inbox_lifecycle():
-    """Should offer exactly pending, done and failed."""
+    """Should offer pending, claimed, done and failed — claimed is the consumer's."""
     result = list(models.EnvelopeState.values)
-    expected = ["pending", "done", "failed"]
+    expected = ["pending", "claimed", "done", "failed"]
 
     assert result == expected
 

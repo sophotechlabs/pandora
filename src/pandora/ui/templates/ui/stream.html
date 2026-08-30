@@ -27,7 +27,26 @@
         <span class="segment-count">{{ segment.count }}</span>
       </a>
     {% endfor %}
+    {% for view in views %}
+      <a class="segment view
+                {% if view.is_current %}active{% endif %}"
+         href="?q={{ view.query|urlencode }}&amp;sort={{ view.sort|default:sort.key }}">{{ view.name }}</a>
+    {% endfor %}
   </nav>
+  {% if can_triage %}
+    <form class="save-view" method="post" action="{% url 'ui:view-save' %}">
+      {% csrf_token %}
+      <input type="hidden" name="q" value="{{ raw_query }}">
+      <input type="hidden" name="sort" value="{{ sort.key }}">
+      <input type="hidden" name="next" value="{{ request.get_full_path }}">
+      <input class="search-input"
+             type="text"
+             name="name"
+             placeholder="Save this search as…"
+             maxlength="100">
+      <button class="btn btn-ghost" type="submit">Save view</button>
+    </form>
+  {% endif %}
   <div class="toolbar">
     <span class="toolbar-label">Sort</span>
     {% for option in sorts %}
@@ -35,6 +54,7 @@
                 {% if option.key == sort.key %}active{% endif %}"
          href="?q={{ raw_query|urlencode }}&amp;sort={{ option.key }}">{{ option.label }}</a>
     {% endfor %}
+    <a class="btn btn-ghost" href="?{{ page_query }}&amp;csv=1">Export CSV</a>
     <span class="toolbar-hint">Press / to search, j and k to move, x to select</span>
   </div>
   {% if can_triage %}
@@ -46,6 +66,19 @@
         <span class="selection-count"><span data-selection-count>0</span> selected</span>
         <button class="btn" type="submit" name="action" value="acknowledge">Acknowledge</button>
         <button class="btn" type="submit" name="action" value="resolve">Resolve</button>
+        <details class="menu">
+          <summary class="btn">Resolve in…</summary>
+          <div class="menu-list">
+            {% for value, label in releases %}
+              <button class="menu-item"
+                      type="submit"
+                      name="action"
+                      value="resolve:{{ value }}">{{ label }}</button>
+            {% empty %}
+              <span class="menu-item muted">No release has been seen yet</span>
+            {% endfor %}
+          </div>
+        </details>
         <button class="btn" type="submit" name="action" value="ignore">Ignore</button>
         <details class="menu">
           <summary class="btn">Snooze</summary>
@@ -69,6 +102,7 @@
             {% endfor %}
           </div>
         </details>
+        <button class="btn" type="submit" name="action" value="merge">Merge</button>
         <button class="btn btn-ghost" type="button" data-clear-selection>Clear</button>
       </div>
     </form>

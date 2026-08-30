@@ -519,3 +519,75 @@ def test_the_occurrences_tab_renders_the_frames(operator_client, sdk_issue):
     expected = (True, True)
 
     assert result == expected
+
+
+def test_the_page_says_why_the_issue_is_grouped_as_it_is(operator_client, make_issue):
+    """Should answer the first question anyone asks about a wrongly-grouped issue."""
+    from pandora.issues.models import GroupingSource
+
+    issue = make_issue(grouping_source=GroupingSource.STACK)
+
+    assert "the exception and the frame it came from" in body(operator_client, issue)
+
+
+def test_an_alertmanager_issue_names_the_rule_that_grouped_it(
+    operator_client, make_issue
+):
+    """Should be one click from the issue to the rule that decided its shape."""
+    from pandora.issues.models import GroupingRule, GroupingSource
+
+    rule = GroupingRule.objects.create(priority=10, labels=["pod"])
+    issue = make_issue(grouping_source=GroupingSource.RULE, grouping_rule=rule)
+
+    assert f"rule {rule.pk}" in body(operator_client, issue)
+
+
+def test_an_issue_grouped_before_provenance_existed_says_so(
+    operator_client, make_issue
+):
+    """Should not claim a reason for an issue that predates the column."""
+    issue = make_issue(grouping_source="")
+
+    assert "an earlier version of pandora" in body(operator_client, issue)
+
+
+def test_the_page_shows_what_sets_the_issue_apart(operator_client, make_issue):
+    """Should answer 'what is different about this one' from the breakdown on disk."""
+    from pandora.issues import models as issue_models
+
+    issue = make_issue()
+    other = make_issue()
+    issue_models.TagStat.objects.create(
+        issue=issue, key="node", value="broken-1", count=9
+    )
+    issue_models.TagStat.objects.create(
+        issue=other, key="node", value="fine-1", count=9
+    )
+
+    page = body(operator_client, issue)
+
+    assert "What sets this apart" in page and "node=broken-1" in page
+
+
+def test_the_page_says_when_the_breakdown_was_sampled(operator_client, make_issue):
+    """Should carry the caveat that makes the number trustworthy."""
+    from pandora.issues import models as issue_models
+
+    issue = make_issue()
+    issue_models.TagStat.objects.create(
+        issue=issue, key="node", value="broken-1", count=9
+    )
+    issue_models.TagStat.objects.create(
+        issue=issue, key="node", value=issue_models.TAG_OVERFLOW_VALUE, count=1
+    )
+
+    assert "the key filled its cap" in body(operator_client, issue)
+
+
+def test_an_issue_with_nothing_distinguishing_shows_no_panel(
+    operator_client, make_issue
+):
+    """Should not put an empty card on every issue page."""
+    issue = make_issue()
+
+    assert "What sets this apart" not in body(operator_client, issue)

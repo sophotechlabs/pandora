@@ -47,6 +47,10 @@ REMOVE = (
     f'DELETE FROM {EVENTS_TABLE} WHERE project_id = %s AND id = %s AND "timestamp" = %s'
 )
 
+THIN = (
+    f"DELETE FROM {EVENTS_TABLE} WHERE issue_id = %s AND id NOT IN ("
+    f"SELECT id FROM {EVENTS_TABLE} WHERE issue_id = %s ORDER BY id DESC LIMIT %s)"
+)
 PARTITIONS = (
     "SELECT c.relname, pg_get_expr(c.relpartbound, c.oid) "
     "FROM pg_class c "
@@ -267,6 +271,18 @@ class PostgresEventStore:
                 cutoff.isoformat(),
             )
         return removed
+
+    def thin(self, issue_id: int, keep: int) -> int:
+        """Drop the oldest copies of one issue, keeping the newest `keep`.
+
+        Retention by relevance needs to remove *some* of an issue rather than
+        all of it past a date, and the id is a ULID so newest is simply largest.
+        """
+        if keep < 0:
+            return 0
+        with self.connection.cursor() as cursor:
+            cursor.execute(THIN, [issue_id, issue_id, keep])
+            return cursor.rowcount
 
     def ensure_partitions(self, months_ahead: int = 2) -> None:
         today = timezone.now().date()

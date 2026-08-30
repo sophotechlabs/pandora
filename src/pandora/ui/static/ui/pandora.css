@@ -1717,3 +1717,24 @@ th.owner {
   color: var(--text-strong);
   text-decoration: underline;
 }
+
+.merged-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.save-view {
+  display: flex;
+  gap: 8px;
+  margin: 8px 0 0;
+}
+
+.save-view .search-input {
+  max-width: 260px;
+}
+
+.segment.view {
+  font-style: italic;
+}

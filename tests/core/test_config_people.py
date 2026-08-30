@@ -553,3 +553,87 @@ def test_a_dry_run_writes_nothing(write):
     expected = (0, True)
 
     assert result == expected
+
+
+# path rules
+
+
+def test_a_path_rule_is_created_from_the_file(write):
+    """Should let the layout of the machines be reviewed like the code."""
+    from pandora.issues.models import PathRule
+
+    run(
+        write(
+            doc(
+                PROJECTS,
+                """
+                path_rules:
+                  - name: venv
+                    pattern: "^.*/(site-packages/)"
+                    replacement: "<venv>/\\\\1"
+                """,
+            )
+        )
+    )
+
+    rule = PathRule.objects.get()
+    result = (rule.name, rule.replacement)
+    expected = ("venv", "<venv>/\\1")
+
+    assert result == expected
+
+
+def test_a_path_rule_dropped_from_the_file_is_deactivated(write):
+    """Should stop rewriting without losing what used to be rewritten."""
+    from pandora.issues.models import PathRule
+
+    two = doc(
+        PROJECTS,
+        """
+        path_rules:
+          - name: venv
+            pattern: "^.*/(site-packages/)"
+          - name: root
+            pattern: "^/app/"
+        """,
+    )
+    one = doc(
+        PROJECTS,
+        """
+        path_rules:
+          - name: venv
+            pattern: "^.*/(site-packages/)"
+        """,
+    )
+    run(write(two))
+
+    run(write(one))
+
+    result = sorted(PathRule.objects.values_list("name", "active"))
+    expected = [("root", False), ("venv", True)]
+
+    assert result == expected
+
+
+def test_a_path_rule_can_be_scoped_to_a_project(write):
+    """Should keep one project's layout out of another's."""
+    from pandora.issues.models import PathRule
+
+    run(
+        write(
+            doc(
+                PROJECTS,
+                """
+                path_rules:
+                  - name: venv
+                    pattern: "^.*/(site-packages/)"
+                    project: apps
+                """,
+            )
+        )
+    )
+
+    result = PathRule.objects.get().project.slug
+    expected = "apps"
+
+    assert result == expected

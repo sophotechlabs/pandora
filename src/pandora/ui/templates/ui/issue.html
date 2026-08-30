@@ -16,7 +16,10 @@
     </p>
     <div class="issue-meta">
       <span class="project">{{ issue.project.slug }}</span>
-      {% if issue.environment %}<span class="project">{{ issue.environment }}</span>{% endif %}
+      {% for row in issue.environments.all %}
+        {% if row.name %}<a class="project"
+   href="{% url 'ui:stream' %}?q=environment:{{ row.name|urlencode }}">{{ row.name }}</a>{% endif %}
+      {% endfor %}
       <span class="fingerprint" title="{{ issue.fingerprint_hash }}">{{ issue.fingerprint_hash|slice:":12" }}</span>
       {% if owner %}
         <a class="tag"
@@ -38,6 +41,19 @@
         <input type="hidden" name="next" value="{{ next_url }}">
         <button class="btn" type="submit" name="action" value="acknowledge">Acknowledge</button>
         <button class="btn" type="submit" name="action" value="resolve">Resolve</button>
+        <details class="menu">
+          <summary class="btn">Resolve in…</summary>
+          <div class="menu-list">
+            {% for value, label in releases %}
+              <button class="menu-item"
+                      type="submit"
+                      name="action"
+                      value="resolve:{{ value }}">{{ label }}</button>
+            {% empty %}
+              <span class="menu-item muted">No release has been seen yet</span>
+            {% endfor %}
+          </div>
+        </details>
         <button class="btn" type="submit" name="action" value="ignore">Ignore</button>
         <details class="menu">
           <summary class="btn">Snooze</summary>
@@ -186,8 +202,85 @@
           {% endfor %}
         </div>
       </section>
+      {% if reports %}
+        <section class="card">
+          <h2 class="card-title">What people said</h2>
+          <ul class="plain">
+            {% for report in reports %}
+              <li>
+                <strong>{{ report.name|default:"Someone" }}</strong>
+                {% if report.email %}<span class="muted">{{ report.email }}</span>{% endif %}
+                <p>{{ report.comments }}</p>
+              </li>
+            {% endfor %}
+          </ul>
+        </section>
+      {% endif %}
+      {% if suspect %}
+        <section class="card">
+          <h2 class="card-title">Suspect deploy</h2>
+          <p>
+            <strong>{{ suspect.release }}</strong>
+            {% if suspect.environment %}to {{ suspect.environment }}{% endif %}
+            <span class="muted">— the last deploy before this issue was first seen</span>
+          </p>
+          <p class="muted">{{ suspect.started_at|date:"Y-m-d H:i:s e" }} · {{ suspect.get_state_display }}</p>
+        </section>
+      {% endif %}
+      {% if aliases %}
+        <section class="card">
+          <h2 class="card-title">Merged in</h2>
+          <p class="muted">
+            The next occurrence of any of these lands here. Unmerging changes that; what
+            was already counted into this issue stays counted.
+          </p>
+          <ul class="plain">
+            {% for alias in aliases %}
+              <li class="merged-row">
+                <span title="{{ alias.fingerprint_hash }}">{{ alias.title|default:alias.fingerprint_hash|truncatechars:60 }}</span>
+                {% if can_triage %}
+                  <form method="post"
+                        action="{% url 'ui:unmerge' issue.pk alias.fingerprint_hash %}">
+                    {% csrf_token %}
+                    <button class="btn btn-ghost" type="submit">Unmerge</button>
+                  </form>
+                {% endif %}
+              </li>
+            {% endfor %}
+          </ul>
+          {% if suggestion %}
+            <p class="muted">
+              These share {% for key, value in suggestion.shared.items %}<code>{{ key }}={{ value }}</code>{% if not forloop.last %}, {% endif %}{% endfor %}
+              {% if suggestion.differing %}
+                and differ on {% for key in suggestion.differing %}<code>{{ key }}</code>{% if not forloop.last %}, {% endif %}{% endfor %}
+              {% endif %}
+              — a grouping rule denying that would have made this merge unnecessary.
+            </p>
+          {% endif %}
+        </section>
+      {% endif %}
+      {% if attributes %}
+        <section class="card">
+          <h2 class="card-title">What sets this apart</h2>
+          <ul class="plain">
+            {% for row in attributes %}
+              <li>
+                <code>{{ row.key }}={{ row.value }}</code>
+                <span class="muted">{{ row.percent }}% here against {{ row.baseline_percent }}% across the project</span>
+                {% if row.sampled %}<span class="muted">— sampled, the key filled its cap</span>{% endif %}
+              </li>
+            {% endfor %}
+          </ul>
+        </section>
+      {% endif %}
       <section class="card">
         <h2 class="card-title">Fingerprint</h2>
+        <p class="muted grouping-source">
+          Grouped by {{ grouping_reason }}
+          {% if issue.grouping_rule_id %}
+            — <a href="{% url 'admin:issues_groupingrule_change' issue.grouping_rule_id %}">rule {{ issue.grouping_rule_id }}</a>
+          {% endif %}
+        </p>
         <ul class="plain">
           {% for part in issue.fingerprint %}
             <li>

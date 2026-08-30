@@ -38,6 +38,8 @@ class ActivityKind(models.TextChoices):
     RESOLVED = "resolved", "Resolved"
     IGNORED = "ignored", "Ignored"
     REOPENED = "reopened", "Reopened"
+    MERGED = "merged", "Merged"
+    UNMERGED = "unmerged", "Unmerged"
     SILENCED = "silenced", "Silenced"
     UNSILENCED = "unsilenced", "Unsilenced"
     REGROUPED = "regrouped", "Regrouped"
@@ -46,6 +48,15 @@ class ActivityKind(models.TextChoices):
 class GroupingMode(models.TextChoices):
     DENYLIST = "denylist", "Denylist"
     ALLOWLIST = "allowlist", "Allowlist"
+
+
+class GroupingSource(models.TextChoices):
+    RULE = "rule", "A grouping rule"
+    DEFAULT = "default", "The built-in denylist"
+    STACK = "stack", "The exception's stack signature"
+    LOGENTRY = "logentry", "The log message template"
+    MESSAGE = "message", "The message"
+    CLIENT = "client", "A fingerprint the client declared"
 
 
 class Issue(models.Model):
@@ -83,11 +94,25 @@ class Issue(models.Model):
     last_resolved_at = models.DateTimeField(null=True, blank=True)
     snoozed_until = models.DateTimeField(null=True, blank=True)
     snoozed_past_count = models.PositiveBigIntegerField(null=True, blank=True)
+    grouping_source = models.CharField(
+        max_length=16,
+        choices=GroupingSource.choices,
+        blank=True,
+        default="",
+    )
+    search_text = models.TextField(blank=True, default="")
+    grouping_rule = models.ForeignKey(
+        "issues.GroupingRule",
+        on_delete=models.SET_NULL,
+        related_name="issues",
+        null=True,
+        blank=True,
+    )
 
     class Meta:
         constraints = [
             models.UniqueConstraint(
-                fields=["project", "environment", "fingerprint_hash"],
+                fields=["project", "fingerprint_hash"],
                 name="issues_issue_fingerprint_uq",
             ),
         ]
@@ -109,6 +134,33 @@ class Issue(models.Model):
 
     def __str__(self) -> str:
         return self.title
+
+
+class IssueEnvironment(models.Model):
+    issue = models.ForeignKey(
+        Issue,
+        on_delete=models.CASCADE,
+        related_name="environments",
+    )
+    name = models.CharField(max_length=100, blank=True, default="")
+    first_seen = models.DateTimeField(default=timezone.now)
+    last_seen = models.DateTimeField(default=timezone.now)
+    event_count = models.PositiveBigIntegerField(default=0)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["issue", "name"],
+                name="issues_issue_environment_uq",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["name"], name="issues_issue_env_name"),
+        ]
+        ordering = ("name",)
+
+    def __str__(self) -> str:
+        return f"{self.issue_id} in {self.name or 'no environment'}"
 
 
 class Episode(models.Model):
@@ -196,6 +248,9 @@ class GroupingRule(models.Model):
         default=GroupingMode.DENYLIST,
     )
     labels = models.JSONField(default=list, blank=True)
+    conditions = models.JSONField(default=dict, blank=True)
+    fingerprint = models.JSONField(default=list, blank=True)
+    title_template = models.CharField(max_length=500, blank=True, default="")
     active = models.BooleanField(default=True)
 
     class Meta:
@@ -209,6 +264,110 @@ class GroupingRule(models.Model):
 
     def __str__(self) -> str:
         return f"{self.priority} {self.mode} {self.alertname_regex or '*'}"
+
+
+class UserReport(models.Model):
+    """What a person typed about an error that already happened.
+
+    Small, a form, and it attaches to an event id that already exists. Accept it
+    and render it; the widget that collects it is the SDK's job.
+    """
+
+    project = models.ForeignKey(
+        Project,
+        on_delete=models.CASCADE,
+        related_name="user_reports",
+    )
+    issue = models.ForeignKey(
+        "issues.Issue",
+        on_delete=models.CASCADE,
+        related_name="user_reports",
+        null=True,
+        blank=True,
+    )
+    event_id = models.CharField(max_length=64)
+    name = models.CharField(max_length=200, blank=True, default="")
+    email = models.CharField(max_length=254, blank=True, default="")
+    comments = models.TextField(blank=True, default="")
+    received_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["project", "event_id"], name="issues_report_event"),
+            models.Index(fields=["-received_at"], name="issues_report_received"),
+        ]
+        ordering = ("-received_at",)
+
+    def __str__(self) -> str:
+        return f"{self.name or 'someone'} on {self.event_id[:12]}"
+
+
+class IssueAlias(models.Model):
+    project = models.ForeignKey(
+        Project,
+        on_delete=models.CASCADE,
+        related_name="issue_aliases",
+    )
+    fingerprint_hash = models.CharField(max_length=64)
+    issue = models.ForeignKey(
+        "issues.Issue",
+        on_delete=models.CASCADE,
+        related_name="aliases",
+    )
+    title = models.CharField(max_length=500, blank=True, default="")
+    grouping_labels = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["project", "fingerprint_hash"],
+                name="issues_alias_fingerprint_uq",
+            ),
+        ]
+        ordering = ("fingerprint_hash",)
+
+    def __str__(self) -> str:
+        return f"{self.fingerprint_hash[:12]} -> {self.issue_id}"
+
+
+class SavedView(models.Model):
+    name = models.CharField(max_length=100, unique=True)
+    query = models.CharField(max_length=500, blank=True, default="")
+    sort = models.CharField(max_length=32, blank=True, default="")
+    ordering = models.IntegerField(default=100)
+    created_by = models.CharField(max_length=150, blank=True, default="")
+    active = models.BooleanField(default=True)
+
+    class Meta:
+        ordering = ("ordering", "name")
+
+    def __str__(self) -> str:
+        return self.name
+
+
+class PathRule(models.Model):
+    name = models.CharField(max_length=100)
+    pattern = models.CharField(max_length=500)
+    replacement = models.CharField(max_length=500, blank=True, default="")
+    project = models.ForeignKey(
+        Project,
+        on_delete=models.CASCADE,
+        related_name="path_rules",
+        null=True,
+        blank=True,
+    )
+    ordering = models.IntegerField(default=100)
+    active = models.BooleanField(default=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["active", "ordering"], name="issues_path_active_prio"),
+        ]
+        ordering = ("ordering", "id")
+
+    def __str__(self) -> str:
+        return f"{self.name}: {self.pattern} -> {self.replacement}"
 
 
 class HourlyStat(models.Model):

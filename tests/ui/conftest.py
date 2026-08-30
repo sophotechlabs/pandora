@@ -8,6 +8,7 @@ from django.contrib.auth import models as auth_models
 from django.utils import timezone
 
 from pandora.core import models as core_models
+from pandora.issues import environments
 from pandora.issues import models as issue_models
 
 FROZEN = "2026-08-04 12:00:00"
@@ -49,7 +50,9 @@ def make_issue(project):
             "triage_state": issue_models.TriageState.NEW,
         }
         fields.update(overrides)
-        return issue_models.Issue.objects.create(**fields)
+        built = issue_models.Issue.objects.create(**fields)
+        environments.record(built, built.environment, built.last_seen)
+        return built
 
     return build
 

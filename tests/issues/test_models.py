@@ -57,6 +57,8 @@ def test_activity_kinds_cover_the_audit_trail():
             "regrouped",
             "snoozed",
             "unsnoozed",
+            "merged",
+            "unmerged",
         ]
     )
 
@@ -134,22 +136,15 @@ def test_the_fingerprint_is_unique_within_a_project_and_environment(issue):
         )
 
 
-def test_two_environments_never_collapse_into_one_issue(issue):
-    """Should keep two clusters apart when they share a project and a fingerprint."""
-    twin = models.Issue.objects.create(
-        project=issue.project,
-        environment="p-mk2",
-        fingerprint_hash=issue.fingerprint_hash,
-        title=issue.title,
-    )
-
-    result = models.Issue.objects.filter(
-        fingerprint_hash=issue.fingerprint_hash
-    ).count()
-    expected = 2
-
-    assert result == expected
-    assert twin.pk != issue.pk
+def test_one_fingerprint_is_one_issue_whatever_the_environment(issue):
+    """Should refuse a second row for the same fingerprint — environment is not identity."""
+    with pytest.raises(db.IntegrityError):
+        models.Issue.objects.create(
+            project=issue.project,
+            environment="p-mk2",
+            fingerprint_hash=issue.fingerprint_hash,
+            title=issue.title,
+        )
 
 
 def test_an_episode_is_identified_by_fingerprint_and_start(episode):

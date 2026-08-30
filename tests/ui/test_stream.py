@@ -351,3 +351,60 @@ def test_the_stream_renders_for_a_reader_with_no_session_state(
     expected = http.HTTPStatus.OK
 
     assert result == expected
+
+
+# ranking
+
+
+def test_relevance_puts_this_morning_above_last_month(operator_client, make_issue):
+    """Should stop the chatty issue from owning the top of the list forever."""
+    from pandora.issues import models as issue_models
+
+    now = timezone.now()
+    loud = make_issue(title="Loud last month")
+    fresh = make_issue(title="Fresh this morning")
+    for day in range(10, 40):
+        issue_models.HourlyStat.objects.create(
+            issue=loud, hour=now - datetime.timedelta(days=day), count=20
+        )
+    issue_models.HourlyStat.objects.create(
+        issue=fresh, hour=now - datetime.timedelta(hours=1), count=6
+    )
+
+    response = operator_client.get("/", {"sort": "relevance", "q": ""})
+
+    result = [row.issue.title for row in response.context["rows"]]
+
+    assert result[0] == "Fresh this morning"
+
+
+def test_relevance_is_offered_but_is_not_the_default(operator_client, make_issue):
+    """Should stay opt-in until its query cost is measured on real volume."""
+    make_issue()
+
+    response = operator_client.get("/")
+
+    result = (
+        response.context["sort"].key,
+        [option.key for option in response.context["sorts"]],
+    )
+
+    assert result[0] == "last_seen"
+    assert "relevance" in result[1]
+
+
+def test_spread_ranks_by_how_many_places_are_affected(operator_client, make_issue):
+    """Should answer 'is it everyone or one node' from the stream itself."""
+    from pandora.issues import models as issue_models
+
+    narrow = make_issue(title="One node")
+    wide = make_issue(title="Every node")
+    issue_models.TagStat.objects.create(issue=narrow, key="node", value="a", count=9)
+    for name in ("a", "b", "c"):
+        issue_models.TagStat.objects.create(issue=wide, key="node", value=name, count=1)
+
+    response = operator_client.get("/", {"sort": "breadth", "q": ""})
+
+    result = [row.issue.title for row in response.context["rows"]]
+
+    assert result[0] == "Every node"

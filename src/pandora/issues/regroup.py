@@ -13,6 +13,7 @@ from pandora.issues.models import (
     Episode,
     Issue,
     IssueActivity,
+    IssueEnvironment,
     SourceState,
 )
 
@@ -37,14 +38,19 @@ class RegroupReport:
 @dataclass
 class _Group:
     digest: str
-    environment: str
     fingerprint: list[str]
     grouping_labels: dict[str, str]
+    grouping_source: str
+    grouping_rule_id: int | None
     episodes: list[Episode]
 
     @property
-    def key(self) -> tuple[str, str]:
-        return (self.environment, self.digest)
+    def key(self) -> str:
+        return self.digest
+
+    @property
+    def environment(self) -> str:
+        return self.episodes[-1].environment
 
 
 class _Rollback(Exception):
@@ -90,7 +96,7 @@ def _regroup_project(
     before_ids = {episode.issue_id for episode in episodes}
     report.issues_before += len(before_ids)
 
-    owned: dict[int, set[tuple[str, str]]] = {}
+    owned: dict[int, set[str]] = {}
     for group in groups:
         for episode in group.episodes:
             owned.setdefault(episode.issue_id, set()).add(group.key)
@@ -98,9 +104,7 @@ def _regroup_project(
     donors = {issue.pk: issue for issue in Issue.objects.filter(pk__in=before_ids)}
     for issue in _colliding(project, groups, before_ids):
         donors[issue.pk] = issue
-    by_hash = {
-        (issue.environment, issue.fingerprint_hash): issue for issue in donors.values()
-    }
+    by_hash = {issue.fingerprint_hash: issue for issue in donors.values()}
     _park_identities(donors)
 
     claimed: set[int] = set()
@@ -144,22 +148,22 @@ def _park_identities(donors: dict[int, Issue]) -> None:
 
 def _groups(project: Project, episodes: list[Episode]) -> list[_Group]:
     rules = grouping.load_rules(project)
-    found: dict[tuple[str, str], _Group] = {}
+    found: dict[str, _Group] = {}
     for episode in episodes:
         alertname = episode.labels.get(grouping.ALERTNAME, "")
         rule = grouping.match_rule(alertname, rules)
         fingerprint = grouping.compute_fingerprint(rule, episode.labels)
         digest = grouping.fingerprint_hash(fingerprint)
-        key = (episode.environment, digest)
-        if key not in found:
-            found[key] = _Group(
+        if digest not in found:
+            found[digest] = _Group(
                 digest=digest,
-                environment=episode.environment,
                 fingerprint=fingerprint,
                 grouping_labels=grouping.surviving_labels(rule, episode.labels),
+                grouping_source=grouping.source_of(rule),
+                grouping_rule_id=rule.pk,
                 episodes=[],
             )
-        found[key].episodes.append(episode)
+        found[digest].episodes.append(episode)
     return [found[key] for key in sorted(found)]
 
 
@@ -169,8 +173,8 @@ def _settle(
     group: _Group,
     *,
     donors: dict[int, Issue],
-    by_hash: dict[tuple[str, str], Issue],
-    owned: dict[int, set[tuple[str, str]]],
+    by_hash: dict[str, Issue],
+    owned: dict[int, set[str]],
     claimed: set[int],
     store: EventStore,
 ) -> tuple[Issue, bool]:
@@ -216,9 +220,31 @@ def _create_issue(
         fingerprint_hash=group.digest,
         title=donor.title,
         level=donor.level,
+        grouping_source=group.grouping_source,
+        grouping_rule_id=group.grouping_rule_id,
     )
     issue.save()
     return issue
+
+
+def _rebuild_environments(issue: Issue, group: _Group) -> None:
+    IssueEnvironment.objects.filter(issue=issue).delete()
+    seen: dict[str, IssueEnvironment] = {}
+    for episode in group.episodes:
+        row = seen.get(episode.environment)
+        if row is None:
+            seen[episode.environment] = IssueEnvironment(
+                issue=issue,
+                name=episode.environment,
+                first_seen=episode.starts_at,
+                last_seen=episode.last_delivery_at,
+                event_count=1,
+            )
+            continue
+        row.first_seen = min(row.first_seen, episode.starts_at)
+        row.last_seen = max(row.last_seen, episode.last_delivery_at)
+        row.event_count += 1
+    IssueEnvironment.objects.bulk_create(seen.values())
 
 
 def _rebuild_issue(issue: Issue, group: _Group) -> None:
@@ -227,7 +253,9 @@ def _rebuild_issue(issue: Issue, group: _Group) -> None:
     issue.fingerprint = group.fingerprint
     issue.grouping_labels = group.grouping_labels
     issue.culprit = grouping.derive_culprit(group.grouping_labels)
-    issue.environment = group.episodes[-1].environment
+    issue.grouping_source = group.grouping_source
+    issue.grouping_rule_id = group.grouping_rule_id
+    issue.environment = group.environment
     issue.event_count = len(group.episodes)
     issue.open_episode_count = open_count
     issue.first_seen = min(episode.starts_at for episode in group.episodes)
@@ -236,10 +264,13 @@ def _rebuild_issue(issue: Issue, group: _Group) -> None:
         issue.source_state = SourceState.FIRING
     else:
         issue.source_state = SourceState.RESOLVED
+    _rebuild_environments(issue, group)
     issue.save(
         update_fields=[
             "culprit",
             "environment",
+            "grouping_rule",
+            "grouping_source",
             "event_count",
             "fingerprint",
             "fingerprint_hash",

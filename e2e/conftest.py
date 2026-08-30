@@ -14,13 +14,27 @@ django.setup()
 
 from django.contrib.auth import get_user_model
 
+from pandora.artifacts import models as artifact_models
 from pandora.core import models as core_models
 from pandora.ingest import models as ingest_models
 from pandora.issues import models as issue_models
 from pandora.people import models as people_models
+from pandora.releases import models as release_models
 
 PASSWORD = "e2e-operator-pass"
 OWNED = (
+    artifact_models.BundleFile,
+    artifact_models.ArtifactBundle,
+    ingest_models.Monitor,
+    issue_models.UserReport,
+    issue_models.SavedView,
+    issue_models.IssueAlias,
+    issue_models.IssueEnvironment,
+    release_models.Resolution,
+    release_models.Deploy,
+    release_models.SessionBucket,
+    release_models.ReleaseEnvironment,
+    release_models.Release,
     people_models.Assignment,
     people_models.OwnershipRule,
     people_models.Membership,

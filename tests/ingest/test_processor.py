@@ -550,14 +550,55 @@ def other_environment(payload):
     return other
 
 
-def test_two_environments_do_not_collapse_into_one_issue(am_fixture, token, store):
-    """Should keep p-mk2's copy of an alert apart from p-mk1's in a shared project."""
+def test_two_environments_are_one_issue(am_fixture, token, store):
+    """Should be one issue with one resolution boundary, whichever cluster it fired on."""
     helpers.deliver(am_fixture("firing_group"), token, store, RECEIVED_AT)
     envelope = helpers.store_envelope(am_fixture("firing_group"), token, RECEIVED_AT)
     ingest_models.RawEnvelope.objects.filter(pk=envelope.pk).update(environment="p-mk2")
     processor.process_envelope(envelope.pk, store=store)
 
-    result = sorted(issue_models.Issue.objects.values_list("environment", flat=True))
+    result = issue_models.Issue.objects.count()
+    expected = 1
+
+    assert result == expected
+
+
+def test_both_environments_are_recorded_on_the_issue(am_fixture, token, store):
+    """Should still say where it fired — the environment moved from the key to a row."""
+    helpers.deliver(am_fixture("firing_group"), token, store, RECEIVED_AT)
+    envelope = helpers.store_envelope(am_fixture("firing_group"), token, RECEIVED_AT)
+    ingest_models.RawEnvelope.objects.filter(pk=envelope.pk).update(environment="p-mk2")
+    processor.process_envelope(envelope.pk, store=store)
+
+    result = sorted(
+        issue_models.IssueEnvironment.objects.values_list("name", flat=True)
+    )
     expected = ["p-mk1", "p-mk2"]
+
+    assert result == expected
+
+
+def test_an_alertmanager_issue_records_the_rule_that_grouped_it(
+    am_fixture, token, store
+):
+    """Should let a wrongly-grouped issue point at the rule to change."""
+    helpers.deliver(am_fixture("firing_group"), token, store, RECEIVED_AT)
+
+    issue = issue_models.Issue.objects.get()
+    result = (issue.grouping_source, issue.grouping_rule_id is not None)
+    expected = (issue_models.GroupingSource.RULE, True)
+
+    assert result == expected
+
+
+def test_an_issue_grouped_by_the_built_in_denylist_says_so(
+    am_fixture, token, store, project
+):
+    """Should distinguish the seeded rule from no rule at all."""
+    issue_models.GroupingRule.objects.all().delete()
+    helpers.deliver(am_fixture("firing_group"), token, store, RECEIVED_AT)
+
+    result = issue_models.Issue.objects.get().grouping_source
+    expected = issue_models.GroupingSource.DEFAULT
 
     assert result == expected

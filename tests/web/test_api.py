@@ -399,6 +399,7 @@ def test_an_issue_serialises_to_the_documented_shape(issue):
         "culprit": "alertname=TargetDown namespace=monitoring",
         "level": "warning",
         "environment": "p-mk1",
+        "environments": ["p-mk1"],
         "source_state": "firing",
         "triage_state": "new",
         "event_count": 3,
@@ -587,9 +588,9 @@ def test_a_head_request_is_served(client, auth):
     assert result == expected
 
 
-def test_the_list_costs_two_queries(client, auth, ladder, django_assert_num_queries):
-    """Should authenticate and page in two queries — no per-row project lookup."""
-    with django_assert_num_queries(2):
+def test_the_list_costs_three_queries(client, auth, ladder, django_assert_num_queries):
+    """Should authenticate, page and prefetch environments — nothing per row."""
+    with django_assert_num_queries(3):
         client.get(ISSUES_URL, headers=auth)
 
 
@@ -1051,9 +1052,9 @@ def test_the_detail_needs_a_token_too(client, issue, read_token):
     assert result == expected
 
 
-def test_the_detail_costs_four_queries(client, auth, issue, django_assert_num_queries):
+def test_the_detail_costs_five_queries(client, auth, issue, django_assert_num_queries):
     """Should authenticate, load the issue and each embedded list once."""
-    with django_assert_num_queries(4):
+    with django_assert_num_queries(5):
         client.get(f"{ISSUES_URL}/{issue.pk}", headers=auth)
 
 
@@ -1081,5 +1082,35 @@ def test_a_token_of_another_project_sees_its_own_issues(client, other_project, i
 
     result = [row["id"] for row in response.json()["results"]]
     expected = [mine.pk]
+
+    assert result == expected
+
+
+def test_the_api_filter_matches_either_environment(client, auth, make_issue):
+    """Should find an issue from whichever cluster the caller knows about."""
+    from pandora.issues import environments
+
+    issue = make_issue(title="Both", environment="p-mk1")
+    environments.record(issue, "p-mk2", issue.last_seen)
+
+    response = client.get(ISSUES_URL, {"environment": "p-mk2"}, headers=auth)
+
+    result = [row["title"] for row in response.json()["results"]]
+    expected = ["Both"]
+
+    assert result == expected
+
+
+def test_the_serialised_issue_names_every_environment(client, auth, make_issue):
+    """Should let a consumer see the spread without a second request."""
+    from pandora.issues import environments
+
+    issue = make_issue(title="Both", environment="p-mk1")
+    environments.record(issue, "p-mk2", issue.last_seen)
+
+    response = client.get(f"{ISSUES_URL}/{issue.pk}", headers=auth)
+
+    result = response.json()["environments"]
+    expected = ["p-mk1", "p-mk2"]
 
     assert result == expected

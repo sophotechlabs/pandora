@@ -408,3 +408,396 @@ def test_a_compression_bomb_is_refused_without_inflating_it(post):
     result = (response.status_code, ingest_models.RawEnvelope.objects.count())
     expected = (http.HTTPStatus.REQUEST_ENTITY_TOO_LARGE, 0)
     assert result == expected
+
+
+def test_a_zstd_body_is_decoded(post):
+    """Should take what a busy SDK reaches for, which gzip is not."""
+    import zstandard
+
+    raw = default_body()
+    body = zstandard.ZstdCompressor().compress(raw)
+
+    response = post(body=body, headers={"Content-Encoding": "zstd"})
+
+    result = (response.status_code, ingest_models.RawEnvelope.objects.count())
+    expected = (http.HTTPStatus.OK, 1)
+
+    assert result == expected
+
+
+def test_a_brotli_body_is_decoded(post):
+    """Should take the other encoding the protocol lists."""
+    import brotli
+
+    raw = default_body()
+    body = brotli.compress(raw)
+
+    response = post(body=body, headers={"Content-Encoding": "br"})
+
+    result = (response.status_code, ingest_models.RawEnvelope.objects.count())
+    expected = (http.HTTPStatus.OK, 1)
+
+    assert result == expected
+
+
+@test.override_settings(PANDORA_INGEST_MAX_BYTES=400)
+def test_a_zstd_bomb_is_refused(post):
+    """Should measure what the body becomes, whatever compressed it."""
+    import zstandard
+
+    raw = default_body(message="x" * 3000)
+    body = zstandard.ZstdCompressor().compress(raw)
+
+    response = post(body=body, headers={"Content-Encoding": "zstd"})
+
+    result = response.status_code
+    expected = http.HTTPStatus.REQUEST_ENTITY_TOO_LARGE
+
+    assert result == expected
+
+
+def test_an_event_item_over_the_per_item_limit_is_dropped(post):
+    """Should refuse one oversized item without failing the whole envelope."""
+
+    with test.override_settings(PANDORA_INGEST_MAX_BYTES=4 * 1024 * 1024):
+        response = post(body=default_body(message="x" * (2 * 1024 * 1024)))
+
+    result = (response.status_code, ingest_models.RawEnvelope.objects.count())
+    expected = (http.HTTPStatus.OK, 0)
+
+    assert result == expected
+
+
+def test_an_unknown_content_encoding_is_passed_through(post):
+    """Should not guess — an encoding pandora does not know is left as bytes."""
+    response = post(body=default_body(), headers={"Content-Encoding": "identity"})
+
+    result = response.status_code
+    expected = http.HTTPStatus.OK
+
+    assert result == expected
+
+
+def test_an_oversized_session_item_is_dropped(post, dsn_key):
+    """Should hold the per-item limit on the door sessions come through."""
+    import json as json_module
+
+    from pandora.releases import models as release_models
+
+    big = {"sid": "s", "status": "exited", "attrs": {"release": "x" * 200000}}
+    body = "\n".join(
+        [
+            json_module.dumps({}),
+            json_module.dumps({"type": "session"}),
+            json_module.dumps(big),
+        ]
+    ).encode()
+
+    response = post(body=body)
+
+    assert response.status_code == http.HTTPStatus.OK
+    assert release_models.SessionBucket.objects.count() == 0
+
+
+@test.override_settings(PANDORA_INGEST_MAX_BYTES=400)
+def test_a_brotli_bomb_is_refused(post):
+    """Should measure what the body becomes on every encoding, not just some."""
+    import brotli
+
+    raw = default_body(message="x" * 3000)
+    body = brotli.compress(raw)
+
+    response = post(body=body, headers={"Content-Encoding": "br"})
+
+    result = response.status_code
+    expected = http.HTTPStatus.REQUEST_ENTITY_TOO_LARGE
+
+    assert result == expected
+
+
+# the store endpoint
+
+
+def test_the_store_endpoint_takes_a_bare_event(client, dsn_key):
+    """Should remove a whole class of 'why does my client not work'."""
+    response = client.post(
+        f"/api/{dsn_key.project_id}/store/",
+        data=json.dumps({"event_id": "a" * 32, "message": "boom"}),
+        content_type="application/json",
+        headers={"X-Sentry-Auth": f"Sentry sentry_key={dsn_key.public_key}"},
+    )
+
+    result = (response.status_code, ingest_models.RawEnvelope.objects.count())
+    expected = (http.HTTPStatus.OK, 1)
+
+    assert result == expected
+
+
+def test_the_store_endpoint_takes_the_key_as_a_query_parameter(client, dsn_key):
+    """Should accept both auth forms, like the envelope door does."""
+    response = client.post(
+        f"/api/{dsn_key.project_id}/store/?sentry_key={dsn_key.public_key}",
+        data=json.dumps({"message": "boom"}),
+        content_type="application/json",
+    )
+
+    result = response.status_code
+    expected = http.HTTPStatus.OK
+
+    assert result == expected
+
+
+def test_the_store_endpoint_mints_an_event_id_when_none_was_sent(client, dsn_key):
+    """Should let a hand-rolled curl work without inventing an id first."""
+    response = client.post(
+        f"/api/{dsn_key.project_id}/store/?sentry_key={dsn_key.public_key}",
+        data=json.dumps({"message": "boom"}),
+        content_type="application/json",
+    )
+
+    assert response.json()["id"]
+
+
+def test_the_store_endpoint_refuses_an_unknown_key(client, dsn_key):
+    """Should sit behind the same key as everything else."""
+    response = client.post(
+        f"/api/{dsn_key.project_id}/store/?sentry_key={'z' * 32}",
+        data=json.dumps({"message": "boom"}),
+        content_type="application/json",
+    )
+
+    result = response.status_code
+    expected = http.HTTPStatus.UNAUTHORIZED
+
+    assert result == expected
+
+
+def test_the_store_endpoint_refuses_a_non_object(client, dsn_key):
+    """Should name what is wrong rather than store a list."""
+    response = client.post(
+        f"/api/{dsn_key.project_id}/store/?sentry_key={dsn_key.public_key}",
+        data=json.dumps([1, 2, 3]),
+        content_type="application/json",
+    )
+
+    result = response.status_code
+    expected = http.HTTPStatus.BAD_REQUEST
+
+    assert result == expected
+
+
+def test_the_store_endpoint_refuses_a_get(client, dsn_key):
+    """Should be a POST like every other door."""
+    response = client.get(f"/api/{dsn_key.project_id}/store/")
+
+    result = response.status_code
+    expected = http.HTTPStatus.METHOD_NOT_ALLOWED
+
+    assert result == expected
+
+
+def test_the_store_endpoint_refuses_a_body_that_is_not_json(client, dsn_key):
+    """Should say so rather than store bytes nobody can read."""
+    response = client.post(
+        f"/api/{dsn_key.project_id}/store/?sentry_key={dsn_key.public_key}",
+        data=b"not json",
+        content_type="application/json",
+    )
+
+    result = response.status_code
+    expected = http.HTTPStatus.BAD_REQUEST
+
+    assert result == expected
+
+
+def test_a_dropped_payload_never_reaches_the_store_endpoint_inbox(client, dsn_key):
+    """Should honour a drop rule on this door too — a door that skips it is a hole."""
+    from pandora.scrub import models as scrub_models
+
+    scrub_models.DropRule.objects.create(
+        name="noise", field="environment", pattern="^throwaway$"
+    )
+
+    client.post(
+        f"/api/{dsn_key.project_id}/store/?sentry_key={dsn_key.public_key}",
+        data=json.dumps({"message": "boom", "environment": "throwaway"}),
+        content_type="application/json",
+    )
+
+    result = ingest_models.RawEnvelope.objects.count()
+    expected = 0
+
+    assert result == expected
+
+
+# user reports
+
+
+def test_a_user_report_is_stored(client, dsn_key):
+    """Should accept the form, and not build the widget that collects it."""
+    from pandora.issues import models as issue_models
+
+    body = "\n".join(
+        [
+            json.dumps({}),
+            json.dumps({"type": "user_report"}),
+            json.dumps(
+                {
+                    "event_id": "b" * 32,
+                    "name": "Ada",
+                    "email": "ada@shop.test",
+                    "comments": "the checkout button did nothing",
+                }
+            ),
+        ]
+    ).encode()
+
+    client.post(
+        f"/api/{dsn_key.project_id}/envelope/",
+        data=body,
+        content_type="application/x-sentry-envelope",
+        headers={"X-Sentry-Auth": f"Sentry sentry_key={dsn_key.public_key}"},
+    )
+
+    report = issue_models.UserReport.objects.get()
+    result = (report.name, report.comments)
+    expected = ("Ada", "the checkout button did nothing")
+
+    assert result == expected
+
+
+def test_a_user_report_with_no_event_id_is_dropped(client, dsn_key):
+    """Should not store feedback that can never be attached to anything."""
+    from pandora.issues import models as issue_models
+
+    body = "\n".join(
+        [
+            json.dumps({}),
+            json.dumps({"type": "user_report"}),
+            json.dumps({"comments": "orphan"}),
+        ]
+    ).encode()
+
+    client.post(
+        f"/api/{dsn_key.project_id}/envelope/",
+        data=body,
+        content_type="application/x-sentry-envelope",
+        headers={"X-Sentry-Auth": f"Sentry sentry_key={dsn_key.public_key}"},
+    )
+
+    result = issue_models.UserReport.objects.count()
+    expected = 0
+
+    assert result == expected
+
+
+def test_a_user_report_finds_the_issue_its_event_became(client, dsn_key, post):
+    """Should attach to the issue, which is where a person will read it."""
+    from pandora.issues import models as issue_models
+
+    post(body=default_body())
+    issue = issue_models.Issue.objects.get()
+
+    body = "\n".join(
+        [
+            json.dumps({}),
+            json.dumps({"type": "user_report"}),
+            json.dumps({"event_id": "a" * 32, "comments": "it broke"}),
+        ]
+    ).encode()
+    client.post(
+        f"/api/{dsn_key.project_id}/envelope/",
+        data=body,
+        content_type="application/x-sentry-envelope",
+        headers={"X-Sentry-Auth": f"Sentry sentry_key={dsn_key.public_key}"},
+    )
+
+    result = issue_models.UserReport.objects.get().issue_id
+    expected = issue.pk
+
+    assert result == expected
+
+
+def test_a_report_reads_as_who_said_it(client, dsn_key):
+    """Should be legible in the admin without following the event id."""
+    from pandora.issues import models as issue_models
+
+    report = issue_models.UserReport(name="Ada", event_id="b" * 32)
+
+    result = str(report)
+
+    assert result.startswith("Ada on")
+
+
+def test_a_user_report_that_is_not_json_is_dropped(client, dsn_key):
+    """Should ack the envelope rather than fail it on one bad item."""
+    from pandora.issues import models as issue_models
+
+    body = b'{}\n{"type": "user_report"}\nnot json'
+
+    response = client.post(
+        f"/api/{dsn_key.project_id}/envelope/",
+        data=body,
+        content_type="application/x-sentry-envelope",
+        headers={"X-Sentry-Auth": f"Sentry sentry_key={dsn_key.public_key}"},
+    )
+
+    assert response.status_code == http.HTTPStatus.OK
+    assert issue_models.UserReport.objects.count() == 0
+
+
+def test_a_user_report_that_is_not_an_object_is_dropped(client, dsn_key):
+    """Should refuse a list where a form was expected."""
+    from pandora.issues import models as issue_models
+
+    body = "\n".join(
+        [json.dumps({}), json.dumps({"type": "user_report"}), json.dumps([1, 2])]
+    ).encode()
+
+    client.post(
+        f"/api/{dsn_key.project_id}/envelope/",
+        data=body,
+        content_type="application/x-sentry-envelope",
+        headers={"X-Sentry-Auth": f"Sentry sentry_key={dsn_key.public_key}"},
+    )
+
+    assert issue_models.UserReport.objects.count() == 0
+
+
+def test_a_user_report_for_an_unknown_event_is_still_kept(client, dsn_key):
+    """Should keep the feedback even when the event it names never arrived."""
+    from pandora.issues import models as issue_models
+
+    body = "\n".join(
+        [
+            json.dumps({}),
+            json.dumps({"type": "user_report"}),
+            json.dumps({"event_id": "f" * 32, "comments": "orphan"}),
+        ]
+    ).encode()
+
+    client.post(
+        f"/api/{dsn_key.project_id}/envelope/",
+        data=body,
+        content_type="application/x-sentry-envelope",
+        headers={"X-Sentry-Auth": f"Sentry sentry_key={dsn_key.public_key}"},
+    )
+
+    result = issue_models.UserReport.objects.get().issue_id
+
+    assert result is None
+
+
+@test.override_settings(PANDORA_INGEST_MAX_BYTES=400)
+def test_the_store_endpoint_holds_the_size_cap(client, dsn_key):
+    """Should refuse an oversized body like the envelope door does."""
+    response = client.post(
+        f"/api/{dsn_key.project_id}/store/?sentry_key={dsn_key.public_key}",
+        data=json.dumps({"message": "x" * 3000}),
+        content_type="application/json",
+    )
+
+    result = response.status_code
+    expected = http.HTTPStatus.REQUEST_ENTITY_TOO_LARGE
+
+    assert result == expected

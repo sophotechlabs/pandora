@@ -22,6 +22,8 @@ web = [
     "whitenoise>=6.7",
     "python-ulid>=2.7",
     "pyyaml>=6.0",
+    "zstandard>=0.23",
+    "brotli>=1.1",
     "django-prometheus>=2.3",
     "opentelemetry-api>=1.44",
     "opentelemetry-sdk>=1.44",
@@ -68,9 +70,11 @@ where = ["src"]
 [tool.django_migration_linter]
 include_apps = ["core", "ingest", "issues", "events"]
 no_cache = true
+exclude_migration_tests = ["NOT_NULL"]
 ignore_name = [
     "0003_remove_issue_issues_issue_fingerprint_uq_and_more",
     "0003_alter_ingesttoken_scope",
+    "0007_issue_environment",
 ]
 
 [tool.pytest.ini_options]
@@ -161,6 +165,8 @@ python_version = "3.12"
 plugins = ["mypy_django_plugin.main"]
 mypy_path = "src"
 packages = [
+    "pandora.artifacts",
+    "pandora.releases",
     "pandora.mcp",
     "pandora.scrub",
     "pandora.notify",

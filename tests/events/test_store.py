@@ -15,6 +15,7 @@ METHODS = (
     "rewrite",
     "delete",
     "prune",
+    "thin",
     "ensure_partitions",
 )
 IMPLEMENTATIONS = (sqlite_store.SqliteEventStore, postgres_store.PostgresEventStore)

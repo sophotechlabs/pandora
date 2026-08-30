@@ -4,6 +4,7 @@ import pytest
 from django.contrib.auth import models as auth_models
 from django.utils import timezone
 
+from pandora.issues import environments
 from pandora.issues import models as issue_models
 from pandora.people.models import Membership, Role, Team
 
@@ -59,6 +60,8 @@ def make_issue(project):
             "event_count": 1,
         }
         fields.update(overrides)
-        return issue_models.Issue.objects.create(**fields)
+        built = issue_models.Issue.objects.create(**fields)
+        environments.record(built, built.environment, built.last_seen)
+        return built
 
     return build

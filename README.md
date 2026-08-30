@@ -97,6 +97,11 @@ Copies stored events out of another pandora database into this one, paging per p
 | `/metrics` | Prometheus | live |
 | `/ingest/am/` | Alertmanager webhook receiver (Bearer token) | live |
 | `/api/<project_id>/envelope/` | Sentry SDK envelope endpoint (DSN key) | live |
+| `/api/<project_id>/store/` | Sentry SDK store endpoint, for the older SDKs (DSN key) | live |
+| `/api/<project_id>/logs/` | JSON-lines log shipping (DSN key) | live |
+| `/api/<project_id>/integration/otlp/v1/logs` | OTLP/JSON logs (DSN key) | live |
+| `/api/<project_id>/cron/<slug>/<key>/` | cron check-in | live |
+| `/api/0/organizations/<org>/chunk-upload/` | source-map bundles, `sentry-cli` protocol (Bearer token) | live |
 | `/api/v1/issues` | issue list, filtered and cursor-paged | live |
 | `/api/v1/issues/<id>` | one issue with its episodes and tag stats | live |
 | `/api/v1/issues/<id>/events` | the stored events of one issue | live |
@@ -113,7 +118,7 @@ The stream opens on `is:unresolved`. The search box takes a query rather than a 
 | `state:` | `state:firing` | what the source last said, not what a human decided |
 | `level:` | `level:error` | debug, info, warning, error, fatal |
 | `project:` | `project:infrastructure` | project slug |
-| `environment:` | `env:p-mk1` | environment; `env:` is the short form |
+| `environment:` | `env:p-mk1` | anywhere the issue has been seen; `env:` is the short form |
 | `label:` | `label:namespace=payments` | a grouping label the fingerprint kept |
 | `tag:` | `tag:pod=ledger-7d9f4c8b6d-hk2mp` | a value from the tag breakdown, including ones grouping dropped |
 | `seen:` | `seen:1h` | last seen inside the window — `30m`, `6h`, `7d`, `2w` |
@@ -122,9 +127,9 @@ The stream opens on `is:unresolved`. The search box takes a query rather than a 
 | `age:` | `age:1d` | first seen inside the window |
 | `owner:` | `owner:platform` `owner:me` `owner:none` | the team or person an ownership rule routed it to |
 
-Anything else is matched against the title and the culprit, and a bare hash prefix matches the fingerprint. Repeating a key widens it (`level:error level:fatal`); different keys narrow together. A term Pandora does not understand is named back above the table rather than silently returning nothing.
+Anything else is matched against the title, the culprit, the newest message and the frame paths it came from, and a bare hash prefix matches the fingerprint. Repeating a key widens it (`level:error level:fatal`); different keys narrow together. A term Pandora does not understand is named back above the table rather than silently returning nothing.
 
-Selecting rows raises an action bar: acknowledge, resolve, ignore, snooze, or silence in Alertmanager for 1h, 4h or 1d. `/` focuses the search box, `j` and `k` move through the rows, `x` selects one, `Enter` opens it.
+Selecting rows raises an action bar: acknowledge, resolve, ignore, snooze, merge, or silence in Alertmanager for 1h, 4h or 1d. `/` focuses the search box, `j` and `k` move through the rows, `x` selects one, `Enter` opens it.
 
 Triage needs the `issues.change_issue` permission and replay needs `ingest.change_rawenvelope`, the same permissions the admin checks — a staff account without them gets a read-only UI. A team role grants the same permissions without touching the admin; see [More than one person](#more-than-one-person).
 
@@ -134,15 +139,42 @@ An SDK points at Pandora with a DSN of the form `http://<public_key>@<host>/<pro
 
 Pandora reimplements the Sentry ingest wire format from public protocol documentation so unmodified MIT-licensed Sentry SDKs can point at it. No Sentry server code is used. "Sentry-compatible" is a statement about the wire format, nothing more.
 
+### Ranking, saved views and what is different
+
+**Sorting.** Last seen, first seen, events, and two more that cost no new storage. **Relevance** weights the last 24 hours four times the rest of the week, so an issue seen four hundred times last month sits below one seen forty times this morning. **Spread** counts the distinct values of `PANDORA_BREADTH_KEYS` (`pod,node,instance,namespace`) — *is it everyone or one node* is the first question in an incident. Last seen stays the default until relevance has been measured against real volume.
+
+**Saved views.** Type a search, name it, and it joins the segment strip. One row holding a query and a sort, visible to everyone on the install — no personal/shared distinction, because on a box with one operator or one team it is not a distinction worth the schema.
+
+**What sets an issue apart.** The issue page reads the tag breakdown already on disk and names the values that characterise *this* issue against the rest of the project — 80% on `node=broken-1` where the project runs at 4%. Sentry shows a tag distribution but never says which distribution is abnormal, which is the entire question. When a key has filled its cardinality cap the panel says the number came from a sample, because that is what makes it worth trusting.
+
+**MTTR, as a gauge.** `/metrics` publishes `pandora_mttr_seconds` and `pandora_resolved_issues`, both labelled by source and computed from the activity trail over 30 days. **Split by source deliberately**: an Alertmanager issue resolves itself when the alert clears, so a combined number describes the monitoring rather than the team. Rollbar prints that caveat and gates the metric behind its second-highest tier; Sentry has neither at any tier. There is no chart UI here — the operator's Grafana already draws better ones.
+
+**CSV export** of whatever the current query selected, up to 10,000 rows, from the button on the stream.
+
 ## Stack traces
 
 An SDK event is stored with its interfaces intact, not only the parts grouping reads. The issue page opens on the newest event: the exception chain innermost-first, each `caused by` link under its own heading, the application frames marked and the first one expanded, source context numbered against the file, frame locals, the breadcrumb timeline newest-first, and one card per context — user, request, headers, SDK, runtime, OS, browser, trace.
 
 Every interface is bounded at ingest, because the sender is not trusted: 25 exceptions in a chain, 25 threads, 250 frames per stack (the outermost are dropped and counted in `frames_omitted`), 20 context lines per side, 50 locals per frame, 100 breadcrumbs, 100 keys and 50 items per structure, five levels of nesting, 4096 characters per string. Source lines are the one thing never stripped — the indentation is the code.
 
-A frame with no `context_line` says so rather than rendering an empty block. That is the honest reading of a minified JavaScript stack today: Pandora does not yet resolve source maps, so the frames are the ones the browser reported.
+A frame with no `context_line` says so rather than rendering an empty block.
 
 Every event keeps its raw form too, behind **Raw payload** on the occurrence.
+
+### Source maps
+
+A minified JavaScript stack is unreadable — `n` at `basket.4c9e10.js:1:8402` names nothing. Upload the maps and the issue page shows `charge` at `src/payments.js:14` with the surrounding lines, resolved when the page is rendered rather than at ingest, so a map uploaded after the crash still fixes the events already stored.
+
+Uploading speaks the `sentry-cli` chunk-upload protocol, so the tool you already have in the build works unchanged:
+
+```sh
+sentry-cli --url https://pandora.example.com \
+  sourcemaps upload --org pandora --project web dist/
+```
+
+Point `SENTRY_AUTH_TOKEN` at an ingest token. `GET /api/0/organizations/<org>/chunk-upload/` advertises what the server takes; the POST accepts the zip. The pairing is by debug id — the uuid the bundler writes into both the minified file and its `.map`, and that the SDK repeats in `debug_meta` — so a filename that changes on every build never has to match.
+
+A frame whose bundle has not been uploaded says which debug id is missing instead of showing a blank panel. Bundles land under `PANDORA_ARTIFACT_DIR` — the chart points it at the persistent volume when `persistence.enabled` is set, and without one they live in the container and go when it does. They expire on time-to-idle, not time-to-live: `manage.py prune` drops one that has symbolicated nothing for ninety days, and keeps one still resolving frames however old it is. A map for a release that is still running must not expire on a calendar.
 
 ## What Pandora refuses to keep
 
@@ -191,6 +223,53 @@ python manage.py deliver --loop 15 --metrics-port 9110
 Failures back off — 30s, 2m, 10m, 1h — and give up after five attempts, with the reason kept on the row. A digest window collects a storm into one message; without one, a pass still batches whatever is already queued for a destination into a single call. `prune` clears sent rows at the normal retention.
 
 **No rules engine, no on-call rotations, no first-party integration catalogue.** Anything else takes the webhook, whose event vocabulary is the table above.
+
+## When one box is not keeping up
+
+`PANDORA_QUEUE` still defaults to `SyncQueue`, which processes an envelope inline on the request. One container with no worker is the right position for a single operator's cluster. Set it to `pandora.ingest.queue.AsyncQueue` and the envelope stays pending instead, for:
+
+```sh
+python manage.py consume --loop 5
+```
+
+The envelope table has been a durable, replayable queue since the first commit — this is the consumer it never had. A pass claims a batch (`SELECT … FOR UPDATE SKIP LOCKED` on Postgres; the single writer is the same guarantee on SQLite), applies it, and reports what it did. A consumer that dies leaves its batch claimed, and the next pass puts anything claimed for more than fifteen minutes back. **No broker.**
+
+**Per-item size limits.** `PANDORA_INGEST_MAX_BYTES` (1 MiB) remains the cap on a whole envelope — raise it toward the protocol's 200 MiB if you want to. Inside it each item type now gets the limit the protocol names: 1 MiB an event, 100 KiB a check-in or a session batch, 4 KiB a client report. One number for everything let a 1 MiB client report through where the spec says 4 KiB.
+
+**Four content encodings**: gzip, deflate, `br` and `zstd`. Every one is measured after decompression, so a compression bomb is refused on what it becomes rather than what it claims.
+
+### Retention that is not a calendar
+
+`PANDORA_RETENTION_DAYS` throws away the one occurrence of the rare bug at the same rate as the thousandth copy of the noisy one. Turn on `PANDORA_RETENTION_BY_RELEVANCE` and `prune` also thins each issue to a budget that halves with age — `PANDORA_RELEVANCE_BUDGET` (500) copies while it is fresh, half of that after `PANDORA_RELEVANCE_HALF_LIFE_DAYS` (7), and never below one. The rare issue keeps its single occurrence forever; the flood is thinned. It is off until an operator has measured it, and Sentry has nothing like it.
+
+### The export is the backup story
+
+```sh
+python manage.py archive --to /var/backups/pandora
+```
+
+Gzipped JSON Lines, one object per project per hour, in hive-style paths — `project=1/year=2026/month=08/day=30/hour=14/events.jsonl.gz`. Readable with `zcat` and `jq`, queryable with duckdb, restorable with a path prefix. `PANDORA_ARCHIVE_DIR` gives it a default home; point it at a mounted S3 bucket and short retention stops being frightening. A SaaS is structurally not motivated to build this well.
+
+## More ways in
+
+An SDK is a dependency someone has to add, and there are always services nobody will ever instrument — a third-party chart, an operator, someone's Go binary from 2021. Those are the ones that page you. So the transport is a POST and a page of config, and the parsers are the work.
+
+**Logs.** `POST /api/<project_id>/logs/` takes JSON Lines, one object per line, which Vector, rsyslog, journald and a CloudWatch drain all already produce. `POST /api/<project_id>/integration/otlp/v1/logs` takes the OTLP/JSON shape instead. Both authenticate with the project's DSN key, in `X-Sentry-Auth` or as `?sentry_key=`, so a shipper needs one header and no new credential type. A line's message, level, logger, service, environment, release and timestamp are read from whichever of the usual key spellings it uses, and everything else becomes a tag.
+
+A line carrying a stack trace becomes an exception with frames, not a wall of text. Four parsers, picked by what the trace looks like: Python tracebacks with the source line under each frame, Java stacks down to the package and line (`java.base/` module prefixes included), Go panics with the file:line under each function, and Node/V8. From there it is an ordinary issue — grouping, triage, tag stats, the whole UI — because the log becomes the same event shape an SDK sends.
+
+**Cron check-ins.** `POST /api/<project_id>/cron/<slug>/<key>/` with `{"status": "in_progress"}` and then `ok` or `error`. The monitor is created by the first check-in, so a job that reports is a job that is watched — there is no configuration step, and no per-monitor cost. `manage.py monitors` sweeps for the ones that did not report inside their interval plus margin, or that ran past their maximum, and opens an issue for each. Sentry charges per active monitor.
+
+`pandora-wrap` is a small Go binary that does the two calls around any command:
+
+```sh
+PANDORA_DSN=https://<key>@pandora.example.com/1 \
+  pandora-wrap -monitor nightly-backup -- /usr/local/bin/backup.sh
+```
+
+It takes the same DSN an SDK does, defaults the monitor slug to the command's own name, reports `in_progress` before and `ok` or `error` after with the exit status and the tail of the output, and it never changes what the command returns or what it printed. `-environment`, `-release`, `-timeout` and `-quiet` are the rest of it. A static binary for linux and darwin on amd64 and arm64 is attached to each release.
+
+**User feedback.** The `user_report` envelope item the SDKs already send is stored against the issue its event created, and the reports show on the issue page. What a person typed is usually worth more than the stack.
 
 ## Holding the door
 
@@ -280,6 +359,10 @@ grouping_rules:
   - priority: 100
     mode: denylist
     labels: [pod, instance, container, endpoint, replicaset, uid, node, job_name]
+path_rules:
+  - name: venv
+    pattern: "^.*/(site-packages/)"
+    replacement: "<venv>/\\1"
 service_links:
   - name: Loki
     url_template: https://grafana.example.com/explore?q={pod}&from={padded_from_iso}&to={padded_to_iso}
@@ -310,6 +393,24 @@ Available names: every grouping label, every label of the newest episode, the mo
 
 `PANDORA_GRAFANA_URL` and `PANDORA_LOKI_QUERY_URL` still work and read the same names.
 
+## Releases, deploys and regression
+
+**A process is on a release the moment it sends an event tagged with one.** That is the rollout signal, and it beats a marker posted by CI: with more than one replica the marker says the deploy finished while half the pods are still on the old image. Every release keeps its own first-seen, last-seen and count per environment, so a rollout that reached staging and stalled before production is visible rather than asserted.
+
+Versions are **parsed and stored as a sort key**, semver and calendar versions both — `1.9.0` below `1.10.0`, `1.2.3-rc1` below `1.2.3`, `2025.12.1` below `2026.1.1`. Anything else, a git sha or a build id, sorts below every parsed version and alphabetically among its own kind, and the release is marked as unparsed so the UI can say the ordering is not real.
+
+**Resolving is release-aware.** Resolve now, in the next release, in the current release, or in a named one. The choice stores a boundary, and every later event's release is compared to it: an equal or lower version leaves the issue resolved, a higher one reopens it. That is Countly's *reoccurred* semantics, nobody free implements it, and it is what stops a lagging replica from reopening something that is genuinely fixed. An event with no release reopens it, because the event cannot say what it was running.
+
+**Suspect deploy** is the last deploy before the issue was first seen, shown on the issue page. It needs no repository access — suspect *commit* does, and is not built.
+
+`manage.py deploy --project infrastructure --release 1.2.3 --environment p-mk1` marks a deploy from CI when you want one, with a state — started, succeeded, failed, timed out — and a deploy left started for an hour is marked timed out rather than sitting there forever. With `resolve_on_deploy` on for a project, it also resolves everything currently open in that environment against the new release: wipe the board, and let what comes back come back. Honeybadger does this by default; here it is off until a project asks.
+
+### Release health
+
+Pandora accepts the `session` and `sessions` envelope items and counts them into **their own aggregated table** — a session is a counter with a status, not a record, and it never reaches the event store. Statuses are healthy, errored, abnormal and crashed; crash-free is one minus crashed over total, and adoption is the release's share of the last 24 hours.
+
+Sessions bypass the gate and sampling by design and nobody bills for them, which is why crash counts and crashed-session counts legitimately disagree.
+
 ## Three kinds of quiet
 
 **Snooze** hides an issue for a while and it comes back on its own: 1 hour, 4 hours, a day, a week, or *the next 100 / 500 / 1000 occurrences*. The count form has no Sentry equivalent and it is the right answer for something that flaps. There is deliberately **no indefinite snooze** — an issue that can be silenced forever is one nobody looks at again.
@@ -322,11 +423,69 @@ Snoozing never stops ingest; the counts keep moving and `is:snoozed` lists what 
 
 An occurrence becomes an issue through a fingerprint, and neither door puts anything per-instance in one.
 
+**An issue is one fingerprint in one project.** Environment is a filter and a tag, not part of its identity — the same fault in staging and in production is one issue with one triage state, so resolving it resolves it. Every environment it has been seen in is recorded with its own first-seen, last-seen and count; `environment:` matches any of them and the issue page lists them all. An install that predates this had one row per environment; `migrate` folds them together, keeping the most open triage state, summing the counts and spanning the window. `python manage.py merge_issues --dry-run` prints exactly what that will do before it happens.
+
 Alertmanager alerts group on their labels minus a denylist. The seeded rule drops `pod`, `instance`, `container`, `endpoint`, `replicaset`, `uid`, `node` and `job_name` — the last is the run name kube-state-metrics stamps on `KubeJobFailed`, so without it every failed CronJob run minted its own issue. Rules are editable in the admin: denylist or allowlist, optionally scoped to one project and one `alertname` pattern, lowest priority number first.
 
 SDK events group on the stack signature — the exception's module and class, then the module and function of the culprit frame, the last one marked `in_app`. Two things are deliberately absent. The line number, because it moves with every deploy that touches the file above it. The exception value, because it carries the URL or id that failed and would mint one issue per value. An event with no exception groups on its logger and its **logentry template** (`fetch failed for source %s`), not on the formatted line, which names one source. A client that wants a finer split sets `scope.fingerprint`; `{{ default }}` expands to the derived parts.
 
 Title, culprit and level follow the issue's most recent event. The title is built from the invariants — `HTTPError: listopad.core.transport in get_json` — so it describes the group rather than whichever event opened it. The varying detail stays on the event's `message`, which is what `/issues/<id>/events` returns.
+
+**Every issue records why it groups the way it does** — a rule, the built-in denylist, the stack signature, a log template, the message, or a fingerprint the client sent — and the issue page says so beside the fingerprint, linking to the rule when there was one. That is the first thing anyone needs when the grouping is wrong.
+
+### Rules that read the payload
+
+A rule can match on more than an `alertname`. `conditions` is a tree of leaves and `all` / `any` / `none` branches:
+
+```yaml
+grouping_rules:
+  - priority: 10
+    conditions:
+      all:
+        - path: labels.namespace
+          op: eq
+          value: payments
+        - any:
+            - path: exceptions.*.frames.*.filename
+              op: startswith
+              value: src/payments/
+            - path: request.url
+              op: contains
+              value: /checkout
+    fingerprint: ["{{ default }}", "{{ tags.tenant }}"]
+    title_template: "checkout broke for {{ tags.tenant }}"
+```
+
+`path` is dot notation into the occurrence, with `*` standing for any element — so `exceptions.*.frames.*.filename` asks about any frame of any exception. Fourteen operators: `eq`, `ne`, `contains`, `not_contains`, `startswith`, `endswith`, `regex_match`, `regex_not_match`, `gt`, `gte`, `lt`, `lte`, `exists`, `not_exists`. The negative forms need every value to agree; the rest need one. A condition that cannot be evaluated skips its rule rather than taking ingest down.
+
+**`fingerprint` refines rather than replaces.** `{{ default }}` expands to whatever the built-in algorithm computed, so a rule can say *keep the default, then split by tenant* instead of throwing the algorithm away. Any other part is a template over the same paths. **`title_template`** names the issue in the words a team uses. Both apply to either door; on the SDK door a rule is only considered when it declares one of them or a condition, so an Alertmanager label rule never claims a stack trace.
+
+### Paths that move between machines
+
+A venv, a container layout and an nvm prefix put the same file at three addresses, and grouping on the address splits one issue into three. Path rules rewrite the frame path **before** grouping, in order, with backreferences:
+
+```yaml
+path_rules:
+  - name: venv
+    pattern: "^.*/(lib/python3\\.\\d+/site-packages/)"
+    replacement: "<venv>/\\1"
+```
+
+The event keeps the real path. Only the key is rewritten. Sentry's stack-trace rules can mark a frame in-app but cannot do this.
+
+### Values that move between occurrences
+
+`PANDORA_GROUPING_NORMALISE` (off) strips what changes between two occurrences of one fault out of the grouping key: UUIDs, URLs, emails, IPv4 and IPv6 addresses, ISO timestamps, hex strings of eight characters or more, and numbers that stand as their own token — `v1` and `http2` are names and survive, the `47` in `retry 47` does not. **It changes every hash**, so it is off until an operator has run `regroup --dry-run` against real data. The values stay on the event.
+
+This is what ML grouping is competing with, and it is deterministic, inspectable and needs no corpus.
+
+### Merging what a rule did not catch
+
+Select two or more issues in the stream and merge them. The oldest survives, the counts and history fold into it, and **the merged fingerprints become aliases** — the next occurrence of any of them lands on the surviving issue instead of minting the old one back. Sentry's merges do not do that, which is why an issue merged there returns on the next event.
+
+Unmerging removes the alias, so the fingerprint opens its own issue again. What was already counted stays where the merge put it: the events behind it may have been pruned, and pretending to un-mix history would be a lie.
+
+**A merge is a labelled example**, so the issue page reads it back: what the merged issues shared, what they differed on, and that a grouping rule denying the difference would have made the merge unnecessary.
 
 Tag breakdowns are capped per key. A key whose values never repeat — a task id, a request id — collapses to a single `<other>` row once it fills the cap, so it stops crowding out the keys worth reading; the detail response rations rows per key on top of that.
 
@@ -395,6 +554,7 @@ Filters: `triage_state` and `source_state` (repeatable — `?triage_state=new&tr
       "culprit": "alertname=TargetDown namespace=monitoring",
       "level": "warning",
       "environment": "p-mk1",
+      "environments": ["p-mk1", "p-mk2"],
       "source_state": "firing",
       "triage_state": "new",
       "event_count": 3,

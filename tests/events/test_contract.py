@@ -736,3 +736,32 @@ def test_delete_of_nothing_is_a_no_op(event_store):
     expected = 0
 
     assert result == expected
+
+
+# thinning
+
+
+def test_thin_keeps_the_newest_copies(event_store, moment):
+    """Should behave the same on either backend — retention leans on it."""
+    events = [
+        support.make_event(index, moment, issue_id=77, id=f"01J{index:023d}")
+        for index in range(5)
+    ]
+    event_store.insert(events)
+
+    event_store.thin(77, keep=2)
+
+    result = len(event_store.fetch(1, issue_id=77, limit=50))
+    expected = 2
+
+    assert result == expected
+
+
+def test_thin_refuses_a_negative_budget(event_store, moment):
+    """Should not empty the table on a nonsense argument."""
+    event_store.insert([support.make_event(0, moment, issue_id=78)])
+
+    result = event_store.thin(78, keep=-1)
+    expected = 0
+
+    assert result == expected

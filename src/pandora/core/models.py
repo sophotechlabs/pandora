@@ -7,6 +7,9 @@ from django.utils import timezone
 class TokenSource(models.TextChoices):
     AM = "am", "Alertmanager"
     SDK = "sdk", "SDK"
+    LOG = "log", "Log lines"
+    CRON = "cron", "Cron check-ins"
+    OTLP = "otlp", "OpenTelemetry"
 
 
 class TokenScope(models.TextChoices):
@@ -21,6 +24,7 @@ READ_SCOPES = (TokenScope.READ, TokenScope.READ_PAYLOAD)
 class Project(models.Model):
     slug = models.SlugField(max_length=100, unique=True)
     name = models.CharField(max_length=200)
+    resolve_on_deploy = models.BooleanField(default=False)
     created_at = models.DateTimeField(default=timezone.now)
 
     class Meta:

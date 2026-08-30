@@ -1,8 +1,12 @@
+import io
 import json
+import zipfile
 
 import pytest
 import requests
 
+from pandora.core import models as core_models
+from pandora.ingest import models as ingest_models
 from pandora.issues import models as issue_models
 from pandora.people import models as people_models
 
@@ -246,3 +250,262 @@ def test_the_markdown_export_is_served(page, base_url, dsn_key, make_user, sign_
     response = page.request.get(f"{base_url}/issues/{issue.pk}/?format=md")
 
     assert "# " in response.text()
+
+
+# what the six tracks added
+
+
+def send_second_event(base_url, dsn_key):
+    envelope = "\n".join(
+        [
+            json.dumps({"event_id": "d" * 32}),
+            json.dumps({"type": "event"}),
+            json.dumps(
+                {
+                    "event_id": "d" * 32,
+                    "level": "error",
+                    "platform": "python",
+                    "environment": "e2e",
+                    "exception": {
+                        "values": [
+                            {
+                                "type": "TimeoutError",
+                                "value": "e2e upstream timeout",
+                                "stacktrace": {
+                                    "frames": [
+                                        {
+                                            "filename": "src/payments/upstream.py",
+                                            "lineno": 7,
+                                            "function": "call",
+                                        }
+                                    ]
+                                },
+                            }
+                        ]
+                    },
+                }
+            ),
+        ]
+    ).encode()
+    response = requests.post(
+        f"{base_url}/api/{dsn_key.project_id}/envelope/",
+        data=envelope,
+        headers={
+            "Content-Type": "application/x-sentry-envelope",
+            "X-Sentry-Auth": f"Sentry sentry_key={dsn_key.public_key}",
+        },
+        timeout=10,
+    )
+    response.raise_for_status()
+
+
+def test_a_saved_view_comes_back_as_a_segment(
+    page, base_url, dsn_key, make_user, sign_in
+):
+    """Should let an operator keep the search they run every morning."""
+    send_event(base_url, dsn_key)
+    sign_in(make_user("operator", is_superuser=True))
+
+    page.goto(f"{base_url}/?q=is:unresolved")
+    page.fill("input[name=name]", "Morning triage")
+    page.click("form.save-view button[type=submit]")
+
+    assert page.locator(".segment.view", has_text="Morning triage").is_visible()
+
+
+def test_merging_two_issues_folds_them_into_one(
+    page, base_url, dsn_key, make_user, sign_in
+):
+    """Should be the escape hatch for grouping nobody wrote a rule for."""
+    send_event(base_url, dsn_key)
+    send_second_event(base_url, dsn_key)
+    sign_in(make_user("operator", is_superuser=True))
+
+    page.goto(base_url)
+    page.locator("input[name=issue]").first.check()
+    page.locator("input[name=issue]").nth(1).check()
+    page.click("button[value=merge]")
+
+    assert page.locator(".message", has_text="Merged").is_visible()
+
+
+def test_the_merged_fingerprint_is_listed_on_the_issue(
+    page, base_url, dsn_key, make_user, sign_in
+):
+    """Should show what was folded in, so the merge can be undone."""
+    send_event(base_url, dsn_key)
+    send_second_event(base_url, dsn_key)
+    sign_in(make_user("operator", is_superuser=True))
+    page.goto(base_url)
+    page.locator("input[name=issue]").first.check()
+    page.locator("input[name=issue]").nth(1).check()
+    page.click("button[value=merge]")
+
+    keeper = issue_models.Issue.objects.order_by("first_seen").first()
+    page.goto(f"{base_url}/issues/{keeper.pk}/")
+
+    assert page.get_by_text("Merged in").is_visible()
+
+
+def test_the_csv_export_is_served(page, base_url, dsn_key, make_user, sign_in):
+    """Should hand the stream to a spreadsheet, which is where triage reports go."""
+    send_event(base_url, dsn_key)
+    sign_in(make_user("operator", is_superuser=True))
+
+    response = page.request.get(f"{base_url}/?csv=1")
+
+    assert "fingerprint_hash" in response.text()
+
+
+def test_the_stream_sorts_by_relevance(page, base_url, dsn_key, make_user, sign_in):
+    """Should rank by what is happening now, which is the point of the sort."""
+    send_event(base_url, dsn_key)
+    sign_in(make_user("operator", is_superuser=True))
+
+    page.goto(f"{base_url}/?sort=relevance")
+
+    assert page.get_by_role("link", name=TITLE).is_visible()
+
+
+def test_a_log_line_becomes_an_issue(page, base_url, dsn_key, make_user, sign_in):
+    """Should open the door to everything that will never carry an SDK."""
+    line = json.dumps(
+        {
+            "message": "e2e shipper failure",
+            "level": "error",
+            "service": "vector",
+            "error.kind": "ShipperError",
+        }
+    )
+    response = requests.post(
+        f"{base_url}/api/{dsn_key.project_id}/logs/",
+        data=line.encode(),
+        headers={
+            "Content-Type": "application/x-ndjson",
+            "X-Sentry-Auth": f"Sentry sentry_key={dsn_key.public_key}",
+        },
+        timeout=10,
+    )
+    response.raise_for_status()
+    sign_in(make_user("operator", is_superuser=True))
+
+    page.goto(base_url)
+
+    assert page.get_by_role("link", name="ShipperError").is_visible()
+
+
+def test_a_cron_check_in_opens_a_monitor(base_url, dsn_key):
+    """Should watch a job that reports without anyone configuring a monitor."""
+    response = requests.post(
+        f"{base_url}/api/{dsn_key.project_id}/cron/e2e-backup/{dsn_key.public_key}/",
+        json={"status": "ok"},
+        timeout=10,
+    )
+    response.raise_for_status()
+
+    result = ingest_models.Monitor.objects.filter(slug="e2e-backup").count()
+    expected = 1
+
+    assert result == expected
+
+
+DEBUG_ID = "3f2504e0-4f89-11d3-9a0c-0305e82c3301"
+SOURCE_MAP = {
+    "version": 3,
+    "file": "app.js",
+    "sources": ["src/payments.js"],
+    "names": ["charge"],
+    "mappings": "AAAAA,SAAS",
+    "sourcesContent": ["export function charge(order) {\n  throw new Error('x')\n}\n"],
+    "debug_id": DEBUG_ID,
+}
+
+
+def bundle_zip():
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        archive.writestr("app.js.map", json.dumps(SOURCE_MAP))
+    return buffer.getvalue()
+
+
+def send_minified_event(base_url, dsn_key):
+    envelope = "\n".join(
+        [
+            json.dumps({"event_id": "c" * 32}),
+            json.dumps({"type": "event"}),
+            json.dumps(
+                {
+                    "event_id": "c" * 32,
+                    "level": "error",
+                    "platform": "javascript",
+                    "environment": "e2e",
+                    "exception": {
+                        "values": [
+                            {
+                                "type": "TypeError",
+                                "value": "undefined is not a function",
+                                "stacktrace": {
+                                    "frames": [
+                                        {
+                                            "abs_path": "app://basket.4c9e10.js",
+                                            "filename": "basket.4c9e10.js",
+                                            "function": "n",
+                                            "lineno": 1,
+                                            "colno": 0,
+                                            "in_app": True,
+                                        }
+                                    ]
+                                },
+                            }
+                        ]
+                    },
+                    "debug_meta": {
+                        "images": [
+                            {
+                                "type": "sourcemap",
+                                "code_file": "app://basket.4c9e10.js",
+                                "debug_id": DEBUG_ID,
+                            }
+                        ]
+                    },
+                }
+            ),
+        ]
+    ).encode()
+    response = requests.post(
+        f"{base_url}/api/{dsn_key.project_id}/envelope/",
+        data=envelope,
+        headers={
+            "Content-Type": "application/x-sentry-envelope",
+            "X-Sentry-Auth": f"Sentry sentry_key={dsn_key.public_key}",
+        },
+        timeout=10,
+    )
+    response.raise_for_status()
+
+
+def test_a_source_map_resolves_the_frame_on_the_page(
+    page, base_url, dsn_key, make_user, sign_in
+):
+    """Should turn a minified frame into the file a person can actually open."""
+    token = core_models.IngestToken.objects.create(
+        project=dsn_key.project,
+        name="e2e-maps",
+        token="e2e-map-token",
+        source=core_models.TokenSource.SDK,
+        scope=core_models.TokenScope.INGEST,
+    )
+    response = requests.post(
+        f"{base_url}/api/0/organizations/pandora/chunk-upload/",
+        files={"file_gzip": ("bundle.zip", bundle_zip(), "application/zip")},
+        headers={"Authorization": f"Bearer {token.token}"},
+        timeout=10,
+    )
+    response.raise_for_status()
+    send_minified_event(base_url, dsn_key)
+    sign_in(make_user("operator", is_superuser=True))
+    issue = issue_models.Issue.objects.get()
+
+    page.goto(f"{base_url}/issues/{issue.pk}/")
+
+    assert page.get_by_text("src/payments.js").first.is_visible()

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
@@ -22,11 +23,29 @@ from pandora.events.store import get_store
 from pandora.events.types import Event
 from pandora.ingest import replay as ingest_replay
 from pandora.ingest.models import EnvelopeState, RawEnvelope
-from pandora.issues import actions, components, sparkline, triage
+from pandora.issues import (
+    actions,
+    attributes,
+    components,
+    grouping,
+    merge,
+    ranking,
+    sparkline,
+    suggest,
+    triage,
+)
 from pandora.issues import detail as detail_module
-from pandora.issues.models import HourlyStat, Issue, SourceState, TriageState
+from pandora.issues.models import (
+    HourlyStat,
+    Issue,
+    SavedView,
+    SourceState,
+    TriageState,
+)
 from pandora.people import access, audit, oidc, ownership
 from pandora.people.models import AuditEntry
+from pandora.releases import service as releases
+from pandora.releases.models import Release
 from pandora.ui import markdown, presenters, query
 from pandora.web import dashboard
 
@@ -39,6 +58,10 @@ EVENT_ROWS = 25
 REPLAY_LIMIT = 200
 SILENCE_PREFIX = "silence:"
 SNOOZE_PREFIX = "snooze:"
+MERGE_ACTION = "merge"
+RESOLVE_PREFIX = "resolve:"
+RESOLVE_NEXT = "next"
+RESOLVE_CURRENT = "current"
 TRIAGE_PERMISSION = "issues.change_issue"
 REPLAY_PERMISSION = "ingest.change_rawenvelope"
 
@@ -61,8 +84,10 @@ SEGMENTS = (
 
 SORTS = (
     ("last_seen", "Last seen", ("-last_seen", "-id")),
+    ("relevance", "Relevance", ("-score", "-last_seen", "-id")),
     ("first_seen", "First seen", ("-first_seen", "-id")),
     ("events", "Events", ("-event_count", "-id")),
+    ("breadth", "Spread", ("-breadth", "-last_seen", "-id")),
 )
 
 TRIAGE_ACTIONS = {
@@ -158,6 +183,7 @@ def stream(request: HttpRequest) -> HttpResponse:
         scoped, parsed, now, request.user.get_username()
     )
     sort = _sort(request.GET.get("sort", ""))
+    found = _ranked(found, sort, now)
     page = _page(request, found.order_by(*sort.ordering).distinct())
 
     context = {
@@ -168,15 +194,19 @@ def stream(request: HttpRequest) -> HttpResponse:
         "page": page,
         "total": page.paginator.count,
         "segments": _segments(raw),
+        "views": _views(raw, sort),
         "sorts": [_sort(key) for key, _, _ in SORTS],
         "sort": sort,
         "page_query": urlencode({"q": raw, "sort": sort.key}),
         "windows": SILENCE_LABELS,
         "snoozes": SNOOZE_LABELS,
+        "releases": _release_options(),
         "spark_width": presenters.SPARK_WIDTH,
         "spark_height": presenters.SPARK_HEIGHT,
         "can_triage": access.may(request.user, TRIAGE_PERMISSION),
     }
+    if request.GET.get("csv"):
+        return _csv(found.order_by(*sort.ordering).distinct(), now)
     if request.GET.get("partial"):
         return render(request, "ui/partials/stream_rows.html", context)
     return render(request, "ui/stream.html", context)
@@ -318,6 +348,10 @@ def issue_actions(request: HttpRequest) -> HttpResponse:
         _run_snooze(request, issues, action[len(SNOOZE_PREFIX) :])
     elif action.startswith(SILENCE_PREFIX):
         _run_silence(request, issues, action[len(SILENCE_PREFIX) :])
+    elif action == MERGE_ACTION:
+        _run_merge(request, issues)
+    elif action.startswith(RESOLVE_PREFIX):
+        _run_release_resolve(request, issues, action[len(RESOLVE_PREFIX) :])
     else:
         messages.error(request, f"{action or 'that action'} is not an action")
     return redirect(_next_url(request))
@@ -355,6 +389,79 @@ def delete_occurrence(
     )
     messages.success(request, f"Deleted {removed} occurrence(s)")
     return redirect(_next_url(request))
+
+
+@staff_member_required(login_url=LOGIN_URL)
+@require_POST
+def save_view(request: HttpRequest) -> HttpResponse:
+    if not access.may(request.user, TRIAGE_PERMISSION):
+        return HttpResponseForbidden(
+            "saving a view requires the issue change permission"
+        )
+
+    name = request.POST.get("name", "").strip()
+    if not name:
+        messages.warning(request, "A view needs a name")
+        return redirect(_next_url(request))
+
+    query_text = request.POST.get("q", "").strip()
+    sort_key = request.POST.get("sort", "").strip()
+    view, created = SavedView.objects.update_or_create(
+        name=name[:100],
+        defaults={
+            "query": query_text[:500],
+            "sort": sort_key[:32],
+            "created_by": request.user.get_username(),
+            "active": True,
+        },
+    )
+    audit.from_request(
+        request, audit.VIEW, view.name, {"query": view.query, "created": created}
+    )
+    verb = "Saved"
+    if not created:
+        verb = "Updated"
+    messages.success(request, f"{verb} the view {view.name}")
+    return redirect(
+        f"{reverse('ui:stream')}?{urlencode({'q': view.query, 'sort': view.sort})}"
+    )
+
+
+@staff_member_required(login_url=LOGIN_URL)
+@require_POST
+def delete_view(request: HttpRequest, view_id: int) -> HttpResponse:
+    if not access.may(request.user, TRIAGE_PERMISSION):
+        return HttpResponseForbidden(
+            "deleting a view requires the issue change permission"
+        )
+
+    view = get_object_or_404(SavedView, pk=view_id)
+    name = view.name
+    view.delete()
+    audit.from_request(request, audit.VIEW, name, {"deleted": True})
+    messages.success(request, f"Deleted the view {name}")
+    return redirect("ui:stream")
+
+
+@staff_member_required(login_url=LOGIN_URL)
+@require_POST
+def unmerge(request: HttpRequest, issue_id: int, fingerprint: str) -> HttpResponse:
+    if not access.may(request.user, TRIAGE_PERMISSION):
+        return HttpResponseForbidden("unmerging requires the issue change permission")
+
+    issue = get_object_or_404(_scoped(Issue.objects.all(), request), pk=issue_id)
+    if merge.unmerge(issue, fingerprint, request.user.get_username()):
+        audit.from_request(
+            request, audit.UNMERGE, str(issue.pk), {"fingerprint": fingerprint}
+        )
+        messages.success(
+            request,
+            "Unmerged — the next occurrence opens its own issue."
+            " What was already counted here stays here",
+        )
+    else:
+        messages.warning(request, "That fingerprint is not merged into this issue")
+    return redirect("ui:issue", issue_id=issue.pk)
 
 
 @staff_member_required(login_url=LOGIN_URL)
@@ -400,13 +507,32 @@ def _issue_context(
         "tabs": TAB_LABELS,
         "windows": SILENCE_LABELS,
         "snoozes": SNOOZE_LABELS,
+        "releases": _release_options(),
+        "suspect": releases.suspect_deploy(issue),
         "next_url": request.get_full_path(),
         "can_triage": access.may(request.user, TRIAGE_PERMISSION),
+        "grouping_reason": grouping.reason_for(issue.grouping_source),
     }
     context.update(_owner_context(issue))
+    context.update(_merge_context(issue))
+    context["attributes"] = attributes.distinguishing(issue)
+    context["reports"] = list(issue.user_reports.all()[:REPORT_ROWS])
     if tab == "occurrences":
         context["events"] = _events(issue, request.GET.get("cursor", ""))
     return context
+
+
+def _merge_context(issue: Issue) -> dict[str, Any]:
+    aliases = list(issue.aliases.all())
+    if not aliases:
+        return {"aliases": [], "suggestion": None}
+    return {"aliases": aliases, "suggestion": _suggestion(issue, aliases)}
+
+
+def _suggestion(issue: Issue, aliases: list[Any]) -> Any:
+    members = [suggest.labels_of(issue)]
+    members.extend(dict(alias.grouping_labels or {}) for alias in aliases)
+    return suggest.from_labels(members)
 
 
 def _owner_context(issue: Issue) -> dict[str, Any]:
@@ -494,6 +620,61 @@ def _run_snooze(request: HttpRequest, issues: list[Issue], spec: str) -> None:
     messages.success(request, f"Snoozed {report.snoozed} issue(s)")
 
 
+def _run_release_resolve(
+    request: HttpRequest, issues: list[Issue], target: str
+) -> None:
+    now = timezone.now()
+    actor = request.user.get_username()
+    resolved = 0
+    for issue in issues:
+        release = None
+        in_next = target == RESOLVE_NEXT
+        if target in (RESOLVE_NEXT, RESOLVE_CURRENT):
+            release = releases.latest(issue.project)
+        else:
+            release = Release.objects.filter(
+                project=issue.project, version=target
+            ).first()
+        if release is None and not in_next:
+            messages.error(request, f"No release called {target} has been seen")
+            return
+        releases.resolve_in(
+            issue, release=release, in_next=in_next, actor=actor, at=now
+        )
+        resolved += 1
+    _run_triage(request, issues, triage.RESOLVED)
+    audit.from_request(
+        request,
+        audit.TRIAGE,
+        ",".join(str(issue.pk) for issue in issues),
+        {"state": triage.RESOLVED, "release": target, "count": resolved},
+    )
+
+
+def _run_merge(request: HttpRequest, issues: list[Issue]) -> None:
+    if len(issues) < 2:
+        messages.warning(request, "Merging needs at least two issues")
+        return
+    projects = {issue.project_id for issue in issues}
+    if len(projects) > 1:
+        messages.error(request, "Two projects cannot be merged into one issue")
+        return
+    ordered = sorted(issues, key=lambda issue: (issue.first_seen, issue.pk))
+    keeper = ordered[0]
+    folded = merge.merge(keeper, ordered[1:], request.user.get_username())
+    audit.from_request(
+        request,
+        audit.MERGE,
+        str(keeper.pk),
+        {"folded": folded},
+    )
+    messages.success(
+        request,
+        f"Merged {folded} issue(s) into {keeper.title} —"
+        " the next occurrence of any of them lands here",
+    )
+
+
 def _run_silence(request: HttpRequest, issues: list[Issue], window: str) -> None:
     duration = actions.SILENCE_WINDOWS.get(window)
     if duration is None:
@@ -535,6 +716,60 @@ def _last_accepted() -> datetime | None:
     )
 
 
+CSV_COLUMNS = (
+    "id",
+    "project",
+    "title",
+    "culprit",
+    "level",
+    "triage_state",
+    "source_state",
+    "environments",
+    "event_count",
+    "first_seen",
+    "last_seen",
+    "fingerprint_hash",
+)
+CSV_LIMIT = 10000
+RELEASE_OPTIONS = 5
+REPORT_ROWS = 20
+
+
+def _csv(queryset: QuerySet[Issue], now: datetime) -> HttpResponse:
+    stamp = now.strftime("%Y%m%d-%H%M%S")
+    response = HttpResponse(content_type="text/csv")
+    response["Content-Disposition"] = f'attachment; filename="pandora-{stamp}.csv"'
+    writer = csv.writer(response)
+    writer.writerow(CSV_COLUMNS)
+    rows = queryset.select_related("project").prefetch_related("environments")
+    for issue in rows[:CSV_LIMIT]:
+        writer.writerow(
+            [
+                issue.pk,
+                issue.project.slug,
+                issue.title,
+                issue.culprit,
+                issue.level,
+                issue.triage_state,
+                issue.source_state or "",
+                " ".join(row.name for row in issue.environments.all()),
+                issue.event_count,
+                issue.first_seen.isoformat(),
+                issue.last_seen.isoformat(),
+                issue.fingerprint_hash,
+            ]
+        )
+    return response
+
+
+def _ranked(queryset: QuerySet[Issue], sort: Sort, now: datetime) -> QuerySet[Issue]:
+    if sort.key == "relevance":
+        return ranking.with_score(queryset, now)
+    if sort.key == "breadth":
+        return ranking.with_breadth(queryset)
+    return queryset
+
+
 def _sort(key: str) -> Sort:
     for candidate, label, ordering in SORTS:
         if candidate == key:
@@ -545,6 +780,24 @@ def _sort(key: str) -> Sort:
 
 def _page(request: HttpRequest, queryset: QuerySet[Issue]) -> Page:
     return Paginator(queryset, PAGE_SIZE).get_page(request.GET.get("page"))
+
+
+def _release_options() -> list[tuple[str, str]]:
+    recent = Release.objects.order_by("-sort_key", "-first_seen")[:RELEASE_OPTIONS]
+    options = [
+        (RESOLVE_NEXT, "in the next release"),
+        (RESOLVE_CURRENT, "in the current release"),
+    ]
+    options.extend((release.version, f"in {release}") for release in recent)
+    return options
+
+
+def _views(raw: str, sort: Sort) -> list[SavedView]:
+    current = " ".join(raw.split())
+    views = list(SavedView.objects.filter(active=True))
+    for view in views:
+        view.is_current = " ".join(view.query.split()) == current
+    return views
 
 
 def _segments(raw: str) -> list[Segment]:

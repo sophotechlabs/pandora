@@ -179,13 +179,17 @@ def parse_tags(params: QueryDict) -> dict[str, str]:
 
 
 def issue_queryset(token: IngestToken, params: QueryDict) -> QuerySet[Issue]:
-    queryset = Issue.objects.select_related("project").filter(project=token.project)
+    queryset = (
+        Issue.objects.select_related("project")
+        .prefetch_related("environments")
+        .filter(project=token.project)
+    )
     slug = params.get("project", "").strip()
     if slug:
         queryset = queryset.filter(project__slug=slug)
     environment = params.get("environment", "").strip()
     if environment:
-        queryset = queryset.filter(environment=environment)
+        queryset = queryset.filter(environments__name=environment)
     triage_states = parse_states(params, "triage_state", TriageState.values)
     if triage_states:
         queryset = queryset.filter(triage_state__in=triage_states)
@@ -203,6 +207,7 @@ def issue_queryset(token: IngestToken, params: QueryDict) -> QuerySet[Issue]:
 def get_issue(token: IngestToken, issue_id: int) -> Issue:
     issue = (
         Issue.objects.select_related("project")
+        .prefetch_related("environments")
         .filter(project=token.project, pk=issue_id)
         .first()
     )
@@ -226,6 +231,7 @@ def serialize_issue(issue: Issue) -> dict[str, Any]:
         "culprit": issue.culprit,
         "level": issue.level,
         "environment": issue.environment,
+        "environments": [row.name for row in issue.environments.all()],
         "source_state": issue.source_state,
         "triage_state": issue.triage_state,
         "event_count": issue.event_count,

@@ -15,6 +15,13 @@ urlpatterns = [
         views.delete_occurrence,
         name="occurrence-delete",
     ),
+    path(
+        "issues/<int:issue_id>/unmerge/<str:fingerprint>/",
+        views.unmerge,
+        name="unmerge",
+    ),
+    path("views/save/", views.save_view, name="view-save"),
+    path("views/<int:view_id>/delete/", views.delete_view, name="view-delete"),
     path("overview/", views.overview, name="overview"),
     path("history/", views.history, name="history"),
     path("ingest/", views.ingest, name="ingest"),

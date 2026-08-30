@@ -9,7 +9,9 @@ from django.conf import settings
 from django.core.management.base import BaseCommand
 from django.utils import timezone
 
+from pandora.artifacts import service as artifacts
 from pandora.core import database
+from pandora.events import relevance
 from pandora.events.store import get_store
 from pandora.ingest import limits
 from pandora.ingest.models import EnvelopeState, ProcessedEvent, RawEnvelope
@@ -35,6 +37,18 @@ class PruneResult:
     counters: int = 0
     deliveries: int = 0
     audit_entries: int = 0
+    bundles: int = 0
+
+
+def _thin_by_relevance(store: Any, now: datetime) -> int:
+    if not relevance.enabled():
+        return 0
+    removed = 0
+    for verdict in relevance.verdicts(now):
+        if not verdict.dropping:
+            continue
+        removed += store.thin(verdict.issue_id, verdict.keep)
+    return removed
 
 
 def prune_expired(now: datetime) -> PruneResult:
@@ -43,6 +57,8 @@ def prune_expired(now: datetime) -> PruneResult:
 
     store = get_store()
     events = store.prune(retention_cutoff)
+    events += _thin_by_relevance(store, now)
+    bundles = artifacts.prune(now)
     envelopes, _ = RawEnvelope.objects.filter(
         state=EnvelopeState.DONE,
         received_at__lt=envelope_cutoff,
@@ -70,11 +86,12 @@ def prune_expired(now: datetime) -> PruneResult:
         counters=counters,
         deliveries=deliveries,
         audit_entries=audit_entries,
+        bundles=bundles,
     )
     logger.info(
         "prune: %s events, %s envelopes, %s processed events, %s silences,"
         " %s hourly stats, %s activities, %s ingest counters, %s deliveries,"
-        " %s audit entries",
+        " %s audit entries, %s artifact bundles",
         result.events,
         result.envelopes,
         result.processed_events,
@@ -84,6 +101,7 @@ def prune_expired(now: datetime) -> PruneResult:
         result.counters,
         result.deliveries,
         result.audit_entries,
+        result.bundles,
     )
     return result
 
@@ -98,5 +116,6 @@ class Command(BaseCommand):
             f"{result.processed_events} processed events, {result.silences} silences, "
             f"{result.hourly_stats} hourly stats, {result.activities} activities, "
             f"{result.counters} ingest counters, {result.deliveries} deliveries, "
-            f"{result.audit_entries} audit entries"
+            f"{result.audit_entries} audit entries, "
+            f"{result.bundles} artifact bundles"
         )

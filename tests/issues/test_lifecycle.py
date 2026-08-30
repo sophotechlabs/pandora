@@ -109,6 +109,10 @@ def test_occurrence_carries_what_a_translator_produces():
         "payload",
         "environment",
         "source",
+        "grouping_source",
+        "grouping_rule_id",
+        "release",
+        "dist",
     ]
 
     assert result == expected
@@ -230,6 +234,8 @@ def test_a_new_issue_starts_from_the_occurrence_with_empty_counters():
         "environment": "",
         "fingerprint": OCCURRENCE["fingerprint"],
         "grouping_labels": OCCURRENCE["grouping_labels"],
+        "grouping_source": "",
+        "grouping_rule_id": None,
         "first_seen": FIRED_AT,
         "last_seen": DELIVERED_AT,
         "event_count": 0,

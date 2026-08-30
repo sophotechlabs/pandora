@@ -18,10 +18,10 @@ def test_ingest_token_defaults_to_alertmanager_ingest(token):
     assert result == expected
 
 
-def test_token_sources_are_the_two_front_doors():
-    """Should offer exactly the Alertmanager and SDK sources."""
+def test_token_sources_name_every_front_door():
+    """Should name each way an occurrence can arrive, so the ingest page can split them."""
     result = list(models.TokenSource.values)
-    expected = ["am", "sdk"]
+    expected = ["am", "sdk", "log", "cron", "otlp"]
 
     assert result == expected
 

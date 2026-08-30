@@ -3,7 +3,7 @@ import datetime
 import pytest
 from django.utils import timezone
 
-from pandora.issues import models
+from pandora.issues import environments, models
 from pandora.issues.models import Issue
 from pandora.ui import query
 
@@ -418,5 +418,27 @@ def test_free_text_matches_a_fingerprint_prefix(make_issue):
 
     result = titles(issue.fingerprint_hash[:12])
     expected = ["Hashed"]
+
+    assert result == expected
+
+
+def test_an_issue_seen_in_two_places_matches_either(make_issue):
+    """Should find the issue from whichever cluster you were looking at."""
+    issue = make_issue(title="Both", environment="p-mk1")
+    environments.record(issue, "p-mk2", issue.last_seen)
+
+    result = (titles("environment:p-mk1"), titles("environment:p-mk2"))
+    expected = (["Both"], ["Both"])
+
+    assert result == expected
+
+
+def test_an_issue_is_listed_once_however_many_places_it_fires(make_issue):
+    """Should not multiply a row by its environments — a join is not a result."""
+    issue = make_issue(title="Both", environment="p-mk1")
+    environments.record(issue, "p-mk2", issue.last_seen)
+
+    result = titles("environment:p-mk1 environment:p-mk2")
+    expected = ["Both"]
 
     assert result == expected

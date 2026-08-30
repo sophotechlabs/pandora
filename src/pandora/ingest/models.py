@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import timedelta
+
 from django.db import models
 from django.utils import timezone
 
@@ -8,6 +10,7 @@ from pandora.core.models import Project, TokenSource
 
 class EnvelopeState(models.TextChoices):
     PENDING = "pending", "Pending"
+    CLAIMED = "claimed", "Claimed"
     DONE = "done", "Done"
     FAILED = "failed", "Failed"
 
@@ -48,6 +51,13 @@ class ProcessedEvent(models.Model):
         related_name="processed_events",
     )
     event_id = models.CharField(max_length=64)
+    issue = models.ForeignKey(
+        "issues.Issue",
+        on_delete=models.SET_NULL,
+        related_name="processed_events",
+        null=True,
+        blank=True,
+    )
     seen_at = models.DateTimeField(default=timezone.now)
 
     class Meta:
@@ -63,6 +73,65 @@ class ProcessedEvent(models.Model):
 
     def __str__(self) -> str:
         return self.event_id
+
+
+class MonitorStatus(models.TextChoices):
+    OK = "ok", "Ok"
+    IN_PROGRESS = "in_progress", "In progress"
+    MISSED = "missed", "Missed"
+    ERROR = "error", "Error"
+    TIMED_OUT = "timed_out", "Timed out"
+
+
+class Monitor(models.Model):
+    """The thing that did not happen, which Alertmanager only partly covers.
+
+    A row with a schedule, a margin, a max runtime and a last-seen. A sweep marks
+    the ones that missed. Sentry charges per active monitor; there is no
+    per-monitor cost here.
+    """
+
+    project = models.ForeignKey(
+        Project,
+        on_delete=models.CASCADE,
+        related_name="monitors",
+    )
+    slug = models.SlugField(max_length=100)
+    name = models.CharField(max_length=200, blank=True, default="")
+    interval_minutes = models.PositiveIntegerField(default=60)
+    margin_minutes = models.PositiveIntegerField(default=5)
+    max_runtime_minutes = models.PositiveIntegerField(default=30)
+    environment = models.CharField(max_length=100, blank=True, default="")
+    status = models.CharField(
+        max_length=16,
+        choices=MonitorStatus.choices,
+        default=MonitorStatus.OK,
+    )
+    last_check_in = models.DateTimeField(null=True, blank=True)
+    last_started = models.DateTimeField(null=True, blank=True)
+    active = models.BooleanField(default=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["project", "slug"], name="ingest_monitor_slug_uq"
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["active", "status"], name="ingest_monitor_active"),
+        ]
+        ordering = ("slug",)
+
+    def __str__(self) -> str:
+        return f"{self.slug} every {self.interval_minutes}m ({self.status})"
+
+    @property
+    def due_after(self) -> timedelta:
+        return timedelta(minutes=self.interval_minutes + self.margin_minutes)
+
+    @property
+    def runtime_limit(self) -> timedelta:
+        return timedelta(minutes=self.max_runtime_minutes)
 
 
 class IngestQuota(models.Model):

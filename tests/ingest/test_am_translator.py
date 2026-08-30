@@ -208,6 +208,10 @@ def test_a_firing_alert_translates_field_for_field(parse, am_fixture):
             "namespace": "payments",
             "severity": "critical",
         },
+        "grouping_source": "rule",
+        "grouping_rule_id": occurrences[0].grouping_rule_id,
+        "release": "",
+        "dist": "",
         "am_fingerprint": "3c1f6a2b9d4e5087",
         "labels": {
             "alertname": "KubePodCrashLooping",
@@ -636,3 +640,41 @@ def test_two_episodes_of_one_alert_never_share_an_event_id(parse):
     expected = am.event_id(1, later)
 
     assert result != expected
+
+
+@pytest.mark.django_db
+def test_a_condition_on_a_label_selects_the_rule(parse, am_fixture, project):
+    """Should route an alert by any label, not only by its alertname."""
+    from pandora.issues.models import GroupingRule
+
+    GroupingRule.objects.create(
+        priority=10,
+        conditions={"path": "labels.namespace", "value": "payments"},
+        fingerprint=["payments-all"],
+    )
+
+    occurrences = parse(am_fixture("firing_group"))
+
+    result = occurrences[0].fingerprint
+    expected = ["payments-all"]
+
+    assert result == expected
+
+
+@pytest.mark.django_db
+def test_a_rule_can_title_an_alert_from_its_annotations(parse, am_fixture, project):
+    """Should let an operator write the title their runbook uses."""
+    from pandora.issues.models import GroupingRule
+
+    GroupingRule.objects.create(
+        priority=10,
+        conditions={"path": "labels.namespace", "value": "payments"},
+        title_template="payments: {{ labels.alertname }}",
+    )
+
+    occurrences = parse(am_fixture("firing_group"))
+
+    result = occurrences[0].title
+    expected = "payments: KubePodCrashLooping"
+
+    assert result == expected

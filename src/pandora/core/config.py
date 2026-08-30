@@ -10,7 +10,7 @@ import yaml
 from django.contrib.auth import get_user_model
 
 from pandora.core.models import DsnKey, IngestToken, Project, ServiceLink
-from pandora.issues.models import GroupingRule
+from pandora.issues.models import GroupingRule, PathRule
 from pandora.people import ownership
 from pandora.people.models import Membership, OwnershipRule, Role, Team
 
@@ -19,6 +19,7 @@ SECTIONS = (
     "tokens",
     "dsn_keys",
     "grouping_rules",
+    "path_rules",
     "service_links",
     "teams",
     "ownership_rules",
@@ -98,6 +99,7 @@ def apply(document: Mapping[str, Any]) -> Report:
     _apply_tokens(document, projects, report)
     _apply_dsn_keys(document, projects, report)
     _apply_grouping_rules(document, projects, report)
+    _apply_path_rules(document, projects, report)
     _apply_service_links(document, projects, report)
     _apply_teams(document, projects, report)
     _apply_ownership_rules(document, projects, report)
@@ -215,6 +217,34 @@ def _apply_grouping_rules(
         declared.append(rule.pk)
         _record(report, created, changed, f"grouping rule {rule.priority}")
     _deactivate(GroupingRule.objects.exclude(pk__in=declared), report, "grouping rule")
+
+
+def _apply_path_rules(
+    document: Mapping[str, Any], projects: Mapping[str, Project], report: Report
+) -> None:
+    declared = []
+    for row in _rows(document, "path_rules"):
+        _required(row, "path_rules", "name", "pattern")
+        project = None
+        if row.get("project"):
+            project = _project(projects, row["project"], "path_rules")
+        rule, created = PathRule.objects.get_or_create(
+            name=str(row["name"]),
+            project=project,
+            defaults={"pattern": str(row["pattern"])},
+        )
+        changed = _write(
+            rule,
+            {
+                "pattern": str(row["pattern"]),
+                "replacement": str(row.get("replacement", "")),
+                "ordering": int(row.get("ordering", 100)),
+                "active": True,
+            },
+        )
+        declared.append(rule.pk)
+        _record(report, created, changed, f"path rule {rule.name}")
+    _deactivate(PathRule.objects.exclude(pk__in=declared), report, "path rule")
 
 
 def _apply_service_links(

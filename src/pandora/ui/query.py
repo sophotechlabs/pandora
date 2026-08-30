@@ -127,6 +127,7 @@ def _text_query(text: str) -> Q:
     return (
         Q(title__icontains=text)
         | Q(culprit__icontains=text)
+        | Q(search_text__icontains=text)
         | Q(fingerprint_hash__startswith=text)
     )
 
@@ -193,7 +194,7 @@ def _apply_project(
 def _apply_environment(
     queryset: QuerySet[Issue], values: Sequence[str], now: datetime
 ) -> tuple[QuerySet[Issue], list[str]]:
-    return queryset.filter(environment__in=list(values)), []
+    return queryset.filter(environments__name__in=list(values)).distinct(), []
 
 
 def _apply_seen(
