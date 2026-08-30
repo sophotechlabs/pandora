@@ -98,7 +98,7 @@ def test_the_enrichment_urls_default_to_empty(load_settings):
 
 
 def test_every_pandora_app_is_installed(load_settings):
-    """Should install all ten pandora apps plus the metrics exporter."""
+    """Should install all twelve pandora apps plus the metrics exporter."""
     settings = load_settings()
 
     result = [app for app in settings.INSTALLED_APPS if app.startswith("pandora.")]
@@ -113,6 +113,8 @@ def test_every_pandora_app_is_installed(load_settings):
         "pandora.scrub",
         "pandora.notify",
         "pandora.people",
+        "pandora.releases",
+        "pandora.artifacts",
     ]
 
     assert result == expected
@@ -401,3 +403,23 @@ def test_secure_cookies_can_be_turned_on_in_debug(load_settings):
     expected = (True, True)
 
     assert result == expected
+
+
+def test_an_empty_flag_falls_back_to_its_default(load_settings):
+    """Should read `DJANGO_SECURE_COOKIES=` in a .env file as unset, not as off."""
+    settings = load_settings(DJANGO_DEBUG="False", DJANGO_SECURE_COOKIES="")
+
+    result = (settings.SESSION_COOKIE_SECURE, settings.CSRF_COOKIE_SECURE)
+    expected = (True, True)
+
+    assert result == expected
+
+
+def test_an_empty_flag_still_reads_as_off_where_off_is_the_default(load_settings):
+    """Should leave an opt-in feature opted out when its variable is blank."""
+    settings = load_settings(PANDORA_SPIKE_ENABLED="")
+
+    result = settings.PANDORA_SPIKE_ENABLED
+    expected = False
+
+    assert result is expected

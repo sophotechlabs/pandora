@@ -12,7 +12,10 @@ WEB_DIR = Path(__file__).resolve().parent
 
 
 def _flag(name: str, default: str = "") -> bool:
-    return os.environ.get(name, default).strip().lower() in ("1", "true", "yes", "on")
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        raw = default
+    return raw.strip().lower() in ("1", "true", "yes", "on")
 
 
 def _required(name: str) -> str:
@@ -83,6 +86,8 @@ INSTALLED_APPS = [
     "pandora.scrub",
     "pandora.notify",
     "pandora.people",
+    "pandora.releases",
+    "pandora.artifacts",
 ]
 
 if importlib.util.find_spec("django_migration_linter"):
@@ -171,6 +176,7 @@ USE_TZ = True
 
 STATIC_URL = "static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
+MEDIA_ROOT = os.environ.get("PANDORA_ARTIFACT_DIR", str(BASE_DIR / "artifacts"))
 STATICFILES_DIRS = [WEB_DIR / "static"]
 
 if DEBUG:
@@ -211,6 +217,16 @@ PANDORA_SCRUB_ENABLED = _flag("PANDORA_SCRUB_ENABLED", "1")
 PANDORA_SCRUB_ANONYMISE_IP = _flag("PANDORA_SCRUB_ANONYMISE_IP", "1")
 PANDORA_SCRUB_KEYWORDS = os.environ.get("PANDORA_SCRUB_KEYWORDS", "")
 PANDORA_SCRUB_SAFE_KEYS = os.environ.get("PANDORA_SCRUB_SAFE_KEYS", "")
+PANDORA_GROUPING_NORMALISE = _flag("PANDORA_GROUPING_NORMALISE", "0")
+PANDORA_BREADTH_KEYS = os.environ.get(
+    "PANDORA_BREADTH_KEYS", "pod,node,instance,namespace"
+)
+PANDORA_RETENTION_BY_RELEVANCE = _flag("PANDORA_RETENTION_BY_RELEVANCE", "0")
+PANDORA_RELEVANCE_BUDGET = _int("PANDORA_RELEVANCE_BUDGET", 500)
+PANDORA_RELEVANCE_HALF_LIFE_DAYS = _int("PANDORA_RELEVANCE_HALF_LIFE_DAYS", 7)
+PANDORA_ARCHIVE_DIR = os.environ.get("PANDORA_ARCHIVE_DIR", "")
+
+DATA_UPLOAD_MAX_MEMORY_SIZE = 32 * 1024 * 1024 + 4096
 PANDORA_CORRELATION_KEYS = os.environ.get(
     "PANDORA_CORRELATION_KEYS",
     "namespace,pod,node,cluster,service",
