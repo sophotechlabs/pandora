@@ -5,7 +5,8 @@ from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
-from django.db.models import Q
+from django.db import transaction
+from django.db.models import Q, QuerySet
 from django.utils import timezone
 from prometheus_client import Counter
 
@@ -14,6 +15,7 @@ from pandora.notify.senders import SendError, send
 
 BATCH = 200
 MAX_ATTEMPTS = 5
+CLAIM_TTL = timedelta(minutes=5)
 BACKOFF = (
     timedelta(seconds=30),
     timedelta(minutes=2),
@@ -37,11 +39,16 @@ class DeliverReport:
     retried: int = 0
 
 
-def due(now: datetime, limit: int = BATCH) -> list[Delivery]:
+def _ready(now: datetime) -> QuerySet[Delivery]:
     ready = Q(send_after=None) | Q(send_after__lte=now)
+    pending = Q(state=DeliveryState.PENDING) & ready
+    abandoned = Q(state=DeliveryState.SENDING, send_after__lte=now)
+    return Delivery.objects.filter(pending | abandoned)
+
+
+def due(now: datetime, limit: int = BATCH) -> list[Delivery]:
     return list(
-        Delivery.objects.filter(state=DeliveryState.PENDING)
-        .filter(ready)
+        _ready(now)
         .select_related("destination", "issue")
         .order_by("created_at", "id")[:limit]
     )
@@ -71,10 +78,14 @@ def run_once(now: datetime | None = None, limit: int = BATCH) -> DeliverReport:
     sent = 0
     failed = 0
     retried = 0
-    for rows in _grouped(due(moment, limit)).values():
-        destination = rows[0].destination
-        if _held(destination, rows, moment):
+    remaining = limit
+    destination_ids = list(_grouped(due(moment, limit)))
+    for destination_id in destination_ids:
+        rows = _claim(destination_id, moment, remaining)
+        if not rows:
             continue
+        remaining -= len(rows)
+        destination = rows[0].destination
         try:
             send(destination, rows)
         except SendError as error:
@@ -84,14 +95,41 @@ def run_once(now: datetime | None = None, limit: int = BATCH) -> DeliverReport:
             continue
         _record_success(rows, destination, moment)
         sent += len(rows)
+        if remaining < 1:
+            break
     return DeliverReport(sent=sent, failed=failed, retried=retried)
+
+
+def _claim(destination_id: int, now: datetime, limit: int) -> list[Delivery]:
+    with transaction.atomic():
+        try:
+            destination = Destination.objects.select_for_update().get(pk=destination_id)
+        except Destination.DoesNotExist:
+            return []
+        rows = list(
+            _ready(now)
+            .filter(destination=destination)
+            .select_related("destination", "issue")
+            .order_by("created_at", "id")[:limit]
+        )
+        if not rows or _held(destination, rows, now):
+            return []
+        lease = now + CLAIM_TTL
+        Delivery.objects.filter(pk__in=[row.pk for row in rows]).update(
+            state=DeliveryState.SENDING,
+            send_after=lease,
+        )
+        for row in rows:
+            row.state = DeliveryState.SENDING
+            row.send_after = lease
+        return rows
 
 
 def _record_success(
     rows: list[Delivery], destination: Destination, now: datetime
 ) -> None:
     Delivery.objects.filter(pk__in=[row.pk for row in rows]).update(
-        state=DeliveryState.SENT, sent_at=now, error=""
+        state=DeliveryState.SENT, sent_at=now, send_after=None, error=""
     )
     DELIVERIES.labels(kind=destination.kind, state=DeliveryState.SENT).inc(len(rows))
 
@@ -105,14 +143,17 @@ def _record_failure(
         attempts = row.attempts + 1
         if attempts >= MAX_ATTEMPTS:
             row.state = DeliveryState.FAILED
+            row.send_after = None
             failed += 1
         else:
+            row.state = DeliveryState.PENDING
             row.send_after = now + _backoff(attempts)
             retried += 1
         row.attempts = attempts
         row.error = str(error)[:2000]
         row.save(update_fields=["state", "attempts", "error", "send_after"])
-    DELIVERIES.labels(kind=destination.kind, state=DeliveryState.FAILED).inc(len(rows))
+    if failed:
+        DELIVERIES.labels(kind=destination.kind, state=DeliveryState.FAILED).inc(failed)
     log.warning(
         "notify: %s deliveries to %s failed: %s", len(rows), destination.name, error
     )

@@ -251,6 +251,32 @@ def test_a_network_error_is_recorded_not_raised(queued, mocker):
     assert result == expected
 
 
+def test_a_claimed_delivery_cannot_be_claimed_by_another_worker(queued):
+    destination, _ = queued()
+    now = timezone.now()
+
+    first = deliver._claim(destination.pk, now, deliver.BATCH)
+    second = deliver._claim(destination.pk, now, deliver.BATCH)
+
+    assert len(first) == 1
+    assert second == []
+    assert Delivery.objects.get().state == DeliveryState.SENDING
+
+
+def test_an_abandoned_claim_becomes_retryable(queued):
+    destination, _ = queued()
+    now = timezone.now()
+    deliver._claim(destination.pk, now, deliver.BATCH)
+
+    recovered = deliver._claim(
+        destination.pk,
+        now + deliver.CLAIM_TTL + datetime.timedelta(seconds=1),
+        deliver.BATCH,
+    )
+
+    assert len(recovered) == 1
+
+
 # digests
 
 

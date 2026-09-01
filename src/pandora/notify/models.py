@@ -25,6 +25,7 @@ class DestinationKind(models.TextChoices):
 
 class DeliveryState(models.TextChoices):
     PENDING = "pending", "Pending"
+    SENDING = "sending", "Sending"
     SENT = "sent", "Sent"
     FAILED = "failed", "Failed"
 
