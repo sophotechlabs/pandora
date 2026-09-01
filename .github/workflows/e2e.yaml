@@ -29,3 +29,25 @@ jobs:
       - name: What the stack said, if the browser did not agree
         if: failure()
         run: just logs-once
+
+      - name: Stop the browser stack
+        if: always()
+        run: just ci-e2e-down
+
+  kind:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: jdx/mise-action@3c2e0cf82a5b2e5249f0d3635a4d83d0ae861518
+        with:
+          install_args: just uv kind kubectl helm
+      - run: just ci-kind-smoke
+      - name: What the cluster said, if the lifecycle did not agree
+        if: failure()
+        run: just ci-kind-logs
+      - name: Stop the kind cluster
+        if: always()
+        run: just ci-kind-down

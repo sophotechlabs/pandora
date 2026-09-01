@@ -19,6 +19,7 @@ extend-ignore-re = [
 ]
 
 [default.extend-words]
+BA = "BA"
 crds = "crds"
 iam = "iam"
 ro = "ro"

@@ -23,6 +23,7 @@ from pandora.releases import models as release_models
 
 PASSWORD = "e2e-operator-pass"
 OWNED = (
+    artifact_models.UploadChunk,
     artifact_models.BundleFile,
     artifact_models.ArtifactBundle,
     ingest_models.Monitor,

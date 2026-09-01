@@ -1,0 +1,12 @@
+FROM golang:1.26-alpine AS build
+
+WORKDIR /src
+COPY go.mod ./
+COPY cmd ./cmd
+RUN CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o /out/pandora-wrap ./cmd/pandora-wrap
+
+FROM alpine:3.22
+
+COPY --from=build /out/pandora-wrap /usr/local/bin/pandora-wrap
+
+USER 65532:65532

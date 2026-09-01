@@ -1,0 +1,12 @@
+FROM node:24-slim
+
+WORKDIR /srv
+
+COPY node/package.json ./package.json
+RUN npm install --no-audit --no-fund \
+    && chown -R node:node /srv
+
+COPY --chown=node:node node/src ./src
+COPY --chown=node:node node/run.sh ./run.sh
+
+USER node

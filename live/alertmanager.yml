@@ -1,0 +1,16 @@
+route:
+  receiver: pandora
+  group_by: [alertname, namespace]
+  group_wait: 1s
+  group_interval: 5s
+  repeat_interval: 1h
+
+receivers:
+  - name: pandora
+    webhook_configs:
+      - url: http://web:8000/ingest/am/
+        send_resolved: true
+        http_config:
+          authorization:
+            type: Bearer
+            credentials: live-alertmanager-token

@@ -1,0 +1,24 @@
+[sources.live_files]
+type = "file"
+include = ["/var/log/live/app.log"]
+read_from = "beginning"
+
+[transforms.parsed]
+type = "remap"
+inputs = ["live_files"]
+source = '''
+. = parse_json!(.message)
+'''
+
+[sinks.pandora]
+type = "http"
+inputs = ["parsed"]
+uri = "http://web:8000/api/1/logs/?sentry_key=5eb1ve0000000000000000000000dsn0"
+method = "post"
+encoding.codec = "json"
+framing.method = "newline_delimited"
+batch.max_events = 20
+batch.timeout_secs = 1
+
+[sinks.pandora.request]
+retry_attempts = 3

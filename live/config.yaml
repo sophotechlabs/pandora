@@ -1,0 +1,32 @@
+projects:
+  - slug: live
+    name: Live
+
+tokens:
+  - name: live-alertmanager
+    project: live
+    token_env: PANDORA_LIVE_AM_TOKEN
+    source: am
+    environment: live
+  - name: live-logs
+    project: live
+    token_env: PANDORA_LIVE_LOG_TOKEN
+    source: sdk
+  - name: live-upload
+    project: live
+    token_env: PANDORA_LIVE_UPLOAD_TOKEN
+    source: sdk
+  - name: live-read
+    project: live
+    token_env: PANDORA_LIVE_READ_TOKEN
+    source: sdk
+    scope: payload
+
+dsn_keys:
+  - project: live
+    public_key_env: PANDORA_LIVE_DSN_KEY
+
+grouping_rules:
+  - priority: 100
+    mode: denylist
+    labels: [pod, instance, container, endpoint, replicaset, uid]

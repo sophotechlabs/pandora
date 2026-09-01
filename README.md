@@ -66,6 +66,8 @@ just test-local   # pytest without docker (SQLite)
 
 `just ci-test` runs the suite on SQLite; `just ci-test-pg` runs the same suite against the compose Postgres. Both run in CI — portability is enforced, not trusted. The Postgres run also carries coverage: it is the only run that exercises both `EventStore` implementations, because it adds a second in-memory SQLite connection alongside Postgres.
 
+`just ci-e2e` drives a real browser against the running stack. `just ci-live` goes further and is the one that catches compatibility bugs a unit test cannot: it stands up Pandora with Postgres and gunicorn, then points the **official** `sentry-sdk` for Python, `@sentry/node`, `sentry-cli`, Vector, the OpenTelemetry collector, Alertmanager and the `pandora-wrap` binary at it, and reads the result back off the pages. Nothing in it builds a payload by hand. Three real defects came out of its first run: the source-map upload negotiation was refused by `sentry-cli`, `@sentry/node` sends every envelope chunked and Django reads a chunked body as empty, and a Python traceback whose exception class does not end in `Error` was losing its type.
+
 ## Storage
 
 `DATABASE_URL` picks the backend. On SQLite the connection is opened with `auto_vacuum=INCREMENTAL`, WAL and `synchronous=NORMAL`, and every write takes the lock immediately with a 20s busy timeout — so the web workers, the reconcile loop and the cron commands can share one file. The `auto_vacuum` pragma only takes on a database that does not exist yet, and only because it is set before `journal_mode`, which is the first statement that writes to the file.
@@ -101,7 +103,8 @@ Copies stored events out of another pandora database into this one, paging per p
 | `/api/<project_id>/logs/` | JSON-lines log shipping (DSN key) | live |
 | `/api/<project_id>/integration/otlp/v1/logs` | OTLP/JSON logs (DSN key) | live |
 | `/api/<project_id>/cron/<slug>/<key>/` | cron check-in | live |
-| `/api/0/organizations/<org>/chunk-upload/` | source-map bundles, `sentry-cli` protocol (Bearer token) | live |
+| `/api/0/organizations/<org>/chunk-upload/` | source-map chunks, `sentry-cli` protocol (Bearer token) | live |
+| `/api/0/organizations/<org>/artifactbundle/assemble/` | joins the chunks into a bundle (Bearer token) | live |
 | `/api/v1/issues` | issue list, filtered and cursor-paged | live |
 | `/api/v1/issues/<id>` | one issue with its episodes and tag stats | live |
 | `/api/v1/issues/<id>/events` | the stored events of one issue | live |
@@ -172,7 +175,7 @@ sentry-cli --url https://pandora.example.com \
   sourcemaps upload --org pandora --project web dist/
 ```
 
-Point `SENTRY_AUTH_TOKEN` at an ingest token. `GET /api/0/organizations/<org>/chunk-upload/` advertises what the server takes; the POST accepts the zip. The pairing is by debug id — the uuid the bundler writes into both the minified file and its `.map`, and that the SDK repeats in `debug_meta` — so a filename that changes on every build never has to match.
+Point `SENTRY_AUTH_TOKEN` at an ingest token; `--org` can be anything, the token names the project. The upload is the protocol's own two phases: the tool asks `/api/0/organizations/<org>/artifactbundle/assemble/` which chunks are missing, POSTs those to `/api/0/organizations/<org>/chunk-upload/` (gzipped, addressed by sha1), and asks again. The pairing is by debug id — the uuid the bundler writes into both the minified file and its `.map`, and that the SDK repeats in `debug_meta` — so a filename that changes on every build never has to match.
 
 A frame whose bundle has not been uploaded says which debug id is missing instead of showing a blank panel. Bundles land under `PANDORA_ARTIFACT_DIR` — the chart points it at the persistent volume when `persistence.enabled` is set, and without one they live in the container and go when it does. They expire on time-to-idle, not time-to-live: `manage.py prune` drops one that has symbolicated nothing for ninety days, and keeps one still resolving frames however old it is. A map for a release that is still running must not expire on a calendar.
 
@@ -254,7 +257,7 @@ Gzipped JSON Lines, one object per project per hour, in hive-style paths — `pr
 
 An SDK is a dependency someone has to add, and there are always services nobody will ever instrument — a third-party chart, an operator, someone's Go binary from 2021. Those are the ones that page you. So the transport is a POST and a page of config, and the parsers are the work.
 
-**Logs.** `POST /api/<project_id>/logs/` takes JSON Lines, one object per line, which Vector, rsyslog, journald and a CloudWatch drain all already produce. `POST /api/<project_id>/integration/otlp/v1/logs` takes the OTLP/JSON shape instead. Both authenticate with the project's DSN key, in `X-Sentry-Auth` or as `?sentry_key=`, so a shipper needs one header and no new credential type. A line's message, level, logger, service, environment, release and timestamp are read from whichever of the usual key spellings it uses, and everything else becomes a tag.
+**Logs.** `POST /api/<project_id>/logs/` takes JSON Lines, one object per line, which Vector, rsyslog, journald and a CloudWatch drain all already produce. `POST /api/<project_id>/integration/otlp/v1/logs` takes the OTLP/JSON shape instead. Both authenticate with the project's DSN key, in `X-Sentry-Auth` or as `?sentry_key=`, so a shipper needs one header and no new credential type. Vector's `http` sink needs `encoding.codec = "json"` with `framing.method = "newline_delimited"` — its default wraps a batch in a JSON array, which is not what one-object-per-line means. The OpenTelemetry collector's `otlphttp` exporter needs `encoding: json`, because its default is protobuf. A line's message, level, logger, service, environment, release and timestamp are read from whichever of the usual key spellings it uses, and everything else becomes a tag.
 
 A line carrying a stack trace becomes an exception with frames, not a wall of text. Four parsers, picked by what the trace looks like: Python tracebacks with the source line under each frame, Java stacks down to the package and line (`java.base/` module prefixes included), Go panics with the file:line under each function, and Node/V8. From there it is an ordinary issue — grouping, triage, tag stats, the whole UI — because the log becomes the same event shape an SDK sends.
 

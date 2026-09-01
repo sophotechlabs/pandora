@@ -1,0 +1,9 @@
+rules:
+  - id: pandora.security.sha1
+    message: SHA-1 must be explicitly marked as a non-security protocol checksum
+    severity: ERROR
+    languages:
+      - python
+    patterns:
+      - pattern: hashlib.sha1(...)
+      - pattern-not: hashlib.sha1(..., usedforsecurity=False)

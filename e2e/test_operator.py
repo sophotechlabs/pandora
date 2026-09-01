@@ -1,3 +1,4 @@
+import hashlib
 import io
 import json
 import zipfile
@@ -428,6 +429,27 @@ def bundle_zip():
     return buffer.getvalue()
 
 
+def upload_bundle(base_url, token, payload):
+    """The protocol's two phases, which is what `sentry-cli` does."""
+    checksum = hashlib.sha1(payload, usedforsecurity=False).hexdigest()
+    headers = {"Authorization": f"Bearer {token.token}"}
+    chunks = requests.post(
+        f"{base_url}/api/0/organizations/pandora/chunk-upload/",
+        files={checksum: (checksum, payload, "application/octet-stream")},
+        headers=headers,
+        timeout=10,
+    )
+    chunks.raise_for_status()
+    assembled = requests.post(
+        f"{base_url}/api/0/organizations/pandora/artifactbundle/assemble/",
+        json={"checksum": checksum, "chunks": [checksum], "projects": ["e2e"]},
+        headers=headers,
+        timeout=10,
+    )
+    assembled.raise_for_status()
+    assert assembled.json()["state"] == "ok", assembled.text
+
+
 def send_minified_event(base_url, dsn_key):
     envelope = "\n".join(
         [
@@ -495,13 +517,7 @@ def test_a_source_map_resolves_the_frame_on_the_page(
         source=core_models.TokenSource.SDK,
         scope=core_models.TokenScope.INGEST,
     )
-    response = requests.post(
-        f"{base_url}/api/0/organizations/pandora/chunk-upload/",
-        files={"file_gzip": ("bundle.zip", bundle_zip(), "application/zip")},
-        headers={"Authorization": f"Bearer {token.token}"},
-        timeout=10,
-    )
-    response.raise_for_status()
+    upload_bundle(base_url, token, bundle_zip())
     send_minified_event(base_url, dsn_key)
     sign_in(make_user("operator", is_superuser=True))
     issue = issue_models.Issue.objects.get()

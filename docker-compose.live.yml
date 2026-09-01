@@ -1,0 +1,166 @@
+services:
+  web:
+    command:
+      - gunicorn
+      - -c
+      - /app/docker/gunicorn.conf.py
+      - pandora.web.wsgi:application
+      - --bind
+      - 0.0.0.0:8000
+      - --workers
+      - "2"
+      - --timeout
+      - "60"
+    environment:
+      PANDORA_BREADTH_KEYS: pod,node,instance,namespace,service
+      PANDORA_LIVE_AM_TOKEN: live-alertmanager-token
+      PANDORA_LIVE_LOG_TOKEN: live-log-token
+      PANDORA_LIVE_UPLOAD_TOKEN: live-upload-token
+      PANDORA_LIVE_READ_TOKEN: live-read-token
+      PANDORA_LIVE_DSN_KEY: 5eb1ve0000000000000000000000dsn0
+    volumes:
+      - live_logs:/var/log/live
+
+  alertmanager:
+    image: prom/alertmanager:v0.28.1
+    command:
+      - --config.file=/etc/alertmanager/alertmanager.yml
+      - --storage.path=/alertmanager
+      - --log.level=warn
+    volumes:
+      - ./live/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+    depends_on:
+      web:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O-", "http://localhost:9093/-/ready"]
+      interval: 3s
+      retries: 20
+
+  vector:
+    image: timberio/vector:0.51.0-alpine
+    command: ["--config", "/etc/vector/vector.toml"]
+    volumes:
+      - ./live/vector.toml:/etc/vector/vector.toml:ro
+      - live_logs:/var/log/live
+    depends_on:
+      web:
+        condition: service_healthy
+
+  otelcol:
+    image: otel/opentelemetry-collector-contrib:0.140.0
+    command: ["--config", "/etc/otelcol/config.yaml"]
+    volumes:
+      - ./live/otelcol.yaml:/etc/otelcol/config.yaml:ro
+      - live_logs:/var/log/live
+    depends_on:
+      web:
+        condition: service_healthy
+
+  sdk-python:
+    build:
+      context: .
+      target: e2e
+      network: host
+    environment:
+      PANDORA_LIVE_URL: http://web:8000
+      PANDORA_LIVE_DSN: http://5eb1ve0000000000000000000000dsn0@web:8000/1
+      SENTRY_DSN: http://5eb1ve0000000000000000000000dsn0@web:8000/1
+    entrypoint: ["python", "/app/live/python_app.py"]
+    depends_on:
+      web:
+        condition: service_healthy
+
+  sdk-node:
+    build:
+      context: ./live
+      dockerfile: Dockerfile.node
+      network: host
+    environment:
+      SENTRY_DSN: http://5eb1ve0000000000000000000000dsn0@web:8000/1
+      SENTRY_URL: http://web:8000
+      SENTRY_ORG: pandora
+      SENTRY_PROJECT: live
+      SENTRY_AUTH_TOKEN: live-upload-token
+      SENTRY_LOG_LEVEL: ${SENTRY_LOG_LEVEL:-warn}
+    entrypoint: ["sh", "/srv/run.sh"]
+    depends_on:
+      web:
+        condition: service_healthy
+
+  wrap:
+    build:
+      context: .
+      dockerfile: live/Dockerfile.wrap
+      network: host
+    environment:
+      PANDORA_DSN: http://5eb1ve0000000000000000000000dsn0@web:8000/1
+    entrypoint:
+      - /usr/local/bin/pandora-wrap
+      - -monitor
+      - nightly-backup
+      - -environment
+      - live
+      - -release
+      - 1.4.2
+      - --
+      - sh
+      - -c
+      - "echo backing up; echo 'disk full' >&2; exit 3"
+    depends_on:
+      web:
+        condition: service_healthy
+
+  sdk-python-crash:
+    build:
+      context: .
+      target: e2e
+      network: host
+    environment:
+      SENTRY_DSN: http://5eb1ve0000000000000000000000dsn0@web:8000/1
+    entrypoint:
+      - sh
+      - -c
+      - "python /app/live/python_app.py crash || true"
+    depends_on:
+      web:
+        condition: service_healthy
+
+  produce:
+    build:
+      context: .
+      target: e2e
+      network: host
+    env_file: .env
+    environment:
+      PANDORA_LIVE_URL: http://web:8000
+      ALERTMANAGER_URL: http://alertmanager:9093
+      DJANGO_SETTINGS_MODULE: pandora.web.settings
+    volumes:
+      - live_logs:/var/log/live
+    entrypoint: ["python", "/app/live/produce.py"]
+    depends_on:
+      web:
+        condition: service_healthy
+      alertmanager:
+        condition: service_healthy
+
+  live:
+    build:
+      context: .
+      target: e2e
+      network: host
+    env_file: .env
+    environment:
+      PANDORA_E2E_URL: http://web:8000
+      PANDORA_LIVE_URL: http://web:8000
+      DJANGO_SETTINGS_MODULE: pandora.web.settings
+    volumes:
+      - live_logs:/var/log/live
+    entrypoint: ["pytest", "-c", "live/pytest.ini", "live", "-q"]
+    depends_on:
+      web:
+        condition: service_healthy
+
+volumes:
+  live_logs: {}

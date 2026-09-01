@@ -42,6 +42,7 @@ e2e = [
     "pytest>=8.0",
     "pytest-playwright>=0.7",
     "playwright==1.56.0",
+    "sentry-sdk>=2.42",
 ]
 dev = [
     "authlib>=1.3",
@@ -68,7 +69,17 @@ dev = [
 where = ["src"]
 
 [tool.django_migration_linter]
-include_apps = ["core", "ingest", "issues", "events"]
+include_apps = [
+    "artifacts",
+    "core",
+    "events",
+    "ingest",
+    "issues",
+    "notify",
+    "people",
+    "releases",
+    "scrub",
+]
 no_cache = true
 exclude_migration_tests = ["NOT_NULL"]
 ignore_name = [
@@ -79,7 +90,10 @@ ignore_name = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-markers = ["e2e: drives a real browser against a running stack"]
+markers = [
+    "e2e: drives a real browser against a running stack",
+    "live: reads back what real client tooling sent to a running stack",
+]
 filterwarnings = ["ignore:No directory at.*staticfiles:UserWarning"]
 DJANGO_SETTINGS_MODULE = "tests.settings"
 asyncio_mode = "auto"
@@ -141,7 +155,8 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"e2e/**" = ["S101", "S105", "S106", "E402", "PLC0415"]
+"e2e/**" = ["S101", "S105", "S106", "S603", "S607", "E402", "PLC0415"]
+"live/**" = ["S101", "S105", "S106", "E402", "PLC0415", "T201"]
 "tests/**" = ["S101", "S105", "S106", "S107", "S108", "S603", "S607", "S608", "PLR2004", "ARG001", "ARG002", "PLC0415", "E402", "RUF001", "RUF015"]
 "**/apps.py" = ["PLC0415"]
 "**/migrations/**" = ["ALL"]

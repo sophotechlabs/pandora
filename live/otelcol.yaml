@@ -1,0 +1,31 @@
+receivers:
+  filelog:
+    include: [/var/log/live/otel.log]
+    start_at: beginning
+    operators:
+      - type: json_parser
+        parse_from: body
+        severity:
+          parse_from: attributes.level
+
+processors:
+  batch:
+    timeout: 1s
+
+exporters:
+  otlphttp/pandora:
+    logs_endpoint: http://web:8000/api/1/integration/otlp/v1/logs?sentry_key=5eb1ve0000000000000000000000dsn0
+    encoding: json
+    compression: none
+    tls:
+      insecure: true
+
+service:
+  telemetry:
+    logs:
+      level: warn
+  pipelines:
+    logs:
+      receivers: [filelog]
+      processors: [batch]
+      exporters: [otlphttp/pandora]
