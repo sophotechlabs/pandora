@@ -4,9 +4,11 @@ import json
 import pytest
 
 from pandora.core import models as core_models
+from pandora.events.store import get_store
 from pandora.ingest import models as ingest_models
 from pandora.ingest.translators import logs
 from pandora.issues import models as issue_models
+from pandora.scrub.models import DropRule
 
 pytestmark = pytest.mark.django_db
 
@@ -200,6 +202,24 @@ def test_a_log_envelope_is_marked_as_coming_from_a_log(send):
     assert result == expected
 
 
+def test_a_stored_log_event_keeps_its_source(send, project):
+    send([{"message": "a"}])
+    issue = issue_models.Issue.objects.get()
+
+    result = get_store().fetch(project.pk, issue_id=issue.pk)[0].source
+
+    assert result == core_models.TokenSource.LOG
+
+
+def test_a_dropped_log_is_accounted_as_a_log(send, mocker):
+    rule = DropRule.objects.create(name="noisy", field="message", pattern="^skip$")
+    record = mocker.patch("pandora.ingest.views.scrub.record_drop")
+
+    send([{"message": "skip"}])
+
+    record.assert_called_once_with(rule, core_models.TokenSource.LOG)
+
+
 def test_a_trace_in_a_log_line_reaches_the_issue(send):
     """Should end with a real stack trace on the issue page."""
     send([{"message": "boom", "stack": TRACE, "level": "error"}])
@@ -377,6 +397,20 @@ def test_the_otlp_door_takes_a_request(client, key):
     assert result == expected
 
 
+def test_the_otlp_door_keeps_otlp_as_the_source(client, key):
+    client.post(
+        f"/api/{key.project_id}/integration/otlp/v1/logs?sentry_key={key.public_key}",
+        data=json.dumps(OTLP),
+        content_type="application/json",
+    )
+    envelope = ingest_models.RawEnvelope.objects.get()
+    issue = issue_models.Issue.objects.get()
+    event = get_store().fetch(key.project_id, issue_id=issue.pk)[0]
+
+    assert envelope.source == core_models.TokenSource.OTLP
+    assert event.source == core_models.TokenSource.OTLP
+
+
 def test_the_otlp_door_refuses_an_unknown_key(client, key):
     """Should sit behind the same key as every other door."""
     response = client.post(
@@ -546,6 +580,22 @@ def test_an_otlp_timestamp_that_is_not_a_number_is_dropped():
     expected = ""
 
     assert result == expected
+
+
+def test_an_out_of_range_otlp_timestamp_is_dropped():
+    document = {
+        "resourceLogs": [
+            {
+                "scopeLogs": [
+                    {"logRecords": [{"body": "x", "timeUnixNano": "1" + "0" * 100}]}
+                ]
+            }
+        ]
+    }
+
+    result = logs.from_otlp(document)[0]["timestamp"]
+
+    assert result == ""
 
 
 def test_an_otlp_attribute_with_no_key_is_skipped():

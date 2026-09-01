@@ -277,6 +277,16 @@ def test_an_older_event_pulls_first_seen_back(project):
     assert result == expected
 
 
+@pytest.mark.django_db
+def test_an_out_of_range_event_timestamp_falls_back_to_arrival(project):
+    received_at = timezone.now()
+
+    deliver(project, event_payload(timestamp=1e100), received_at=received_at)
+
+    issue = issue_models.Issue.objects.get()
+    assert issue.first_seen == received_at
+
+
 # the issue follows its latest event
 
 

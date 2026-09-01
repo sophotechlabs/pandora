@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-import json
 from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import Any
 
+from pandora.ingest import json_payload
 from pandora.ingest.translators import stacks
 from pandora.issues.models import Level
 
@@ -62,7 +62,7 @@ def parse_lines(body: bytes) -> list[dict[str, Any]]:
         if not line:
             continue
         try:
-            parsed = json.loads(line)
+            parsed = json_payload.loads(line)
         except ValueError as error:
             raise LogError(f"line is not valid JSON: {error}") from error
         if not isinstance(parsed, dict):
@@ -270,11 +270,13 @@ def _value(raw: Any) -> str:
 
 
 def _moment(raw: Any) -> str:
+    if isinstance(raw, bool):
+        return ""
     try:
         nanos = int(raw)
-    except (TypeError, ValueError):
+        return datetime.fromtimestamp(nanos / 1_000_000_000, tz=UTC).isoformat()
+    except (TypeError, ValueError, OverflowError, OSError):
         return ""
-    return datetime.fromtimestamp(nanos / 1_000_000_000, tz=UTC).isoformat()
 
 
 def _list(raw: Any) -> list[Any]:

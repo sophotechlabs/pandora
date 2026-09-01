@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import io
 import json
 import logging
 import secrets
 import zlib
 from http import HTTPStatus
+from typing import Any
 
 import brotli
 import zstandard as zstd
@@ -13,7 +15,7 @@ from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 
 from pandora.core.models import DsnKey, IngestToken, TokenScope, TokenSource
-from pandora.ingest import monitors, sizes
+from pandora.ingest import json_payload, monitors, sizes
 from pandora.ingest.gate import Verdict, get_gate
 from pandora.ingest.models import ProcessedEvent, RawEnvelope
 from pandora.ingest.queue import get_queue
@@ -31,8 +33,9 @@ GZIP_ENCODINGS = ("gzip", "x-gzip")
 DEFLATE_ENCODING = "deflate"
 BROTLI_ENCODING = "br"
 ZSTD_ENCODING = "zstd"
-DECODE_ERRORS = (OSError, EOFError, zlib.error)
+DECODE_ERRORS = (OSError, EOFError, zlib.error, brotli.error, zstd.ZstdError)
 AUTO_WBITS = 47
+READ_SIZE = 64 * 1024
 
 log = logging.getLogger(__name__)
 SESSION_ITEMS = ("session", "sessions")
@@ -68,7 +71,7 @@ def am_webhook(request: HttpRequest) -> JsonResponse:
         return _refused(verdict)
 
     try:
-        payload = json.loads(request.body)
+        payload = json_payload.loads(request.body)
     except ValueError:
         return JsonResponse(
             {"detail": "body is not valid JSON"},
@@ -118,6 +121,12 @@ def envelope(request: HttpRequest, project_id: int) -> JsonResponse:
     try:
         parsed = envelope_translator.parse_envelope(body)
     except envelope_translator.EnvelopeError as error:
+        log.warning(
+            "envelope ingest refused %s bytes from project %s: %s",
+            len(body),
+            key.project_id,
+            error,
+        )
         return JsonResponse({"detail": str(error)}, status=HTTPStatus.BAD_REQUEST)
 
     events = envelope_translator.event_items(parsed)
@@ -174,7 +183,7 @@ def _read_body(request: HttpRequest, key: DsnKey) -> tuple[bytes, JsonResponse |
 
 def _accept_session(key: DsnKey, item: envelope_translator.Item) -> None:
     try:
-        payload = json.loads(item.payload)
+        payload = json_payload.loads(item.payload)
     except ValueError:
         log.warning("envelope ingest dropped a session item that is not valid JSON")
         return
@@ -206,7 +215,7 @@ def store(request: HttpRequest, project_id: int) -> JsonResponse:
         return refusal
 
     try:
-        payload = json.loads(body)
+        payload = json_payload.loads(body)
     except ValueError:
         return JsonResponse(
             {"detail": "body is not valid JSON"}, status=HTTPStatus.BAD_REQUEST
@@ -251,7 +260,7 @@ def logs(request: HttpRequest, project_id: int) -> JsonResponse:
     except log_translator.LogError as error:
         return JsonResponse({"detail": str(error)}, status=HTTPStatus.BAD_REQUEST)
 
-    taken = _accept_rows(key, rows)
+    taken = _accept_rows(key, rows, TokenSource.LOG)
     return JsonResponse({"accepted": taken, "received": len(rows)})
 
 
@@ -276,7 +285,7 @@ def otlp_logs(request: HttpRequest, project_id: int) -> JsonResponse:
         return refusal
 
     try:
-        document = json.loads(body)
+        document = json_payload.loads(body)
     except ValueError:
         return JsonResponse(
             {"detail": "body is not valid JSON"}, status=HTTPStatus.BAD_REQUEST
@@ -287,11 +296,11 @@ def otlp_logs(request: HttpRequest, project_id: int) -> JsonResponse:
         )
 
     rows = log_translator.from_otlp(document)
-    taken = _accept_rows(key, rows)
+    taken = _accept_rows(key, rows, TokenSource.OTLP)
     return JsonResponse({"accepted": taken, "received": len(rows)})
 
 
-def _accept_rows(key: DsnKey, rows: list[dict]) -> int:
+def _accept_rows(key: DsnKey, rows: list[dict], source: str) -> int:
     taken = 0
     for row in rows[:LOG_LINE_LIMIT]:
         payload = log_translator.to_event(row)
@@ -299,7 +308,7 @@ def _accept_rows(key: DsnKey, rows: list[dict]) -> int:
         if not sizes.fits(sizes.EVENT, len(json.dumps(payload))):
             log.warning("log ingest dropped a line over the per-item limit")
             continue
-        _store_event(key, payload, source=TokenSource.LOG)
+        _store_event(key, payload, source=source)
         taken += 1
     return taken
 
@@ -307,7 +316,7 @@ def _accept_rows(key: DsnKey, rows: list[dict]) -> int:
 def _store_event(key: DsnKey, payload: dict, source: str = TokenSource.SDK) -> None:
     rule = scrub.dropped_by(payload, key.project)
     if rule is not None:
-        scrub.record_drop(rule, TokenSource.SDK)
+        scrub.record_drop(rule, source)
         return
 
     stored = RawEnvelope.objects.create(
@@ -354,7 +363,7 @@ def check_in(
     payload = {}
     if body:
         try:
-            parsed = json.loads(body)
+            parsed = json_payload.loads(body)
         except ValueError:
             return JsonResponse(
                 {"detail": "body is not valid JSON"}, status=HTTPStatus.BAD_REQUEST
@@ -370,16 +379,27 @@ def check_in(
         )
 
     schedule = payload.get("monitor_config") or {}
-    monitor = monitors.check_in(
-        key.project,
-        slug,
-        status,
-        timezone.now(),
-        environment=payload.get("environment", ""),
-        interval_minutes=schedule.get("interval_minutes"),
-        margin_minutes=schedule.get("checkin_margin"),
-        max_runtime_minutes=schedule.get("max_runtime"),
-    )
+    if not isinstance(schedule, dict):
+        return JsonResponse(
+            {"detail": "monitor_config must be a JSON object"},
+            status=HTTPStatus.BAD_REQUEST,
+        )
+    try:
+        monitor = monitors.check_in(
+            key.project,
+            slug,
+            status,
+            timezone.now(),
+            environment=payload.get("environment", ""),
+            interval_minutes=schedule.get("interval_minutes"),
+            margin_minutes=schedule.get("checkin_margin"),
+            max_runtime_minutes=schedule.get("max_runtime"),
+        )
+    except monitors.InvalidMonitor as error:
+        return JsonResponse(
+            {"detail": str(error)},
+            status=HTTPStatus.BAD_REQUEST,
+        )
     return JsonResponse({"id": monitor.slug, "status": monitor.status})
 
 
@@ -393,7 +413,7 @@ def _key_for(project_id: int, presented: str) -> DsnKey | None:
 
 def _accept_user_report(key: DsnKey, item: envelope_translator.Item) -> None:
     try:
-        payload = json.loads(item.payload)
+        payload = json_payload.loads(item.payload)
     except ValueError:
         log.warning("envelope ingest dropped a user report that is not valid JSON")
         return
@@ -428,7 +448,7 @@ def _accept_event(key: DsnKey, item: envelope_translator.Item, fallback: str) ->
         log.warning("envelope ingest dropped an event item over the per-item limit")
         return
     try:
-        payload = json.loads(item.payload)
+        payload = json_payload.loads(item.payload)
     except ValueError:
         log.warning("envelope ingest dropped an event item that is not valid JSON")
         return
@@ -486,28 +506,67 @@ class _TooLarge(Exception):
 def _decoded(request: HttpRequest) -> bytes:
     encoding = request.headers.get("Content-Encoding", "").strip().lower()
     limit = sizes.limit(sizes.ENVELOPE)
+    raw = _raw(request, limit)
     if encoding in GZIP_ENCODINGS or encoding == DEFLATE_ENCODING:
-        return _inflate(request.body, limit)
+        return _inflate(raw, limit)
     if encoding == BROTLI_ENCODING:
-        return _brotli(request.body, limit)
+        return _brotli(raw, limit)
     if encoding == ZSTD_ENCODING:
-        return _zstd(request.body, limit)
-    return request.body
+        return _zstd(raw, limit)
+    return raw
+
+
+def _raw(request: HttpRequest, limit: int) -> bytes:
+    """The request body, including the one shape Django will not read.
+
+    Django sizes its stream from `Content-Length` alone, so a chunked request
+    reads as empty — and `@sentry/node` sends every envelope chunked. Draining
+    the WSGI stream is the difference between accepting that SDK and refusing it
+    with a 400 nobody can explain.
+    """
+    if request.headers.get("Transfer-Encoding", "").strip().lower() != "chunked":
+        return request.body
+    stream = getattr(request, "environ", {}).get("wsgi.input")
+    if stream is None:
+        return request.body
+    return _drained(stream, limit)
+
+
+def _drained(stream: Any, limit: int) -> bytes:
+    pieces = []
+    total = 0
+    while total <= limit:
+        piece = stream.read(min(READ_SIZE, limit + 1 - total))
+        if not piece:
+            break
+        pieces.append(piece)
+        total += len(piece)
+    if total > limit:
+        raise _TooLarge
+    return b"".join(pieces)
 
 
 def _brotli(raw: bytes, limit: int) -> bytes:
-    body = brotli.decompress(raw)
-    if len(body) > limit:
-        raise _TooLarge
-    return body
+    machine = brotli.Decompressor()
+    pieces = []
+    total = 0
+    piece = machine.process(raw, limit + 1)
+    while True:
+        pieces.append(piece)
+        total += len(piece)
+        if total > limit:
+            raise _TooLarge
+        if machine.is_finished():
+            return b"".join(pieces)
+        if machine.can_accept_more_data():
+            raise brotli.error("incomplete brotli body")
+        piece = machine.process(b"", limit + 1 - total)
 
 
 def _zstd(raw: bytes, limit: int) -> bytes:
     machine = zstd.ZstdDecompressor()
-    body = machine.decompress(raw, max_output_size=limit + 1)
-    if len(body) > limit:
-        raise _TooLarge
-    return body
+    with machine.stream_reader(io.BytesIO(raw)) as reader:
+        return _drained(reader, limit)
 
 
 def _inflate(raw: bytes, limit: int) -> bytes:
@@ -542,4 +601,7 @@ def _content_length(request: HttpRequest) -> int:
     try:
         return int(raw)
     except ValueError:
-        return len(request.body)
+        pass
+    if request.headers.get("Transfer-Encoding", "").strip().lower() == "chunked":
+        return 0
+    return len(request.body)

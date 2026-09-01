@@ -1,16 +1,17 @@
 from __future__ import annotations
 
 import hashlib
-import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from django.conf import settings
 from ulid import ULID
 
 from pandora.core.models import Project
 from pandora.events import payload as payload_interfaces
+from pandora.ingest import json_payload
 from pandora.issues import grouping, lifecycle, normalise, paths
 from pandora.issues.models import GroupingRule, GroupingSource, Level, PathRule
 from pandora.scrub import service as scrub
@@ -91,6 +92,7 @@ def translate_event(
     *,
     environment: str = "",
     received_at: datetime,
+    source: str = "sdk",
     path_rules: Sequence[PathRule] | None = None,
     rules: Sequence[GroupingRule] | None = None,
 ) -> lifecycle.Occurrence:
@@ -115,7 +117,7 @@ def translate_event(
     title = grouping.title_for(rule, document, _title(payload, exception))
 
     timestamp = _timestamp(payload.get("timestamp"))
-    if timestamp is None:
+    if timestamp is None or not _timestamp_fits_storage(timestamp, received_at):
         timestamp = received_at
 
     return lifecycle.Occurrence(
@@ -140,7 +142,7 @@ def translate_event(
         extra=scrub.scrub_payload(_extra(payload), project),
         payload=scrub.scrub_payload(payload_interfaces.normalize(payload), project),
         environment=_environment(payload, environment)[:ENVIRONMENT_MAX],
-        source="sdk",
+        source=source,
     )
 
 
@@ -177,7 +179,7 @@ def _next_item(rest: bytes) -> tuple[Item, bytes]:
 
 def _json_object(raw: bytes, what: str) -> dict[str, Any]:
     try:
-        parsed = json.loads(raw)
+        parsed = json_payload.loads(raw)
     except ValueError as error:
         raise EnvelopeError(f"{what} is not valid JSON") from error
     if not isinstance(parsed, dict):
@@ -427,8 +429,13 @@ def _extra(payload: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def _timestamp(raw: Any) -> datetime | None:
+    if isinstance(raw, bool):
+        return None
     if isinstance(raw, int | float):
-        return datetime.fromtimestamp(float(raw), tz=UTC)
+        try:
+            return datetime.fromtimestamp(float(raw), tz=UTC)
+        except (ValueError, OverflowError, OSError):
+            return None
     if not isinstance(raw, str):
         return None
     text = raw.strip()
@@ -442,3 +449,10 @@ def _timestamp(raw: Any) -> datetime | None:
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=UTC)
     return parsed.astimezone(UTC)
+
+
+def _timestamp_fits_storage(timestamp: datetime, received_at: datetime) -> bool:
+    retention = max(0, settings.PANDORA_RETENTION_DAYS)
+    oldest = received_at - timedelta(days=retention)
+    newest = received_at + timedelta(days=1)
+    return oldest <= timestamp <= newest

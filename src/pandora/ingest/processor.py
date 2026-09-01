@@ -87,6 +87,7 @@ def _consume_event(envelope: RawEnvelope, store: EventStore) -> None:
         envelope.project,
         environment=envelope.environment,
         received_at=envelope.received_at,
+        source=envelope.source,
     )
     sentry_id = envelope_translator.sentry_event_id(
         envelope.payload,

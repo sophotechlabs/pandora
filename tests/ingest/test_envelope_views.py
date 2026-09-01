@@ -1,5 +1,6 @@
 import gzip
 import http
+import io
 import json
 import zlib
 
@@ -8,6 +9,7 @@ from django import test
 
 from pandora.core import models as core_models
 from pandora.ingest import models as ingest_models
+from pandora.ingest import views
 from tests.ingest import fakes
 
 RECORDING_QUEUE = "tests.ingest.fakes.RecordingQueue"
@@ -251,6 +253,13 @@ def test_a_body_that_is_not_really_compressed_is_refused(post):
     result = response.status_code
     expected = http.HTTPStatus.BAD_REQUEST
     assert result == expected
+
+
+@pytest.mark.parametrize("encoding", ["br", "zstd"])
+def test_a_body_with_a_broken_modern_encoding_is_refused(post, encoding):
+    response = post(body=b"not compressed", headers={"Content-Encoding": encoding})
+
+    assert response.status_code == http.HTTPStatus.BAD_REQUEST
 
 
 # envelope handling
@@ -610,6 +619,18 @@ def test_the_store_endpoint_refuses_a_body_that_is_not_json(client, dsn_key):
     assert result == expected
 
 
+@pytest.mark.parametrize("timestamp", ["1e309", "NaN", "Infinity"])
+def test_the_store_endpoint_refuses_non_finite_json(client, dsn_key, timestamp):
+    response = client.post(
+        f"/api/{dsn_key.project_id}/store/?sentry_key={dsn_key.public_key}",
+        data=f'{{"message":"boom","timestamp":{timestamp}}}',
+        content_type="application/json",
+    )
+
+    assert response.status_code == http.HTTPStatus.BAD_REQUEST
+    assert ingest_models.RawEnvelope.objects.count() == 0
+
+
 def test_a_dropped_payload_never_reaches_the_store_endpoint_inbox(client, dsn_key):
     """Should honour a drop rule on this door too — a door that skips it is a hole."""
     from pandora.scrub import models as scrub_models
@@ -799,5 +820,90 @@ def test_the_store_endpoint_holds_the_size_cap(client, dsn_key):
 
     result = response.status_code
     expected = http.HTTPStatus.REQUEST_ENTITY_TOO_LARGE
+
+    assert result == expected
+
+
+# chunked bodies, which is how the JavaScript SDK sends every envelope
+
+
+def chunked(dsn_key, body, key=PUBLIC_KEY):
+    """Post the way `@sentry/node` does: no Content-Length, a chunked stream.
+
+    The test client cannot express this — its payload refuses a read past the
+    declared length — so the request is built by hand with a real stream.
+    """
+    factory = test.RequestFactory()
+    request = factory.post(
+        f"/api/{dsn_key.project_id}/envelope/?sentry_key={key}",
+        data=body,
+        content_type=ENVELOPE_TYPE,
+    )
+    request.environ.pop("CONTENT_LENGTH", None)
+    request.META.pop("CONTENT_LENGTH", None)
+    request.environ["HTTP_TRANSFER_ENCODING"] = "chunked"
+    request.META["HTTP_TRANSFER_ENCODING"] = "chunked"
+    request.environ["wsgi.input"] = io.BytesIO(body)
+    return views.envelope(request, dsn_key.project_id)
+
+
+def test_a_chunked_envelope_is_accepted(dsn_key, settings, published):
+    """Should read the body Django sizes at zero.
+
+    Django builds its request stream from `Content-Length` alone, so a chunked
+    request reads as empty. `@sentry/node` sends every envelope chunked, and it
+    was refused with a 400 nobody could explain until the stream was drained.
+    """
+    settings.PANDORA_QUEUE = RECORDING_QUEUE
+
+    response = chunked(dsn_key, default_body())
+
+    result = (response.status_code, len(published))
+    expected = (http.HTTPStatus.OK, 1)
+
+    assert result == expected
+
+
+def test_a_chunked_envelope_keeps_its_event(dsn_key, settings):
+    """Should store what the stream held, not an empty envelope."""
+    settings.PANDORA_QUEUE = INLINE_QUEUE
+
+    chunked(dsn_key, default_body(event_id="c" * 32))
+
+    result = ingest_models.RawEnvelope.objects.get().payload["event_id"]
+    expected = "c" * 32
+
+    assert result == expected
+
+
+def test_an_oversized_chunked_envelope_is_refused(dsn_key, settings):
+    """Should hold the size cap on what arrives, not on what is declared."""
+    settings.PANDORA_INGEST_MAX_BYTES = 256
+
+    response = chunked(dsn_key, b"x" * 4096)
+
+    result = response.status_code
+    expected = http.HTTPStatus.REQUEST_ENTITY_TOO_LARGE
+
+    assert result == expected
+
+
+def test_a_chunked_request_with_no_stream_falls_back_to_the_body(dsn_key, settings):
+    """Should not raise on a server that reports chunked without a WSGI stream."""
+    settings.PANDORA_QUEUE = INLINE_QUEUE
+    factory = test.RequestFactory()
+    request = factory.post(
+        f"/api/{dsn_key.project_id}/envelope/?sentry_key={PUBLIC_KEY}",
+        data=default_body(event_id="e" * 32),
+        content_type=ENVELOPE_TYPE,
+    )
+    request.META["HTTP_TRANSFER_ENCODING"] = "chunked"
+    request.environ["HTTP_TRANSFER_ENCODING"] = "chunked"
+    request.environ.pop("wsgi.input", None)
+
+    response = views.envelope(request, dsn_key.project_id)
+
+    result = response.status_code
+    expected = http.HTTPStatus.OK
 
     assert result == expected

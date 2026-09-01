@@ -2,6 +2,7 @@ import datetime
 import json
 
 import pytest
+from django.test import override_settings
 from django.utils import timezone
 
 from pandora.ingest.translators import envelope
@@ -968,6 +969,23 @@ def test_an_unusable_timestamp_falls_back_to_arrival(project, stamp):
     result = occurrence.starts_at
     expected = RECEIVED_AT
     assert result == expected
+
+
+@pytest.mark.django_db
+@override_settings(PANDORA_RETENTION_DAYS=30)
+@pytest.mark.parametrize(
+    "stamp",
+    [
+        RECEIVED_AT - datetime.timedelta(days=31),
+        RECEIVED_AT + datetime.timedelta(days=2),
+    ],
+)
+def test_a_timestamp_outside_the_storage_window_falls_back_to_arrival(project, stamp):
+    payload = event_payload(timestamp=stamp.isoformat())
+
+    occurrence = envelope.translate_event(payload, project, received_at=RECEIVED_AT)
+
+    assert occurrence.starts_at == RECEIVED_AT
 
 
 @pytest.mark.django_db

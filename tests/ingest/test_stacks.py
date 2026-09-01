@@ -362,3 +362,39 @@ def test_a_go_dump_with_a_trailing_function_is_taken():
     result = stacks.parse(text).frames
 
     assert len(result) == 1
+
+
+def test_an_exception_class_without_an_error_suffix_is_read():
+    """Should not require a class to be named `*Error` to be the exception.
+
+    A real shipper traceback ending `shipper.errors.UpstreamRefused: 503` was
+    titled `Error: write` until this stopped being a suffix match.
+    """
+    trace = (
+        "Traceback (most recent call last):\n"
+        '  File "/srv/shipper/sink.py", line 31, in write\n'
+        "    raise UpstreamRefused(response.status_code)\n"
+        "shipper.errors.UpstreamRefused: 503"
+    )
+
+    parsed = stacks.parse(trace)
+
+    result = (parsed.kind, parsed.module, parsed.value)
+    expected = ("UpstreamRefused", "shipper.errors", "503")
+
+    assert result == expected
+
+
+def test_a_bare_exception_name_is_read():
+    """Should read the last line even when it carries no message."""
+    trace = (
+        "Traceback (most recent call last):\n"
+        '  File "app.py", line 3, in run\n'
+        "    stop()\n"
+        "Cancelled"
+    )
+
+    result = stacks.parse(trace).kind
+    expected = "Cancelled"
+
+    assert result == expected

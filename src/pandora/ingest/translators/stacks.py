@@ -8,8 +8,7 @@ PYTHON_FRAME = re.compile(
     r'^\s*File "(?P<filename>[^"]+)", line (?P<lineno>\d+), in (?P<function>.+)$'
 )
 PYTHON_EXCEPTION = re.compile(
-    r"^(?P<module>[\w.]+\.)?(?P<type>[A-Za-z_][\w]*(?:Error|Exception|Warning|Exit))"
-    r"(?::\s*(?P<value>.*))?$"
+    r"^(?P<module>[\w.]+\.)?(?P<type>[A-Za-z_][\w]*)(?::\s*(?P<value>.*))?$"
 )
 
 JAVA_HEADER = re.compile(

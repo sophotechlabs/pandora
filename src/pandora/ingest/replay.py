@@ -26,11 +26,16 @@ class ReplayResult:
 
 
 def pending_envelopes(
-    states: Sequence[str], limit: int, project_slug: str = ""
+    states: Sequence[str],
+    limit: int,
+    project_slug: str = "",
+    project_ids: Sequence[int] | None = None,
 ) -> list[RawEnvelope]:
     query = RawEnvelope.objects.filter(state__in=states).order_by("pk")
     if project_slug:
         query = query.filter(project__slug=project_slug)
+    if project_ids is not None:
+        query = query.filter(project_id__in=project_ids)
     return list(query[:limit])
 
 
@@ -39,8 +44,9 @@ def replay(
     limit: int,
     project_slug: str = "",
     store: EventStore | None = None,
+    project_ids: Sequence[int] | None = None,
 ) -> ReplayResult:
-    envelopes = pending_envelopes(states, limit, project_slug)
+    envelopes = pending_envelopes(states, limit, project_slug, project_ids)
     done = 0
     failed = 0
     for envelope in envelopes:

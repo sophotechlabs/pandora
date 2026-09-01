@@ -13,6 +13,11 @@ IN_PROGRESS = "in_progress"
 OK = "ok"
 ERROR = "error"
 STATUSES = (IN_PROGRESS, OK, ERROR)
+MAX_MINUTES = 525_600
+
+
+class InvalidMonitor(ValueError):
+    pass
 
 
 @dataclass
@@ -36,15 +41,20 @@ def check_in(
     a job that reports is a job that is watched, with no row to create first.
     """
     name = slugify(slug)[:100]
+    if not name:
+        raise InvalidMonitor("the monitor slug is empty after normalization")
+    schedule = {}
+    for key in ("interval_minutes", "margin_minutes", "max_runtime_minutes"):
+        value = fields.get(key)
+        if value is not None:
+            schedule[key] = _minutes(value)
     monitor, _ = Monitor.objects.get_or_create(
         project=project,
         slug=name,
         defaults={"name": str(fields.get("name", "") or slug)[:200]},
     )
-    for key in ("interval_minutes", "margin_minutes", "max_runtime_minutes"):
-        value = fields.get(key)
-        if value:
-            setattr(monitor, key, int(value))
+    for key, value in schedule.items():
+        setattr(monitor, key, value)
     environment = fields.get("environment")
     if environment:
         monitor.environment = str(environment)[:100]
@@ -60,6 +70,24 @@ def check_in(
         monitor.last_check_in = at
     monitor.save()
     return monitor
+
+
+def _minutes(value: Any) -> int:
+    if isinstance(value, bool):
+        raise InvalidMonitor("monitor schedule values must be positive integers")
+    if isinstance(value, float) and not value.is_integer():
+        raise InvalidMonitor("monitor schedule values must be positive integers")
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError, OverflowError) as error:
+        raise InvalidMonitor(
+            "monitor schedule values must be positive integers"
+        ) from error
+    if parsed < 1 or parsed > MAX_MINUTES:
+        raise InvalidMonitor(
+            f"monitor schedule values must be between 1 and {MAX_MINUTES}"
+        )
+    return parsed
 
 
 def sweep(now: datetime) -> Sweep:

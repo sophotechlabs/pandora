@@ -170,6 +170,31 @@ def test_an_oversized_check_in_is_refused(client, key):
     assert result == expected
 
 
+@pytest.mark.parametrize(
+    "monitor_config",
+    [
+        ["invalid"],
+        {"interval_minutes": "many"},
+        {"interval_minutes": -1},
+        {"interval_minutes": 1.5},
+        {"interval_minutes": True},
+        {"interval_minutes": 525_601},
+    ],
+)
+def test_a_malformed_schedule_is_refused(send, monitor_config):
+    response = send(body={"status": "ok", "monitor_config": monitor_config})
+
+    assert response.status_code == http.HTTPStatus.BAD_REQUEST
+    assert ingest_models.Monitor.objects.count() == 0
+
+
+def test_a_slug_that_normalizes_to_empty_is_refused(send):
+    response = send(slug="---")
+
+    assert response.status_code == http.HTTPStatus.BAD_REQUEST
+    assert ingest_models.Monitor.objects.count() == 0
+
+
 # the sweep
 
 
