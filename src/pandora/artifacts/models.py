@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from django.db import models
+from django.db.models.signals import post_delete
+from django.dispatch import receiver
 from django.utils import timezone
 
 from pandora.core.models import Project
@@ -72,3 +74,49 @@ class BundleFile(models.Model):
 
     def __str__(self) -> str:
         return f"{self.path} ({self.kind})"
+
+
+class UploadChunk(models.Model):
+    """One piece of an upload, held between the chunk POST and the assemble call.
+
+    The protocol is deliberately two-phase: the client asks what is missing,
+    sends only that, and asks again. Chunks are rubble once a bundle is built,
+    so they are deleted on assembly and swept if an upload is abandoned.
+    """
+
+    project = models.ForeignKey(
+        Project,
+        on_delete=models.CASCADE,
+        related_name="upload_chunks",
+    )
+    checksum = models.CharField(max_length=40)
+    blob = models.FileField(upload_to="chunks/")
+    size = models.PositiveBigIntegerField(default=0)
+    received_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["project", "checksum"],
+                name="artifacts_chunk_uq",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["received_at"], name="artifacts_chunk_received"),
+        ]
+        ordering = ("received_at",)
+
+    def __str__(self) -> str:
+        return self.checksum[:12]
+
+
+@receiver(post_delete, sender=BundleFile)
+def delete_bundle_file_blob(sender, instance: BundleFile, **kwargs) -> None:
+    if instance.blob:
+        instance.blob.delete(save=False)
+
+
+@receiver(post_delete, sender=UploadChunk)
+def delete_upload_chunk_blob(sender, instance: UploadChunk, **kwargs) -> None:
+    if instance.blob:
+        instance.blob.delete(save=False)

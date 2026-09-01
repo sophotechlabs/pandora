@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 from http import HTTPStatus
 
@@ -8,7 +9,6 @@ from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 
 from pandora.artifacts import service
-from pandora.artifacts.sourcemaps import SourceMapError
 from pandora.core.models import IngestToken, TokenScope
 
 BEARER_PREFIX = "Bearer "
@@ -17,71 +17,125 @@ log = logging.getLogger(__name__)
 
 @csrf_exempt
 def chunk_upload(request: HttpRequest, organization: str = "") -> JsonResponse:
-    """The one endpoint `sentry-cli` negotiates with and uploads to.
+    """What `sentry-cli` negotiates with, and then uploads to.
 
-    A GET advertises what this server accepts; a POST takes the bundle.
-    """
-    if request.method == "GET":
-        if _token(request) is None:
-            return JsonResponse(
-                {"detail": "unauthorized"}, status=HTTPStatus.UNAUTHORIZED
-            )
-        return JsonResponse(service.chunk_options())
-    return _upload(request)
-
-
-def _upload(request: HttpRequest) -> JsonResponse:
-    """Take an artifact bundle from unmodified upload tooling.
-
-    Implementing the contract verbatim is the same play as speaking the envelope
-    protocol: `sentry-cli` and the bundler plugins are MIT-licensed and already
+    A GET advertises what this server accepts; a POST takes chunks, each part
+    named by the checksum of what it holds. Implementing the contract verbatim
+    is the same play as speaking the envelope protocol: the tooling is already
     in everyone's CI, so there is no upload tool to write or maintain.
     """
+    token = _token(request)
+    if token is None:
+        return JsonResponse({"detail": "unauthorized"}, status=HTTPStatus.UNAUTHORIZED)
+
+    if request.method == "GET":
+        return JsonResponse(service.chunk_options())
     if request.method != "POST":
         return JsonResponse(
             {"detail": "method not allowed"},
             status=HTTPStatus.METHOD_NOT_ALLOWED,
         )
 
-    token = _token(request)
-    if token is None:
-        return JsonResponse({"detail": "unauthorized"}, status=HTTPStatus.UNAUTHORIZED)
+    uploads = []
+    for name in sorted(request.FILES):
+        uploads.extend(request.FILES.getlist(name))
 
-    payload = _payload(request)
-    if not payload:
+    if not uploads:
         return JsonResponse(
-            {"detail": "no bundle was uploaded"}, status=HTTPStatus.BAD_REQUEST
+            {"detail": "no chunk was uploaded"}, status=HTTPStatus.BAD_REQUEST
         )
-    if len(payload) > service.MAX_REQUEST_SIZE:
+    if len(uploads) > service.MAX_CHUNKS_PER_REQUEST:
         return JsonResponse(
-            {"detail": "oversized"},
+            {"detail": "too many chunks"},
+            status=HTTPStatus.REQUEST_ENTITY_TOO_LARGE,
+        )
+    total_size = 0
+    for uploaded in uploads:
+        if uploaded.size is None:
+            return JsonResponse(
+                {"detail": "chunk size is unknown"},
+                status=HTTPStatus.BAD_REQUEST,
+            )
+        total_size += uploaded.size
+    if total_size > service.MAX_REQUEST_SIZE:
+        return JsonResponse(
+            {"detail": "upload is too large"},
             status=HTTPStatus.REQUEST_ENTITY_TOO_LARGE,
         )
 
-    try:
-        stored = service.store_bundle(token.project, payload, timezone.now())
-    except SourceMapError as error:
-        return JsonResponse({"detail": str(error)}, status=HTTPStatus.BAD_REQUEST)
+    now = timezone.now()
+    taken = []
+    for uploaded in uploads:
+        body = uploaded.read(service.MAX_REQUEST_SIZE + 1)
+        try:
+            taken.append(service.store_chunk(token.project, body, now))
+        except service.ChunkTooLarge:
+            return JsonResponse(
+                {"detail": "oversized chunk"},
+                status=HTTPStatus.REQUEST_ENTITY_TOO_LARGE,
+            )
+    return JsonResponse({"chunks": taken})
 
-    if not stored:
+
+@csrf_exempt
+def assemble(request: HttpRequest, organization: str = "") -> JsonResponse:
+    """Join what was uploaded and answer with the state the protocol defines.
+
+    `not_found` with a list is the useful answer: it tells the client exactly
+    which chunks to send rather than failing an upload it could have finished.
+    """
+    token = _token(request)
+    if token is None:
+        return JsonResponse({"detail": "unauthorized"}, status=HTTPStatus.UNAUTHORIZED)
+    if request.method != "POST":
         return JsonResponse(
-            {"detail": "no file in the bundle carried a debug id"},
+            {"detail": "method not allowed"},
+            status=HTTPStatus.METHOD_NOT_ALLOWED,
+        )
+
+    try:
+        document = json.loads(request.body or b"{}")
+    except ValueError:
+        return JsonResponse(
+            {"detail": "body is not valid JSON"}, status=HTTPStatus.BAD_REQUEST
+        )
+    if not isinstance(document, dict):
+        return JsonResponse(
+            {"detail": "body is not a JSON object"}, status=HTTPStatus.BAD_REQUEST
+        )
+
+    checksum = document.get("checksum")
+    chunks = document.get("chunks")
+    if not isinstance(checksum, str) or not checksum.strip():
+        return JsonResponse(
+            {"detail": "checksum and chunks are both required"},
             status=HTTPStatus.BAD_REQUEST,
         )
-    return JsonResponse(
-        {
-            "bundles": [
-                {"debug_id": row.bundle.debug_id, "files": row.files} for row in stored
-            ]
-        }
+    if not isinstance(chunks, list) or not chunks:
+        return JsonResponse(
+            {"detail": "checksum and chunks are both required"},
+            status=HTTPStatus.BAD_REQUEST,
+        )
+    if len(chunks) > service.MAX_CHUNKS_PER_REQUEST:
+        return JsonResponse(
+            {"detail": "too many chunks"},
+            status=HTTPStatus.REQUEST_ENTITY_TOO_LARGE,
+        )
+    if not all(isinstance(row, str) and row.strip() for row in chunks):
+        return JsonResponse(
+            {"detail": "chunks must be strings"},
+            status=HTTPStatus.BAD_REQUEST,
+        )
+
+    state, missing, detail = service.assemble(
+        token.project, checksum.strip(), [row.strip() for row in chunks], timezone.now()
     )
-
-
-def _payload(request: HttpRequest) -> bytes:
-    names = sorted(request.FILES)
-    if not names:
-        return request.body
-    return request.FILES.getlist(names[0])[0].read()
+    if state == service.STATE_ERROR:
+        log.warning("artifact assemble refused: %s", detail)
+    return JsonResponse(
+        {"state": state, "missingChunks": missing, "detail": detail},
+        status=HTTPStatus.OK,
+    )
 
 
 def _token(request: HttpRequest) -> IngestToken | None:

@@ -8,4 +8,9 @@ urlpatterns = [
         views.chunk_upload,
         name="artifacts-chunk-upload",
     ),
+    path(
+        "api/0/organizations/<str:organization>/artifactbundle/assemble/",
+        views.assemble,
+        name="artifacts-assemble",
+    ),
 ]

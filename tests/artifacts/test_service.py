@@ -1,6 +1,9 @@
 import datetime
+import gzip
+import hashlib
 import io
 import json
+import pathlib
 import zipfile
 
 import pytest
@@ -35,9 +38,15 @@ def test_the_advertised_constants_match_the_upload_contract():
 
 
 def test_only_the_javascript_capabilities_are_advertised():
-    """Should let sentry-cli negotiate down cleanly rather than promise symbolication."""
+    """Should promise the JavaScript path and nothing native.
+
+    `release_files` is what sentry-cli gates the chunked upload on and
+    `artifact_bundles` is what lets it upload without naming a release. The
+    native ones — debug_files, pdbs, bcsymbolmaps — stay off the list because
+    they would be a promise pandora does not keep.
+    """
     result = service.chunk_options()["accept"]
-    expected = ["artifact_bundles", "artifact_bundles_v2"]
+    expected = ["release_files", "artifact_bundles", "artifact_bundles_v2"]
 
     assert result == expected
 
@@ -119,6 +128,15 @@ def test_re_uploading_replaces_the_file(project, bundle_bytes):
     assert result == expected
 
 
+def test_re_uploading_removes_the_replaced_blob(project, bundle_bytes):
+    service.store_bundle(project, bundle_bytes(), NOW)
+    original = pathlib.Path(artifact_models.BundleFile.objects.get().blob.path)
+
+    service.store_bundle(project, bundle_bytes(), NOW)
+
+    assert list(original.parent.iterdir()) == [original]
+
+
 def test_a_bundle_reads_as_its_id_and_release(project, bundle_bytes):
     """Should be legible in the admin without opening the row."""
     service.store_bundle(project, bundle_bytes(), NOW)
@@ -147,6 +165,33 @@ def test_a_manifest_that_is_not_json_is_ignored(project, bundle_bytes):
     result = service.store_bundle(project, buffer.getvalue(), NOW)
 
     assert len(result) == 1
+
+
+@pytest.mark.parametrize("manifest", [[], {"files": []}, {"files": {"app.js.map": []}}])
+def test_malformed_manifest_shapes_are_ignored(project, bundle_bytes, manifest):
+    result = service.store_bundle(project, bundle_bytes(manifest=manifest), NOW)
+
+    assert len(result) == 1
+
+
+def test_an_overlong_debug_id_is_skipped(project, bundle_bytes):
+    payload = bundle_bytes(
+        document={"version": 3, "sources": [], "mappings": ""},
+        manifest={"files": {"app.js.map": {"headers": {"debug-id": "x" * 65}}}},
+    )
+
+    result = service.store_bundle(project, payload, NOW)
+
+    assert result == []
+
+
+def test_an_archive_that_expands_past_the_limit_is_refused(
+    project, bundle_bytes, monkeypatch
+):
+    monkeypatch.setattr(service, "MAX_EXTRACTED_SIZE", 1)
+
+    with pytest.raises(SourceMapError, match="expands"):
+        service.store_bundle(project, bundle_bytes(), NOW)
 
 
 def test_a_directory_entry_is_skipped(project):
@@ -260,6 +305,18 @@ def test_a_bundle_nothing_has_used_is_collected(project, bundle_bytes):
     assert result == expected
 
 
+def test_collecting_a_bundle_removes_its_files(project, bundle_bytes):
+    service.store_bundle(project, bundle_bytes(), NOW)
+    path = artifact_models.BundleFile.objects.get().blob.path
+    artifact_models.ArtifactBundle.objects.update(
+        uploaded_at=NOW - datetime.timedelta(days=200), last_used_at=None
+    )
+
+    service.prune(NOW)
+
+    assert not pathlib.Path(path).exists()
+
+
 def test_a_fresh_bundle_is_never_collected(project, bundle_bytes):
     """Should not delete a map uploaded before the error it explains."""
     service.store_bundle(project, bundle_bytes(), NOW)
@@ -283,3 +340,52 @@ def test_collecting_a_bundle_forgets_its_cache(project, bundle_bytes):
     result = service.resolve(project.pk, DEBUG_ID, 1, 0)
 
     assert result is None
+
+
+# chunks
+
+
+def test_a_chunk_that_only_looks_gzipped_is_kept_as_it_is(project):
+    """Should not lose a chunk that happens to open with the gzip magic number."""
+    raw = b"\x1f\x8bnot actually gzip"
+
+    checksum = service.store_chunk(project, raw, NOW)
+
+    result = service.missing_chunks(
+        project, [hashlib.sha1(raw, usedforsecurity=False).hexdigest()]
+    )
+    expected = []
+
+    assert (result, checksum) == (
+        expected,
+        hashlib.sha1(raw, usedforsecurity=False).hexdigest(),
+    )
+
+
+def test_a_chunk_names_itself_in_the_admin(project, bundle_bytes):
+    """Should be findable by the first characters of its checksum."""
+    service.store_chunk(project, bundle_bytes(), NOW)
+
+    chunk = artifact_models.UploadChunk.objects.get()
+
+    result = str(chunk)
+    expected = chunk.checksum[:12]
+
+    assert result == expected
+
+
+def test_a_gzip_chunk_cannot_expand_past_the_chunk_limit(project, monkeypatch):
+    monkeypatch.setattr(service, "CHUNK_SIZE", 8)
+
+    with pytest.raises(service.ChunkTooLarge):
+        service.store_chunk(project, gzip.compress(b"x" * 9), NOW)
+
+
+def test_re_uploading_a_chunk_refreshes_its_expiry(project, bundle_bytes):
+    service.store_chunk(project, bundle_bytes(), NOW)
+    later = NOW + datetime.timedelta(hours=1)
+
+    service.store_chunk(project, bundle_bytes(), later)
+
+    result = artifact_models.UploadChunk.objects.get().received_at
+    assert result == later
