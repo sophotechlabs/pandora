@@ -82,7 +82,8 @@ def test_pruning_drops_only_what_is_older_than_the_cutoff():
     with freezegun.freeze_time("2026-08-01 10:00:00"):
         kept = audit.record("dev", audit.TRIAGE)
 
-    dropped = audit.prune(timezone.now() - datetime.timedelta(days=30))
+    with freezegun.freeze_time("2026-08-15 10:00:00"):
+        dropped = audit.prune(timezone.now() - datetime.timedelta(days=30))
 
     result = (dropped, list(AuditEntry.objects.values_list("pk", flat=True)))
     expected = (1, [kept.pk])
