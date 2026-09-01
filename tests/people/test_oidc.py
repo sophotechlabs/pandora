@@ -207,9 +207,21 @@ def test_no_default_role_leaves_the_account_out_of_every_team(configured):
     """Should let an operator require the membership to be granted by hand."""
     configured.PANDORA_OIDC_DEFAULT_ROLE = ""
 
-    oidc.provision({"preferred_username": "dev"})
+    user = oidc.provision({"preferred_username": "dev"})
 
     assert Membership.objects.count() == 0
+    assert user.is_staff is False
+
+
+def test_losing_the_last_oidc_role_revokes_staff_access(configured):
+    configured.PANDORA_OIDC_OWNER_GROUP = "platform"
+    configured.PANDORA_OIDC_DEFAULT_ROLE = ""
+    oidc.provision({"preferred_username": "dev", "groups": ["platform"]})
+
+    user = oidc.provision({"preferred_username": "dev", "groups": []})
+
+    assert Membership.objects.filter(user=user).count() == 0
+    assert user.is_staff is False
 
 
 def test_a_comma_separated_groups_claim_is_split(configured):

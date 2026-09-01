@@ -30,11 +30,11 @@ RUN apt-get update \
 USER pandora
 
 COPY --chown=pandora:pandora pyproject.toml uv.lock ./
-RUN uv sync --frozen --extra web --no-install-project
+RUN uv sync --frozen --extra web --extra oidc --no-install-project
 
 COPY --chown=pandora:pandora manage.py ./
 COPY --chown=pandora:pandora src/ ./src/
-RUN uv sync --frozen --extra web
+RUN uv sync --frozen --extra web --extra oidc
 
 
 FROM builder AS dev

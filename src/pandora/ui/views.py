@@ -18,7 +18,7 @@ from django.utils.http import url_has_allowed_host_and_scheme, urlencode
 from django.views.decorators.http import require_POST
 
 from pandora.am import client as am_client
-from pandora.core.models import IngestToken
+from pandora.core.models import IngestToken, Project
 from pandora.events.store import get_store
 from pandora.events.types import Event
 from pandora.ingest import replay as ingest_replay
@@ -136,11 +136,17 @@ class EventPage:
     supported: bool
 
 
-def _scoped(queryset: QuerySet[Issue], request: HttpRequest) -> QuerySet[Issue]:
-    projects = access.projects_for(request.user)
+def _scoped(queryset: QuerySet[Any], request: HttpRequest) -> QuerySet[Any]:
+    projects = _project_scope(request)
     if projects is None:
         return queryset
     return queryset.filter(project_id__in=projects)
+
+
+def _project_scope(request: HttpRequest) -> list[int] | None:
+    if not hasattr(request, "pandora_project_scope"):
+        request.pandora_project_scope = access.projects_for(request.user)
+    return request.pandora_project_scope
 
 
 def sso_start(request: HttpRequest) -> HttpResponse:
@@ -162,6 +168,8 @@ def sso_callback(request: HttpRequest) -> HttpResponse:
     claims = token.get("userinfo") or {}
     try:
         user = oidc.provision(claims)
+        if not user.is_staff:
+            raise oidc.OidcError("the account is not assigned a Pandora role")
     except oidc.OidcError as error:
         messages.error(request, f"Single sign-on failed — {error}")
         return redirect("ui:login")
@@ -193,14 +201,14 @@ def stream(request: HttpRequest) -> HttpResponse:
         "rows": [presenters.row(issue, now) for issue in page.object_list],
         "page": page,
         "total": page.paginator.count,
-        "segments": _segments(raw),
+        "segments": _segments(raw, request),
         "views": _views(raw, sort),
         "sorts": [_sort(key) for key, _, _ in SORTS],
         "sort": sort,
         "page_query": urlencode({"q": raw, "sort": sort.key}),
         "windows": SILENCE_LABELS,
         "snoozes": SNOOZE_LABELS,
-        "releases": _release_options(),
+        "releases": _release_options(request),
         "spark_width": presenters.SPARK_WIDTH,
         "spark_height": presenters.SPARK_HEIGHT,
         "can_triage": access.may(request.user, TRIAGE_PERMISSION),
@@ -252,7 +260,7 @@ def _recent_events(issue: Issue) -> list[Event]:
 @staff_member_required(login_url=LOGIN_URL)
 def overview(request: HttpRequest) -> HttpResponse:
     now = timezone.now()
-    projects = access.projects_for(request.user)
+    projects = _project_scope(request)
     firing = (
         _scoped(presenters.stream_queryset(now), request)
         .filter(source_state=SourceState.FIRING)
@@ -275,7 +283,13 @@ def overview(request: HttpRequest) -> HttpResponse:
 @staff_member_required(login_url=LOGIN_URL)
 def history(request: HttpRequest) -> HttpResponse:
     now = timezone.now()
-    entries = AuditEntry.objects.all()
+    visible_entries = AuditEntry.objects.all()
+    project_ids = _project_scope(request)
+    if project_ids is not None:
+        visible_entries = visible_entries.filter(
+            projects__pk__in=project_ids
+        ).distinct()
+    entries = visible_entries
     action = request.GET.get("action", "").strip()
     if action:
         entries = entries.filter(action=action)
@@ -291,9 +305,7 @@ def history(request: HttpRequest) -> HttpResponse:
         ],
         "page": page,
         "total": page.paginator.count,
-        "actions": sorted(
-            AuditEntry.objects.values_list("action", flat=True).distinct()
-        ),
+        "actions": sorted(visible_entries.values_list("action", flat=True).distinct()),
         "action": action,
         "actor": actor,
         "page_query": urlencode({"action": action, "actor": actor}),
@@ -304,13 +316,14 @@ def history(request: HttpRequest) -> HttpResponse:
 @staff_member_required(login_url=LOGIN_URL)
 def ingest(request: HttpRequest) -> HttpResponse:
     now = timezone.now()
-    counts = RawEnvelope.objects.aggregate(
+    envelopes = _scoped(RawEnvelope.objects.all(), request)
+    counts = envelopes.aggregate(
         pending=Count("pk", filter=Q(state=EnvelopeState.PENDING)),
         failed=Count("pk", filter=Q(state=EnvelopeState.FAILED)),
         done=Count("pk", filter=Q(state=EnvelopeState.DONE)),
     )
     failures = (
-        RawEnvelope.objects.filter(state=EnvelopeState.FAILED)
+        envelopes.filter(state=EnvelopeState.FAILED)
         .select_related("project")
         .order_by("-received_at")[:FAILURE_ROWS]
     )
@@ -318,14 +331,14 @@ def ingest(request: HttpRequest) -> HttpResponse:
         "nav": "ingest",
         "counts": counts,
         "backlog": counts["pending"] + counts["failed"],
-        "last_accepted": _last_accepted(),
+        "last_accepted": _last_accepted(envelopes),
         "failures": [
             (envelope, components.format_relative(envelope.received_at, now))
             for envelope in failures
         ],
-        "tokens": IngestToken.objects.select_related("project").order_by(
-            "project__slug", "name"
-        ),
+        "tokens": _scoped(
+            IngestToken.objects.select_related("project"), request
+        ).order_by("project__slug", "name"),
     }
     return render(request, "ui/ingest.html", context)
 
@@ -336,7 +349,11 @@ def issue_actions(request: HttpRequest) -> HttpResponse:
     if not access.may(request.user, TRIAGE_PERMISSION):
         return HttpResponseForbidden("triage requires the issue change permission")
 
-    issues = list(Issue.objects.filter(pk__in=request.POST.getlist("issue")))
+    issues = list(
+        _scoped(Issue.objects.all(), request).filter(
+            pk__in=request.POST.getlist("issue")
+        )
+    )
     if not issues:
         messages.warning(request, "No issue was selected")
         return redirect(_next_url(request))
@@ -367,7 +384,7 @@ def delete_occurrence(
             "deleting an occurrence requires the issue change permission"
         )
 
-    issue = get_object_or_404(Issue, pk=issue_id)
+    issue = get_object_or_404(_scoped(Issue.objects.all(), request), pk=issue_id)
     store = get_store()
     try:
         found = [
@@ -385,7 +402,11 @@ def delete_occurrence(
 
     removed = store.delete(issue.project_id, found)
     audit.from_request(
-        request, audit.DELETE_OCCURRENCE, str(issue.pk), {"event": event_id}
+        request,
+        audit.DELETE_OCCURRENCE,
+        str(issue.pk),
+        {"event": event_id},
+        project_ids=[issue.project_id],
     )
     messages.success(request, f"Deleted {removed} occurrence(s)")
     return redirect(_next_url(request))
@@ -452,7 +473,11 @@ def unmerge(request: HttpRequest, issue_id: int, fingerprint: str) -> HttpRespon
     issue = get_object_or_404(_scoped(Issue.objects.all(), request), pk=issue_id)
     if merge.unmerge(issue, fingerprint, request.user.get_username()):
         audit.from_request(
-            request, audit.UNMERGE, str(issue.pk), {"fingerprint": fingerprint}
+            request,
+            audit.UNMERGE,
+            str(issue.pk),
+            {"fingerprint": fingerprint},
+            project_ids=[issue.project_id],
         )
         messages.success(
             request,
@@ -470,15 +495,21 @@ def replay_envelopes(request: HttpRequest) -> HttpResponse:
     if not access.may(request.user, REPLAY_PERMISSION):
         return HttpResponseForbidden("replay requires the envelope change permission")
 
+    project_ids = _project_scope(request)
     result = ingest_replay.replay(
         ingest_replay.STATE_SETS["all"],
         REPLAY_LIMIT,
+        project_ids=project_ids,
     )
+    audit_project_ids = project_ids
+    if audit_project_ids is None:
+        audit_project_ids = list(Project.objects.values_list("pk", flat=True))
     audit.from_request(
         request,
         audit.REPLAY,
         "",
         {"attempted": result.attempted, "done": result.done, "failed": result.failed},
+        project_ids=audit_project_ids,
     )
     messages.success(
         request,
@@ -507,7 +538,7 @@ def _issue_context(
         "tabs": TAB_LABELS,
         "windows": SILENCE_LABELS,
         "snoozes": SNOOZE_LABELS,
-        "releases": _release_options(),
+        "releases": _release_options(request),
         "suspect": releases.suspect_deploy(issue),
         "next_url": request.get_full_path(),
         "can_triage": access.may(request.user, TRIAGE_PERMISSION),
@@ -595,6 +626,7 @@ def _run_triage(request: HttpRequest, issues: list[Issue], target_state: str) ->
         audit.TRIAGE,
         ",".join(str(issue.pk) for issue in issues),
         {"state": target_state, "changed": report.changed},
+        project_ids=_project_ids(issues),
     )
     messages.success(
         request,
@@ -616,6 +648,7 @@ def _run_snooze(request: HttpRequest, issues: list[Issue], spec: str) -> None:
         audit.SNOOZE,
         ",".join(str(issue.pk) for issue in issues),
         {"spec": spec},
+        project_ids=_project_ids(issues),
     )
     messages.success(request, f"Snoozed {report.snoozed} issue(s)")
 
@@ -648,6 +681,7 @@ def _run_release_resolve(
         audit.TRIAGE,
         ",".join(str(issue.pk) for issue in issues),
         {"state": triage.RESOLVED, "release": target, "count": resolved},
+        project_ids=_project_ids(issues),
     )
 
 
@@ -667,6 +701,7 @@ def _run_merge(request: HttpRequest, issues: list[Issue]) -> None:
         audit.MERGE,
         str(keeper.pk),
         {"folded": folded},
+        project_ids=[keeper.project_id],
     )
     messages.success(
         request,
@@ -700,6 +735,7 @@ def _run_silence(request: HttpRequest, issues: list[Issue], window: str) -> None
             audit.SILENCE,
             ",".join(str(issue.pk) for issue in issues),
             {"window": window, "silenced": report.silenced},
+            project_ids=_project_ids(issues),
         )
         messages.success(
             request,
@@ -707,13 +743,17 @@ def _run_silence(request: HttpRequest, issues: list[Issue], window: str) -> None
         )
 
 
-def _last_accepted() -> datetime | None:
+def _last_accepted(envelopes: QuerySet[RawEnvelope]) -> datetime | None:
     return (
-        RawEnvelope.objects.filter(state=EnvelopeState.DONE)
+        envelopes.filter(state=EnvelopeState.DONE)
         .order_by("-received_at")
         .values_list("received_at", flat=True)
         .first()
     )
+
+
+def _project_ids(issues: list[Issue]) -> list[int]:
+    return sorted({issue.project_id for issue in issues})
 
 
 CSV_COLUMNS = (
@@ -782,8 +822,10 @@ def _page(request: HttpRequest, queryset: QuerySet[Issue]) -> Page:
     return Paginator(queryset, PAGE_SIZE).get_page(request.GET.get("page"))
 
 
-def _release_options() -> list[tuple[str, str]]:
-    recent = Release.objects.order_by("-sort_key", "-first_seen")[:RELEASE_OPTIONS]
+def _release_options(request: HttpRequest) -> list[tuple[str, str]]:
+    recent = _scoped(Release.objects.all(), request).order_by(
+        "-sort_key", "-first_seen"
+    )[:RELEASE_OPTIONS]
     options = [
         (RESOLVE_NEXT, "in the next release"),
         (RESOLVE_CURRENT, "in the current release"),
@@ -800,8 +842,8 @@ def _views(raw: str, sort: Sort) -> list[SavedView]:
     return views
 
 
-def _segments(raw: str) -> list[Segment]:
-    counts = Issue.objects.aggregate(
+def _segments(raw: str, request: HttpRequest) -> list[Segment]:
+    counts = _scoped(Issue.objects.all(), request).aggregate(
         unresolved=Count("pk", filter=Q(triage_state__in=triage.OPEN_STATES)),
         new=Count("pk", filter=Q(triage_state=TriageState.NEW)),
         acknowledged=Count("pk", filter=Q(triage_state=TriageState.ACKNOWLEDGED)),

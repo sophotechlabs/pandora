@@ -44,7 +44,9 @@ class Command(BaseCommand):
 
         written = 0
         events = 0
+        project_ids = []
         for project in projects:
+            project_ids.append(project.pk)
             report = archive.export(project.pk, since, until, destination=destination)
             for line in report.lines():
                 self.stdout.write(line)
@@ -56,6 +58,7 @@ class Command(BaseCommand):
             audit.ARCHIVE,
             f"{since.isoformat()}..{until.isoformat()}",
             {"files": written, "events": events},
+            project_ids=project_ids,
         )
         self.stdout.write(f"archive: {written} file(s), {events} event(s)")
 

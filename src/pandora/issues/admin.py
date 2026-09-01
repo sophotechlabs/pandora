@@ -22,6 +22,7 @@ from pandora.issues.models import (
     SourceState,
     TriageState,
 )
+from pandora.people import access
 
 SEEN_WINDOWS = (
     ("1", "Last hour"),
@@ -194,7 +195,7 @@ class IssueAdmin(ModelAdmin):
         window_stats = HourlyStat.objects.filter(
             hour__gte=sparkline.window_start(now)
         ).order_by("hour")
-        return (
+        queryset = (
             super()
             .get_queryset(request)
             .prefetch_related(
@@ -210,6 +211,13 @@ class IssueAdmin(ModelAdmin):
                 latest_end=Subquery(latest_episodes.values("ends_at")[:1]),
             )
         )
+        user = getattr(request, "user", None)
+        if user is None:
+            return queryset
+        projects = access.projects_for(user)
+        if projects is None:
+            return queryset
+        return queryset.filter(project_id__in=projects)
 
     def change_view(self, request, object_id, form_url="", extra_context=None):
         context = dict(extra_context or {})

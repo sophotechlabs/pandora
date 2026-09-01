@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Iterable
 from datetime import datetime
 from typing import Any
 
@@ -29,13 +30,17 @@ def record(
     action: str,
     target: str = "",
     data: dict[str, Any] | None = None,
+    *,
+    project_ids: Iterable[int] = (),
 ) -> AuditEntry:
-    return AuditEntry.objects.create(
+    entry = AuditEntry.objects.create(
         actor=actor,
         action=action,
         target=str(target)[:200],
         data=data or {},
     )
+    entry.projects.add(*set(project_ids))
+    return entry
 
 
 def from_request(
@@ -43,11 +48,13 @@ def from_request(
     action: str,
     target: str = "",
     data: dict[str, Any] | None = None,
+    *,
+    project_ids: Iterable[int] = (),
 ) -> AuditEntry:
     actor = ""
     if getattr(request.user, "is_authenticated", False):
         actor = request.user.get_username()
-    return record(actor, action, target, data)
+    return record(actor, action, target, data, project_ids=project_ids)
 
 
 def prune(before: datetime) -> int:

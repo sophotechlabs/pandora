@@ -54,6 +54,7 @@ class Command(BaseCommand):
             audit.DEPLOY,
             str(release),
             {"environment": deploy.environment, "state": deploy.state},
+            project_ids=[project.pk],
         )
         self.stdout.write(f"deploy: {deploy}")
 

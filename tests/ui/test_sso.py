@@ -8,6 +8,23 @@ from pandora.people.models import AuditEntry
 
 pytestmark = pytest.mark.django_db
 
+
+def test_the_web_app_can_load_without_the_optional_oidc_dependency(
+    monkeypatch, settings
+):
+    settings.PANDORA_OIDC_ISSUER = "https://identity.example.test"
+    settings.PANDORA_OIDC_CLIENT_ID = "pandora"
+    settings.PANDORA_OIDC_CLIENT_SECRET = "secret"
+
+    def missing_authlib(_name):
+        raise ModuleNotFoundError("authlib")
+
+    monkeypatch.setattr(oidc, "import_module", missing_authlib)
+
+    with pytest.raises(oidc.OidcError, match="not installed"):
+        oidc.client()
+
+
 CONFIGURED = {
     "PANDORA_OIDC_ISSUER": "https://keycloak.test/realms/pandora",
     "PANDORA_OIDC_CLIENT_ID": "pandora",
@@ -191,6 +208,17 @@ def test_a_refused_sign_in_creates_no_account(client, configured, provider):
     client.get("/sso/callback/")
 
     assert auth_models.User.objects.count() == 0
+
+
+def test_a_roleless_oidc_account_is_not_signed_in(client, configured, provider):
+    configured.PANDORA_OIDC_DEFAULT_ROLE = ""
+    provider(token={"userinfo": {"preferred_username": "dev"}})
+
+    response = client.get("/sso/callback/")
+
+    assert response.url == "/login/"
+    assert "_auth_user_id" not in client.session
+    assert auth_models.User.objects.get(username="dev").is_staff is False
 
 
 def test_a_callback_while_sso_is_off_is_not_found(client):

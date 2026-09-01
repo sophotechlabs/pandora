@@ -92,6 +92,7 @@ class Command(BaseCommand):
                 audit.REDACT,
                 options["project"],
                 {"scanned": report.scanned, "rewritten": report.rewritten},
+                project_ids=[project.pk for project in projects],
             )
         self.stdout.write(summary)
 

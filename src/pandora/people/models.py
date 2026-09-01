@@ -128,6 +128,7 @@ class Assignment(models.Model):
 
 
 class AuditEntry(models.Model):
+    projects = models.ManyToManyField(Project, related_name="audit_entries", blank=True)
     actor = models.CharField(max_length=150, blank=True, default="")
     action = models.CharField(max_length=64)
     target = models.CharField(max_length=200, blank=True, default="")

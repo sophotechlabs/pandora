@@ -40,5 +40,6 @@ class Command(BaseCommand):
             audit.CONFIG,
             "merge_issues",
             {"groups": len(report.groups), "removed": report.issues_removed},
+            project_ids=[group.project_id for group in report.groups],
         )
         self.stdout.write(summary)

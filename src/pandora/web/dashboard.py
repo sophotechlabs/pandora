@@ -18,6 +18,7 @@ from pandora.issues.models import (
     SourceState,
     TriageState,
 )
+from pandora.people import access
 
 TOP_ISSUES = 8
 NEW_WINDOW = timedelta(hours=24)
@@ -53,15 +54,22 @@ def kpis(
     return _kpis(now, projects) + _ingest_kpis(now, projects)
 
 
-def build(now: datetime) -> Dashboard:
-    return Dashboard(kpis=kpis(now), tables={"issues": _top_issues()})
+def build(now: datetime, projects: list[int] | None = None) -> Dashboard:
+    return Dashboard(
+        kpis=kpis(now, projects),
+        tables={"issues": _top_issues(projects)},
+    )
 
 
 def dashboard_callback(
     request: HttpRequest,
     context: dict[str, Any],
 ) -> dict[str, Any]:
-    context["dashboard"] = build(timezone.now())
+    projects = None
+    user = getattr(request, "user", None)
+    if user is not None:
+        projects = access.projects_for(user)
+    context["dashboard"] = build(timezone.now(), projects)
     return context
 
 
@@ -149,9 +157,10 @@ def _ingest_kpis(
     )
 
 
-def _top_issues() -> components.Table:
+def _top_issues(projects: list[int] | None = None) -> components.Table:
     issues = (
-        Issue.objects.filter(triage_state__in=triage.OPEN_STATES)
+        _only(Issue.objects.all(), projects)
+        .filter(triage_state__in=triage.OPEN_STATES)
         .select_related("project")
         .order_by("-event_count", "-last_seen")[:TOP_ISSUES]
     )
