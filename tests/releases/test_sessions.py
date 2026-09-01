@@ -283,6 +283,40 @@ def test_a_bucket_that_is_not_an_object_is_skipped(project):
     assert result == expected
 
 
+@pytest.mark.parametrize("errors", ["many", -1, 1.5, True, 2_147_483_648])
+def test_a_malformed_single_session_count_is_dropped(project, errors):
+    result = sessions.accept(project, one(errors=errors), NOW)
+
+    assert result == 0
+    assert release_models.SessionBucket.objects.count() == 0
+
+
+@pytest.mark.parametrize("count", ["many", -1, 1.5, True, 2_147_483_648])
+def test_a_malformed_aggregate_count_is_dropped(project, count):
+    payload = {
+        "attrs": {"release": "1.2.3"},
+        "aggregates": [
+            {"started": NOW.isoformat(), "exited": count},
+            {"started": NOW.isoformat(), "exited": 4},
+        ],
+    }
+
+    result = sessions.accept(project, payload, NOW)
+
+    assert result == 4
+    assert release_models.SessionBucket.objects.get().sessions == 4
+
+
+def test_session_attributes_that_are_not_an_object_are_ignored(project):
+    payload = one()
+    payload["attrs"] = ["invalid"]
+
+    result = sessions.accept(project, payload, NOW)
+
+    assert result == 1
+    assert release_models.SessionBucket.objects.get().version == ""
+
+
 def test_a_session_with_no_start_time_lands_in_the_hour_it_arrived(project):
     """Should not drop a session because the SDK left the field out."""
     payload = {"sid": "s1", "status": "exited", "attrs": {"release": "1.2.3"}}

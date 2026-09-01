@@ -128,6 +128,28 @@ def test_an_earlier_event_moves_first_seen_back(seen):
     assert result == expected
 
 
+def test_an_earlier_event_does_not_move_last_seen_back(seen):
+    earlier = NOW - datetime.timedelta(days=1)
+    seen("1.2.3", at=NOW)
+    seen("1.2.3", at=earlier)
+
+    result = release_models.Release.objects.get().last_seen
+
+    assert result == NOW
+
+
+def test_out_of_order_events_keep_the_environment_window(seen):
+    earlier = NOW - datetime.timedelta(days=1)
+    seen("1.2.3", at=NOW)
+    seen("1.2.3", at=earlier)
+
+    row = release_models.ReleaseEnvironment.objects.get()
+
+    assert row.first_seen == earlier
+    assert row.last_seen == NOW
+    assert row.event_count == 2
+
+
 def test_the_previous_release_is_the_one_below_it(seen):
     """Should be what a rollout window is measured against."""
     seen("1.2.2")

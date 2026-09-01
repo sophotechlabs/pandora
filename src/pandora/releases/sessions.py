@@ -19,6 +19,7 @@ ERRORED = "errored"
 HEALTHY = "healthy"
 ADOPTION_WINDOW = timedelta(hours=24)
 MAX_ITEMS = 100
+MAX_COUNT = 2_147_483_647
 
 
 @dataclass(frozen=True)
@@ -95,10 +96,12 @@ def adoption(project: Project, version: str, now: datetime) -> float:
 
 
 def _single(project: Project, payload: Mapping[str, Any], received_at: datetime) -> int:
-    attrs = payload.get("attrs") or {}
+    attrs = _attrs(payload)
     started = _moment(payload.get("started")) or received_at
     status = str(payload.get("status", EXITED))
-    errors = int(payload.get("errors", 0) or 0)
+    errors = _count(payload.get("errors", 0))
+    if errors is None:
+        return 0
     _bump(
         project,
         str(attrs.get("release", "")),
@@ -115,7 +118,7 @@ def _single(project: Project, payload: Mapping[str, Any], received_at: datetime)
 def _aggregated(
     project: Project, payload: Mapping[str, Any], received_at: datetime
 ) -> int:
-    attrs = payload.get("attrs") or {}
+    attrs = _attrs(payload)
     release = str(attrs.get("release", ""))
     environment = str(attrs.get("environment", ""))
     buckets = payload.get("aggregates") or []
@@ -126,12 +129,18 @@ def _aggregated(
         if not isinstance(bucket, Mapping):
             continue
         started = _moment(bucket.get("started")) or received_at
-        exited = int(bucket.get("exited", 0) or 0)
-        crashed = int(bucket.get("crashed", 0) or 0)
-        abnormal = int(bucket.get("abnormal", 0) or 0)
-        errored = int(bucket.get("errored", 0) or 0)
+        counts = tuple(
+            _count(bucket.get(name, 0)) for name in (EXITED, CRASHED, ABNORMAL, ERRORED)
+        )
+        if any(count is None for count in counts):
+            continue
+        exited, crashed, abnormal, errored = counts
+        assert exited is not None
+        assert crashed is not None
+        assert abnormal is not None
+        assert errored is not None
         total = exited + crashed + abnormal + errored
-        if not total:
+        if not total or total > MAX_COUNT:
             continue
         _bump(
             project,
@@ -159,28 +168,52 @@ def _bump(
     errored: int,
 ) -> None:
     hour = started.replace(minute=0, second=0, microsecond=0)
-    updated = SessionBucket.objects.filter(
-        project=project, version=version, environment=environment, hour=hour
-    ).update(
+    bucket, created = SessionBucket.objects.get_or_create(
+        project=project,
+        version=version,
+        environment=environment,
+        hour=hour,
+        defaults={
+            "sort_key": sort_key(version),
+            "parsed": is_parsed(version),
+            "sessions": sessions,
+            "crashed": crashed,
+            "abnormal": abnormal,
+            "errored": errored,
+        },
+    )
+    if created:
+        return
+    SessionBucket.objects.filter(pk=bucket.pk).update(
         sessions=F("sessions") + sessions,
         crashed=F("crashed") + crashed,
         abnormal=F("abnormal") + abnormal,
         errored=F("errored") + errored,
     )
-    if updated:
-        return
-    SessionBucket.objects.create(
-        project=project,
-        version=version,
-        environment=environment,
-        hour=hour,
-        sort_key=sort_key(version),
-        parsed=is_parsed(version),
-        sessions=sessions,
-        crashed=crashed,
-        abnormal=abnormal,
-        errored=errored,
-    )
+
+
+def _attrs(payload: Mapping[str, Any]) -> Mapping[str, Any]:
+    value = payload.get("attrs")
+    if not isinstance(value, Mapping):
+        return {}
+    return value
+
+
+def _count(value: Any) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, float) and not value.is_integer():
+        return None
+    raw = value
+    if raw is None or raw == "":
+        raw = 0
+    try:
+        count = int(raw)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    if count < 0 or count > MAX_COUNT:
+        return None
+    return count
 
 
 def _moment(value: Any) -> datetime | None:

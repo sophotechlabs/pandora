@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
-from django.db.models import F, Max, Min
+from django.db.models import F, Max, Min, Value
+from django.db.models.functions import Greatest, Least
 
 from pandora.core.models import Project
 from pandora.issues.models import Issue, TriageState
@@ -44,28 +45,31 @@ def record(
             "parsed": is_parsed(name),
             "first_seen": at,
             "last_seen": at,
+            "event_count": 1,
         },
     )
-    updates = {"event_count": F("event_count") + 1, "last_seen": at}
-    if not created and release.first_seen > at:
-        updates["first_seen"] = at
-    Release.objects.filter(pk=release.pk).update(**updates)
+    if not created:
+        Release.objects.filter(pk=release.pk).update(
+            event_count=F("event_count") + 1,
+            first_seen=Least(F("first_seen"), Value(at)),
+            last_seen=Greatest(F("last_seen"), Value(at)),
+        )
     _record_environment(release, environment, at)
     return release
 
 
 def _record_environment(release: Release, environment: str, at: datetime) -> None:
-    updated = ReleaseEnvironment.objects.filter(
-        release=release, name=environment
-    ).update(last_seen=at, event_count=F("event_count") + 1)
-    if updated:
-        return
-    ReleaseEnvironment.objects.create(
+    rollout, created = ReleaseEnvironment.objects.get_or_create(
         release=release,
         name=environment,
-        first_seen=at,
-        last_seen=at,
-        event_count=1,
+        defaults={"first_seen": at, "last_seen": at, "event_count": 1},
+    )
+    if created:
+        return
+    ReleaseEnvironment.objects.filter(pk=rollout.pk).update(
+        first_seen=Least(F("first_seen"), Value(at)),
+        last_seen=Greatest(F("last_seen"), Value(at)),
+        event_count=F("event_count") + 1,
     )
 
 

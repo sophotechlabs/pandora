@@ -48,6 +48,19 @@ def test_a_second_occurrence_moves_last_seen_and_the_count(issue):
     assert result == expected
 
 
+def test_out_of_order_occurrences_keep_the_full_environment_window(issue):
+    issue_models.IssueEnvironment.objects.all().delete()
+    earlier = NOW - datetime.timedelta(hours=2)
+    environments.record(issue, "p-mk2", NOW)
+
+    environments.record(issue, "p-mk2", earlier)
+
+    row = issue_models.IssueEnvironment.objects.get()
+    assert row.event_count == 2
+    assert row.first_seen == earlier
+    assert row.last_seen == NOW
+
+
 def test_a_second_environment_gets_its_own_row(issue):
     """Should be the whole reason the table exists — one issue, several clusters."""
     issue_models.IssueEnvironment.objects.all().delete()

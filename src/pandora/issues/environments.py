@@ -2,24 +2,24 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from django.db.models import F
+from django.db.models import F, Value
+from django.db.models.functions import Greatest, Least
 
 from pandora.issues.models import Issue, IssueEnvironment
 
 
 def record(issue: Issue, name: str, at: datetime, count: int = 1) -> None:
-    updated = IssueEnvironment.objects.filter(issue=issue, name=name).update(
-        last_seen=at,
-        event_count=F("event_count") + count,
-    )
-    if updated:
-        return
-    IssueEnvironment.objects.create(
+    environment, created = IssueEnvironment.objects.get_or_create(
         issue=issue,
         name=name,
-        first_seen=at,
-        last_seen=at,
-        event_count=count,
+        defaults={"first_seen": at, "last_seen": at, "event_count": count},
+    )
+    if created:
+        return
+    IssueEnvironment.objects.filter(pk=environment.pk).update(
+        first_seen=Least(F("first_seen"), Value(at)),
+        last_seen=Greatest(F("last_seen"), Value(at)),
+        event_count=F("event_count") + count,
     )
 
 
