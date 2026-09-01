@@ -1,3 +1,9 @@
+{{- if and (not .Values.persistence.enabled) (not .Values.database.url) }}
+{{- fail "persistence.enabled=false requires database.url" }}
+{{- end }}
+{{- if and (not .Values.database.url) (gt (int .Values.replicaCount) 1) }}
+{{- fail "the SQLite deployment supports replicaCount=1 only" }}
+{{- end }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:

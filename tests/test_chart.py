@@ -40,6 +40,15 @@ def render(*args):
     return [doc for doc in yaml.safe_load_all(proc.stdout) if doc]
 
 
+def render_fails(*args):
+    return subprocess.run(
+        ["helm", "template", "pandora", str(CHART), *args],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
 def pod_specs(docs):
     specs = []
     for doc in docs:
@@ -187,6 +196,16 @@ def test_every_writable_path_is_a_volume():
     assert result == [True] * len(result)
 
 
+@needs_helm
+def test_the_ingest_byte_limit_is_rendered_as_an_integer():
+    result = []
+    for spec in pod_specs(render(*FULL)):
+        for container in spec["containers"]:
+            result.append(env_of(container)["PANDORA_INGEST_MAX_BYTES"])
+
+    assert result == ["1048576"] * len(result)
+
+
 # migrations, which two writers must not race
 
 
@@ -241,6 +260,37 @@ def test_an_external_database_replaces_the_claim():
     expected = ("postgres://pandora:pandora@db:5432/pandora", [])
 
     assert result == expected
+
+
+@needs_helm
+def test_disabling_persistence_requires_an_external_database():
+    result = render_fails("--set", "persistence.enabled=false")
+
+    assert result.returncode != 0
+    assert "requires database.url" in result.stderr
+
+
+@needs_helm
+def test_sqlite_refuses_multiple_replicas():
+    result = render_fails("--set", "replicaCount=2")
+
+    assert result.returncode != 0
+    assert "replicaCount=1" in result.stderr
+
+
+@needs_helm
+def test_postgres_allows_multiple_replicas():
+    docs = render(
+        "--set",
+        "database.url=postgres://pandora:pandora@db:5432/pandora",
+        "--set",
+        "persistence.enabled=false",
+        "--set",
+        "replicaCount=2",
+    )
+    deployment = [doc for doc in docs if doc["kind"] == "Deployment"][0]
+
+    assert deployment["spec"]["replicas"] == 2
 
 
 @needs_helm
