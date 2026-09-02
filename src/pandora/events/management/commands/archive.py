@@ -25,11 +25,18 @@ class Command(BaseCommand):
             default="",
             help="directory to write into (defaults to PANDORA_ARCHIVE_DIR)",
         )
+        parser.add_argument(
+            "--resume",
+            action="store_true",
+            help="skip hourly files already present at the destination",
+        )
 
     def handle(self, *args: Any, **options: Any) -> None:
         now = timezone.now()
         since = _moment(options["since"], now - timedelta(hours=24))
         until = _moment(options["until"], now)
+        if since >= until:
+            raise CommandError("--since must be before --until")
         destination = None
         if options["to"]:
             destination = Path(options["to"])
@@ -44,23 +51,35 @@ class Command(BaseCommand):
 
         written = 0
         events = 0
+        skipped = 0
         project_ids = []
+        exporter = archive.export
+        if options["resume"]:
+            exporter = archive.resume
         for project in projects:
             project_ids.append(project.pk)
-            report = archive.export(project.pk, since, until, destination=destination)
+            report = exporter(
+                project.pk,
+                since,
+                until,
+                destination=destination,
+            )
             for line in report.lines():
                 self.stdout.write(line)
             written += len(report.files)
             events += report.events
+            skipped += len(report.skipped)
 
         audit.record(
             "",
             audit.ARCHIVE,
             f"{since.isoformat()}..{until.isoformat()}",
-            {"files": written, "events": events},
+            {"files": written, "events": events, "skipped": skipped},
             project_ids=project_ids,
         )
-        self.stdout.write(f"archive: {written} file(s), {events} event(s)")
+        self.stdout.write(
+            f"archive: {written} file(s), {events} event(s), {skipped} skipped"
+        )
 
 
 def _moment(raw: str, fallback: Any) -> Any:

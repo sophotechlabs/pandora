@@ -13,7 +13,7 @@ from pandora.artifacts import service as artifacts
 from pandora.core import database
 from pandora.events import relevance
 from pandora.events.store import get_store
-from pandora.ingest import limits
+from pandora.ingest import client_reports, limits
 from pandora.ingest.models import EnvelopeState, ProcessedEvent, RawEnvelope
 from pandora.issues.models import HourlyStat, IssueActivity, SilenceLink
 from pandora.notify import deliver as notify_deliver
@@ -38,6 +38,7 @@ class PruneResult:
     deliveries: int = 0
     audit_entries: int = 0
     bundles: int = 0
+    client_discards: int = 0
 
 
 def _thin_by_relevance(store: Any, now: datetime) -> int:
@@ -72,6 +73,7 @@ def prune_expired(now: datetime) -> PruneResult:
     counters = limits.prune(now - COUNTER_RETENTION)
     deliveries = notify_deliver.prune(retention_cutoff)
     audit_entries = people_audit.prune(now - AUDIT_RETENTION)
+    client_discards = client_reports.prune(retention_cutoff)
     store.ensure_partitions(months_ahead=MONTHS_AHEAD)
     database.incremental_vacuum()
     database.refresh_size()
@@ -87,11 +89,12 @@ def prune_expired(now: datetime) -> PruneResult:
         deliveries=deliveries,
         audit_entries=audit_entries,
         bundles=bundles,
+        client_discards=client_discards,
     )
     logger.info(
         "prune: %s events, %s envelopes, %s processed events, %s silences,"
         " %s hourly stats, %s activities, %s ingest counters, %s deliveries,"
-        " %s audit entries, %s artifact bundles",
+        " %s audit entries, %s artifact bundles, %s client discards",
         result.events,
         result.envelopes,
         result.processed_events,
@@ -102,6 +105,7 @@ def prune_expired(now: datetime) -> PruneResult:
         result.deliveries,
         result.audit_entries,
         result.bundles,
+        result.client_discards,
     )
     return result
 
@@ -117,5 +121,6 @@ class Command(BaseCommand):
             f"{result.hourly_stats} hourly stats, {result.activities} activities, "
             f"{result.counters} ingest counters, {result.deliveries} deliveries, "
             f"{result.audit_entries} audit entries, "
-            f"{result.bundles} artifact bundles"
+            f"{result.bundles} artifact bundles, "
+            f"{result.client_discards} client discards"
         )

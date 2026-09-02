@@ -353,6 +353,63 @@ def test_non_event_items_are_acked_and_dropped(post, published):
     assert result == expected
 
 
+def test_a_client_report_is_accounted(post):
+    body = envelope_body(
+        line({}),
+        line({"type": "client_report"}),
+        line(
+            {
+                "timestamp": "2026-09-02T00:00:00Z",
+                "discarded_events": [
+                    {"reason": "sample_rate", "category": "error", "quantity": 7}
+                ],
+            }
+        ),
+    )
+
+    response = post(body=body)
+
+    row = ingest_models.ClientDiscard.objects.get()
+    assert response.status_code == http.HTTPStatus.OK
+    assert (row.reason, row.category, row.quantity) == ("sample_rate", "error", 7)
+
+
+def test_a_malformed_client_report_is_acked_without_a_counter(post):
+    body = envelope_body(
+        line({}),
+        line({"type": "client_report"}),
+        b"not json",
+    )
+
+    response = post(body=body)
+
+    assert response.status_code == http.HTTPStatus.OK
+    assert ingest_models.ClientDiscard.objects.exists() is False
+
+
+def test_an_oversized_client_report_is_dropped(post):
+    body = envelope_body(
+        line({}),
+        line({"type": "client_report"}),
+        line(
+            {
+                "discarded_events": [
+                    {
+                        "reason": "x" * 5000,
+                        "category": "error",
+                        "quantity": 1,
+                    }
+                ]
+            }
+        ),
+    )
+
+    response = post(body=body)
+
+    assert response.status_code == http.HTTPStatus.OK
+    assert ingest_models.ClientDiscard.objects.exists() is False
+
+
 @pytest.mark.django_db
 @test.override_settings(PANDORA_QUEUE=RECORDING_QUEUE)
 def test_an_event_item_that_is_not_json_is_dropped_not_fatal(post, published):

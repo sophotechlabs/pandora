@@ -2,14 +2,14 @@ from __future__ import annotations
 
 import csv
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 from django.contrib import messages
 from django.contrib.admin.views.decorators import staff_member_required
 from django.contrib.auth import login
 from django.core.paginator import Page, Paginator
-from django.db.models import Count, Q, QuerySet
+from django.db.models import Count, Q, QuerySet, Sum
 from django.http import Http404, HttpRequest, HttpResponse, HttpResponseForbidden
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
@@ -22,7 +22,7 @@ from pandora.core.models import IngestToken, Project
 from pandora.events.store import get_store
 from pandora.events.types import Event
 from pandora.ingest import replay as ingest_replay
-from pandora.ingest.models import EnvelopeState, RawEnvelope
+from pandora.ingest.models import ClientDiscard, EnvelopeState, RawEnvelope
 from pandora.issues import (
     actions,
     attributes,
@@ -54,6 +54,7 @@ OIDC_VIA = "oidc"
 PAGE_SIZE = 25
 OVERVIEW_ROWS = 8
 FAILURE_ROWS = 20
+DISCARD_ROWS = 20
 EVENT_ROWS = 25
 REPLAY_LIMIT = 200
 SILENCE_PREFIX = "silence:"
@@ -274,6 +275,10 @@ def overview(request: HttpRequest) -> HttpResponse:
         "kpis": dashboard.kpis(now, projects),
         "firing": [presenters.row(issue, now) for issue in firing],
         "newest": [presenters.row(issue, now) for issue in newest],
+        "stalled": [
+            (deploy, components.format_relative(deploy.started_at, now))
+            for deploy in releases.stalled_for(projects, now)[:OVERVIEW_ROWS]
+        ],
         "spark_width": presenters.SPARK_WIDTH,
         "spark_height": presenters.SPARK_HEIGHT,
     }
@@ -327,6 +332,12 @@ def ingest(request: HttpRequest) -> HttpResponse:
         .select_related("project")
         .order_by("-received_at")[:FAILURE_ROWS]
     )
+    client_discards = _scoped(
+        ClientDiscard.objects.select_related("project"), request
+    ).filter(hour__gte=now - timedelta(days=1))
+    client_discard_total = client_discards.aggregate(total=Sum("quantity"))["total"]
+    if client_discard_total is None:
+        client_discard_total = 0
     context = {
         "nav": "ingest",
         "counts": counts,
@@ -335,6 +346,11 @@ def ingest(request: HttpRequest) -> HttpResponse:
         "failures": [
             (envelope, components.format_relative(envelope.received_at, now))
             for envelope in failures
+        ],
+        "client_discard_total": client_discard_total,
+        "client_discards": [
+            (row, components.format_relative(row.hour, now))
+            for row in client_discards.order_by("-hour")[:DISCARD_ROWS]
         ],
         "tokens": _scoped(
             IngestToken.objects.select_related("project"), request

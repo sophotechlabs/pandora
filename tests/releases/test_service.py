@@ -229,6 +229,20 @@ def test_timing_out_marks_the_state(seen):
     assert result == expected
 
 
+def test_a_timed_out_deploy_remains_visible_as_stalled(seen, project):
+    release = seen("1.2.3")
+    deploy = release_models.Deploy.objects.create(
+        release=release,
+        environment="p-mk1",
+        started_at=NOW - datetime.timedelta(hours=3),
+    )
+    service.time_out(NOW)
+
+    result = service.stalled(project, NOW)
+
+    assert [row.pk for row in result] == [deploy.pk]
+
+
 def test_a_deploy_reads_as_where_it_went(seen):
     """Should be legible in the admin without following the id."""
     release = seen("1.2.3")

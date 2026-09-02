@@ -21,4 +21,31 @@
     <h2 class="card-title">Newest issues</h2>
     {% include "ui/partials/issue_list.html" with rows=newest empty_message="No issue has been recorded yet" %}
   </section>
+  <section class="card">
+    <h2 class="card-title">Stalled rollouts</h2>
+    {% if stalled %}
+      <table class="grid">
+        <thead>
+          <tr>
+            <th>Release</th>
+            <th>Project</th>
+            <th>Environment</th>
+            <th>Started</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for deploy, started in stalled %}
+            <tr>
+              <td>{{ deploy.release.version }}</td>
+              <td>{{ deploy.release.project.slug }}</td>
+              <td>{{ deploy.environment|default:"everywhere" }}</td>
+              <td title="{{ deploy.started_at|date:'Y-m-d H:i:s e' }}">{{ started }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <p class="muted">No rollout has been stalled for more than an hour</p>
+    {% endif %}
+  </section>
 {% endblock %}

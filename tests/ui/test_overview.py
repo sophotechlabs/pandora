@@ -5,6 +5,7 @@ import pytest
 from django.utils import timezone
 
 from pandora.issues import models
+from pandora.releases import models as release_models
 
 pytestmark = pytest.mark.django_db
 
@@ -95,3 +96,31 @@ def test_the_overview_renders(operator_client, make_issue):
     expected = http.HTTPStatus.OK
 
     assert result == expected
+
+
+def test_a_stalled_rollout_is_visible(operator_client, project):
+    release = release_models.Release.objects.create(project=project, version="1.2.3")
+    release_models.Deploy.objects.create(
+        release=release,
+        environment="production",
+        started_at=timezone.now() - datetime.timedelta(hours=2),
+    )
+
+    page = body(operator_client)
+
+    assert "Stalled rollouts" in page
+    assert "1.2.3" in page
+    assert "production" in page
+
+
+def test_a_recent_rollout_is_not_called_stalled(operator_client, project):
+    release = release_models.Release.objects.create(project=project, version="1.2.3")
+    release_models.Deploy.objects.create(
+        release=release,
+        environment="production",
+        started_at=timezone.now(),
+    )
+
+    page = body(operator_client)
+
+    assert "No rollout has been stalled for more than an hour" in page

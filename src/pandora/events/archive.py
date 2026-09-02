@@ -4,8 +4,10 @@ import dataclasses
 import gzip
 import json
 import logging
+import os
+import tempfile
 from collections.abc import Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -29,16 +31,25 @@ class Written:
 @dataclass
 class Report:
     files: list[Written]
+    skipped: list[str] = field(default_factory=list)
 
     @property
     def events(self) -> int:
         return sum(row.events for row in self.files)
 
     def lines(self) -> list[str]:
-        return [
+        written = [
             f"{row.path}: {row.events} event(s), {row.bytes} bytes"
             for row in self.files
         ]
+        return written + [f"{path}: already archived" for path in self.skipped]
+
+
+@dataclass(frozen=True)
+class _Options:
+    store: EventStore | None
+    destination: Path | None
+    resume: bool
 
 
 def root() -> Path | None:
@@ -64,24 +75,55 @@ def export(
     project_id: int,
     since: datetime,
     until: datetime,
+    *,
     store: EventStore | None = None,
     destination: Path | None = None,
 ) -> Report:
+    options = _Options(store=store, destination=destination, resume=False)
+    return _export(project_id, since, until, options)
+
+
+def resume(
+    project_id: int,
+    since: datetime,
+    until: datetime,
+    *,
+    store: EventStore | None = None,
+    destination: Path | None = None,
+) -> Report:
+    options = _Options(store=store, destination=destination, resume=True)
+    return _export(project_id, since, until, options)
+
+
+def _export(
+    project_id: int,
+    since: datetime,
+    until: datetime,
+    options: _Options,
+) -> Report:
+    store = options.store
     if store is None:
         store = get_store()
+    destination = options.destination
     if destination is None:
         destination = root()
     if destination is None:
         return Report(files=[])
 
     files = []
+    skipped = []
     hour = _floor(since)
     while hour < until:
+        path = destination / key_for(project_id, hour)
+        if options.resume and path.is_file():
+            skipped.append(str(path))
+            hour = hour + HOUR
+            continue
         rows = list(_events(store, project_id, hour, hour + HOUR))
         if rows:
             files.append(_write(destination, project_id, hour, rows))
         hour = hour + HOUR
-    return Report(files=files)
+    return Report(files=files, skipped=skipped)
 
 
 def _events(
@@ -107,7 +149,22 @@ def _write(
     path.parent.mkdir(parents=True, exist_ok=True)
     body = "\n".join(json.dumps(_row(event), default=str) for event in rows)
     payload = gzip.compress(body.encode())
-    path.write_bytes(payload)
+    temporary: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            dir=path.parent,
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as handle:
+            temporary = Path(handle.name)
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+        temporary.replace(path)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
     return Written(path=str(path), events=len(rows), bytes=len(payload))
 
 

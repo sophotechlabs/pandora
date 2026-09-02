@@ -9,6 +9,7 @@ from django.utils import timezone
 
 from pandora.core import database
 from pandora.issues import reporting
+from pandora.releases import reporting as release_reporting
 
 DISTRIBUTION = "pandora"
 UNKNOWN_VERSION = "unknown"
@@ -36,4 +37,5 @@ def ready(request: HttpRequest) -> JsonResponse:
         )
     database.refresh_size()
     reporting.refresh(timezone.now())
+    release_reporting.refresh(timezone.now())
     return JsonResponse({"status": "ok", "version": version()})

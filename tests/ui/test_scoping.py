@@ -1,13 +1,15 @@
+import datetime
 import http
 
 import pytest
 from django.contrib.auth import models as auth_models
+from django.utils import timezone
 
 from pandora.core.models import IngestToken, TokenScope, TokenSource
-from pandora.ingest.models import EnvelopeState
+from pandora.ingest.models import ClientDiscard, EnvelopeState
 from pandora.people import audit
 from pandora.people.models import Membership, Role, Team
-from pandora.releases.models import Release
+from pandora.releases.models import Deploy, Release
 from tests.ingest import helpers
 
 pytestmark = pytest.mark.django_db
@@ -98,6 +100,52 @@ def test_the_overview_counts_only_the_scoped_projects(
     expected = 1
 
     assert result == expected
+
+
+def test_the_overview_hides_another_projects_stalled_rollout(
+    operator_client, scoped_operator, other_project, project
+):
+    scoped_operator(project)
+    visible = Release.objects.create(project=project, version="ours")
+    hidden = Release.objects.create(project=other_project, version="theirs")
+    for release in (visible, hidden):
+        Deploy.objects.create(
+            release=release,
+            started_at=timezone.now() - datetime.timedelta(hours=2),
+        )
+
+    page = operator_client.get("/overview/").content.decode()
+
+    assert "ours" in page
+    assert "theirs" not in page
+
+
+def test_the_ingest_page_hides_another_projects_client_discards(
+    operator_client, scoped_operator, other_project, project
+):
+    scoped_operator(project)
+    now = timezone.now().replace(minute=0, second=0, microsecond=0)
+    ClientDiscard.objects.create(
+        project=project,
+        hour=now,
+        category="error",
+        reason="ours",
+        quantity=2,
+    )
+    ClientDiscard.objects.create(
+        project=other_project,
+        hour=now,
+        category="error",
+        reason="theirs",
+        quantity=100,
+    )
+
+    response = operator_client.get("/ingest/")
+    page = response.content.decode()
+
+    assert response.context["client_discard_total"] == 2
+    assert "ours" in page
+    assert "theirs" not in page
 
 
 def test_a_superuser_is_never_scoped(client, make_issue, other_project, project):

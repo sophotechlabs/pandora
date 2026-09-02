@@ -172,6 +172,75 @@ def test_the_report_reads_as_a_list_of_files(project, stored, tmp_path):
     assert "3 event(s)" in report.lines()[0]
 
 
+def test_resume_skips_an_hour_already_written(project, stored, tmp_path):
+    store, _ = stored(count=1)
+    archive.export(
+        project.pk,
+        NOW,
+        NOW + datetime.timedelta(hours=1),
+        store=store,
+        destination=tmp_path,
+    )
+    stored(count=1)
+
+    report = archive.resume(
+        project.pk,
+        NOW,
+        NOW + datetime.timedelta(hours=1),
+        store=store,
+        destination=tmp_path,
+    )
+
+    path = tmp_path / archive.key_for(project.pk, NOW)
+    rows = gzip.decompress(path.read_bytes()).decode().splitlines()
+    assert report.events == 0
+    assert report.skipped == [str(path)]
+    assert len(rows) == 1
+
+
+def test_a_normal_rerun_rewrites_the_hour_for_late_events(project, stored, tmp_path):
+    store, _ = stored(count=1)
+    archive.export(
+        project.pk,
+        NOW,
+        NOW + datetime.timedelta(hours=1),
+        store=store,
+        destination=tmp_path,
+    )
+    stored(count=1)
+
+    report = archive.export(
+        project.pk,
+        NOW,
+        NOW + datetime.timedelta(hours=1),
+        store=store,
+        destination=tmp_path,
+    )
+
+    path = Path(report.files[0].path)
+    rows = gzip.decompress(path.read_bytes()).decode().splitlines()
+    assert len(rows) == 2
+
+
+def test_an_archive_file_is_published_atomically(project, stored, tmp_path, mocker):
+    store, _ = stored(count=1)
+    replace = mocker.patch.object(Path, "replace", side_effect=OSError("full"))
+
+    with pytest.raises(OSError, match="full"):
+        archive.export(
+            project.pk,
+            NOW,
+            NOW + datetime.timedelta(hours=1),
+            store=store,
+            destination=tmp_path,
+        )
+
+    final = tmp_path / archive.key_for(project.pk, NOW)
+    assert replace.call_count == 1
+    assert final.exists() is False
+    assert list(final.parent.glob("*.tmp")) == []
+
+
 # the command
 
 
@@ -196,6 +265,17 @@ def test_the_command_refuses_a_bad_timestamp(project, tmp_path):
     with pytest.raises(CommandError, match="ISO 8601"):
         management.call_command(
             "archive", since="yesterday", to=str(tmp_path), stdout=io.StringIO()
+        )
+
+
+def test_the_command_refuses_a_backwards_window(project, tmp_path):
+    with pytest.raises(CommandError, match="--since must be before --until"):
+        management.call_command(
+            "archive",
+            since=NOW.isoformat(),
+            until=(NOW - datetime.timedelta(hours=1)).isoformat(),
+            to=str(tmp_path),
+            stdout=io.StringIO(),
         )
 
 
@@ -274,3 +354,19 @@ def test_the_command_can_be_scoped_to_one_project(project, stored, tmp_path):
     )
 
     assert "1 file(s)" in out.getvalue()
+
+
+def test_the_command_can_resume_a_backfill(project, stored, tmp_path):
+    stored(count=1)
+    options = {
+        "project": "infrastructure",
+        "since": NOW.isoformat(),
+        "until": (NOW + datetime.timedelta(hours=1)).isoformat(),
+        "to": str(tmp_path),
+    }
+    management.call_command("archive", stdout=io.StringIO(), **options)
+    out = io.StringIO()
+
+    management.call_command("archive", resume=True, stdout=out, **options)
+
+    assert "0 file(s), 0 event(s), 1 skipped" in out.getvalue()

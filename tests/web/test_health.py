@@ -6,6 +6,7 @@ from django import db
 from prometheus_client import REGISTRY
 
 from pandora.core import database
+from pandora.releases import models as release_models
 from pandora.web import views
 
 # health tests
@@ -161,3 +162,21 @@ def test_a_failed_readiness_probe_leaves_the_size_alone(client, monkeypatch):
     result = REGISTRY.get_sample_value("pandora_database_bytes")
 
     assert result == 0
+
+
+@pytest.mark.django_db
+def test_readiness_republishes_deploy_frequency(client, project):
+    release = release_models.Release.objects.create(project=project, version="1.2.3")
+    release_models.Deploy.objects.create(
+        release=release,
+        environment="production",
+        state=release_models.DeployState.SUCCEEDED,
+    )
+
+    client.get("/ready/")
+
+    response = client.get("/metrics")
+    assert (
+        b'pandora_deploys_per_day{environment="production",project="infrastructure"}'
+        in response.content
+    )

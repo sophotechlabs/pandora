@@ -150,7 +150,7 @@ Pandora reimplements the Sentry ingest wire format from public protocol document
 
 **What sets an issue apart.** The issue page reads the tag breakdown already on disk and names the values that characterise *this* issue against the rest of the project — 80% on `node=broken-1` where the project runs at 4%. Sentry shows a tag distribution but never says which distribution is abnormal, which is the entire question. When a key has filled its cardinality cap the panel says the number came from a sample, because that is what makes it worth trusting.
 
-**MTTR, as a gauge.** `/metrics` publishes `pandora_mttr_seconds` and `pandora_resolved_issues`, both labelled by source and computed from the activity trail over 30 days. **Split by source deliberately**: an Alertmanager issue resolves itself when the alert clears, so a combined number describes the monitoring rather than the team. Rollbar prints that caveat and gates the metric behind its second-highest tier; Sentry has neither at any tier. There is no chart UI here — the operator's Grafana already draws better ones.
+**MTTR and deploy frequency, as gauges.** `/metrics` publishes `pandora_mttr_seconds` and `pandora_resolved_issues`, both labelled by source and computed from the activity trail over 30 days. **Split by source deliberately**: an Alertmanager issue resolves itself when the alert clears, so a combined number describes the monitoring rather than the team. `pandora_deploys_per_day` and `pandora_successful_deploys` count successful deploy markers over the same window, split by project and environment. Rollbar gates these reports behind its second-highest tier; Sentry has neither at any tier. There is no chart UI here — the operator's Grafana already draws better ones.
 
 **CSV export** of whatever the current query selected, up to 10,000 rows, from the button on the stream.
 
@@ -239,6 +239,8 @@ The envelope table has been a durable, replayable queue since the first commit �
 
 **Per-item size limits.** `PANDORA_INGEST_MAX_BYTES` (1 MiB) remains the cap on a whole envelope — raise it toward the protocol's 200 MiB if you want to. Inside it each item type now gets the limit the protocol names: 1 MiB an event, 100 KiB a check-in or a session batch, 4 KiB a client report. One number for everything let a 1 MiB client report through where the spec says 4 KiB.
 
+**Client-side loss accounting.** SDKs send `client_report` items when sampling, `before_send`, a full queue or a network error drops an event before Pandora can see it. Pandora aggregates those quantities by project, hour, category and reason. The Ingest page shows the last 24 hours, so a lower event count has an explanation instead of a guess; the normal retention job bounds the history.
+
 **Four content encodings**: gzip, deflate, `br` and `zstd`. Every one is measured after decompression, so a compression bomb is refused on what it becomes rather than what it claims.
 
 ### Retention that is not a calendar
@@ -251,6 +253,8 @@ The envelope table has been a durable, replayable queue since the first commit �
 python manage.py archive --to /var/backups/pandora
 ```
 
+The export writes each gzip file through a same-directory temporary file and then renames it, so an interrupted run never publishes a partial hour. Add `--resume` for a backfill: hours whose final file already exists are skipped. Without `--resume`, an hour is rewritten so late-arriving events are included. `PANDORA_ARCHIVE_DIR` may be a bucket mounted into the container; Pandora does not require a cloud SDK.
+
 Gzipped JSON Lines, one object per project per hour, in hive-style paths — `project=1/year=2026/month=08/day=30/hour=14/events.jsonl.gz`. Readable with `zcat` and `jq`, queryable with duckdb, restorable with a path prefix. `PANDORA_ARCHIVE_DIR` gives it a default home; point it at a mounted S3 bucket and short retention stops being frightening. A SaaS is structurally not motivated to build this well.
 
 ## More ways in
@@ -261,7 +265,7 @@ An SDK is a dependency someone has to add, and there are always services nobody 
 
 A line carrying a stack trace becomes an exception with frames, not a wall of text. Four parsers, picked by what the trace looks like: Python tracebacks with the source line under each frame, Java stacks down to the package and line (`java.base/` module prefixes included), Go panics with the file:line under each function, and Node/V8. From there it is an ordinary issue — grouping, triage, tag stats, the whole UI — because the log becomes the same event shape an SDK sends.
 
-**Cron check-ins.** `POST /api/<project_id>/cron/<slug>/<key>/` with `{"status": "in_progress"}` and then `ok` or `error`. The monitor is created by the first check-in, so a job that reports is a job that is watched — there is no configuration step, and no per-monitor cost. `manage.py monitors` sweeps for the ones that did not report inside their interval plus margin, or that ran past their maximum, and opens an issue for each. Sentry charges per active monitor.
+**Cron check-ins.** `POST /api/<project_id>/cron/<slug>/<key>/` with `{"status": "in_progress"}` and then `ok` or `error`. The monitor is created by the first check-in, so a job that reports is a job that is watched — there is no configuration step, and no per-monitor cost. `manage.py monitors` sweeps for the ones that did not report inside their interval plus margin, or that ran past their maximum, and opens an issue for each; the Helm chart runs the sweep every five minutes. Sentry charges per active monitor.
 
 `pandora-wrap` is a small Go binary that does the two calls around any command:
 
@@ -406,7 +410,7 @@ Versions are **parsed and stored as a sort key**, semver and calendar versions b
 
 **Suspect deploy** is the last deploy before the issue was first seen, shown on the issue page. It needs no repository access — suspect *commit* does, and is not built.
 
-`manage.py deploy --project infrastructure --release 1.2.3 --environment p-mk1` marks a deploy from CI when you want one, with a state — started, succeeded, failed, timed out — and a deploy left started for an hour is marked timed out rather than sitting there forever. With `resolve_on_deploy` on for a project, it also resolves everything currently open in that environment against the new release: wipe the board, and let what comes back come back. Honeybadger does this by default; here it is off until a project asks.
+`manage.py deploy --project infrastructure --release 1.2.3 --environment p-mk1` marks a deploy from CI when you want one, with a state — started, succeeded, failed, timed out — and the chart sweeps every fifteen minutes to mark a deploy left started for an hour as timed out. With `resolve_on_deploy` on for a project, it also resolves everything currently open in that environment against the new release: wipe the board, and let what comes back come back. Honeybadger does this by default; here it is off until a project asks.
 
 ### Release health
 

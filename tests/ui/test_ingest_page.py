@@ -3,6 +3,7 @@ import http
 import pytest
 from django.contrib import messages as django_messages
 from django.contrib.auth import models as auth_models
+from django.utils import timezone
 
 from pandora.core import models as core_models
 from pandora.ingest import models as ingest_models
@@ -40,6 +41,7 @@ def test_an_empty_inbox_reads_as_healthy(operator_client):
 
     assert "Nothing has failed" in page
     assert "No ingest token exists yet" in page
+    assert "No SDK has reported a discarded event" in page
 
 
 def test_the_backlog_counts_failed_and_pending(operator_client, token, am_fixture):
@@ -109,6 +111,23 @@ def test_the_page_renders(operator_client):
     expected = http.HTTPStatus.OK
 
     assert result == expected
+
+
+def test_client_discards_are_explained(operator_client, project):
+    ingest_models.ClientDiscard.objects.create(
+        project=project,
+        hour=timezone.now().replace(minute=0, second=0, microsecond=0),
+        category="error",
+        reason="sample_rate",
+        quantity=17,
+    )
+
+    response = operator_client.get("/ingest/")
+    page = response.content.decode()
+
+    assert response.context["client_discard_total"] == 17
+    assert "sample_rate" in page
+    assert "events SDKs reported dropping before send" in page
 
 
 # replay

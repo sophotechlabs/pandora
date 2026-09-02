@@ -175,3 +175,30 @@ class IngestCounter(models.Model):
 
     def __str__(self) -> str:
         return f"{self.key}@{self.bucket:%Y-%m-%dT%H:%M}Z x{self.count}"
+
+
+class ClientDiscard(models.Model):
+    project = models.ForeignKey(
+        Project,
+        on_delete=models.CASCADE,
+        related_name="client_discards",
+    )
+    hour = models.DateTimeField()
+    category = models.CharField(max_length=64)
+    reason = models.CharField(max_length=64)
+    quantity = models.PositiveBigIntegerField(default=0)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["project", "hour", "category", "reason"],
+                name="ingest_client_discard_uq",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["-hour"], name="ingest_client_discard_hour"),
+        ]
+        ordering = ("-hour", "project_id", "category", "reason")
+
+    def __str__(self) -> str:
+        return f"{self.project_id}:{self.category}/{self.reason} x{self.quantity}"

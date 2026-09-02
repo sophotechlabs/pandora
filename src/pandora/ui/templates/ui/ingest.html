@@ -30,6 +30,40 @@
       </span>
       <span class="kpi-hint">the newest envelope that reached done</span>
     </div>
+    <div class="kpi">
+      <span class="kpi-label">Client discards in 24 hours</span>
+      <span class="kpi-value">{{ client_discard_total }}</span>
+      <span class="kpi-hint">events SDKs reported dropping before send</span>
+    </div>
+  </section>
+  <section class="card">
+    <h2 class="card-title">Client-side discards</h2>
+    {% if client_discards %}
+      <table class="grid">
+        <thead>
+          <tr>
+            <th>When</th>
+            <th>Project</th>
+            <th>Category</th>
+            <th>Reason</th>
+            <th>Quantity</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for discard, ago in client_discards %}
+            <tr>
+              <td title="{{ discard.hour|date:'Y-m-d H:i:s e' }}">{{ ago }}</td>
+              <td>{{ discard.project.slug }}</td>
+              <td>{{ discard.category }}</td>
+              <td>{{ discard.reason }}</td>
+              <td>{{ discard.quantity }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <p class="muted">No SDK has reported a discarded event in the last 24 hours</p>
+    {% endif %}
   </section>
   <section class="card">
     <h2 class="card-title">Failed envelopes</h2>

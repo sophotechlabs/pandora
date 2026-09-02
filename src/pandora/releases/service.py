@@ -154,13 +154,19 @@ def latest(project: Project, environment: str = "") -> Release | None:
 
 
 def stalled(project: Project, now: datetime) -> list[Deploy]:
+    return stalled_for([project.pk], now)
+
+
+def stalled_for(project_ids: list[int] | None, now: datetime) -> list[Deploy]:
     cutoff = now - DEPLOY_TIMEOUT
+    rows = Deploy.objects.filter(
+        state__in=(DeployState.STARTED, DeployState.TIMED_OUT),
+        started_at__lt=cutoff,
+    )
+    if project_ids is not None:
+        rows = rows.filter(release__project_id__in=project_ids)
     return list(
-        Deploy.objects.filter(
-            release__project=project,
-            state=DeployState.STARTED,
-            started_at__lt=cutoff,
-        ).select_related("release")
+        rows.select_related("release", "release__project").order_by("started_at")
     )
 
 

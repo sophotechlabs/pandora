@@ -74,6 +74,7 @@ def test_prune_reports_every_retention_class():
         "deliveries",
         "audit_entries",
         "bundles",
+        "client_discards",
     ]
 
     assert result == expected
@@ -234,7 +235,7 @@ def test_the_command_reports_an_empty_run():
         "prune: 0 events, 0 envelopes, 0 processed events, 0 silences,"
         " 0 hourly stats, 0 activities, 0 ingest counters, 0 deliveries, "
         "0 audit entries, "
-        "0 artifact bundles\n"
+        "0 artifact bundles, 0 client discards\n"
     )
 
     assert result == expected
@@ -259,13 +260,38 @@ def test_the_command_reports_what_it_removed(project, issue):
         "prune: 0 events, 1 envelopes, 0 processed events, 1 silences,"
         " 0 hourly stats, 0 activities, 0 ingest counters, 0 deliveries, "
         "0 audit entries, "
-        "0 artifact bundles\n"
+        "0 artifact bundles, 0 client discards\n"
     )
 
     assert result == expected
 
 
 # aggregates that would otherwise grow forever
+
+
+def test_client_discards_past_retention_are_removed(project):
+    now = timezone.now()
+    ingest_models.ClientDiscard.objects.create(
+        project=project,
+        hour=now - datetime.timedelta(days=RETENTION_DAYS + 1),
+        category="error",
+        reason="sample_rate",
+        quantity=3,
+    )
+    ingest_models.ClientDiscard.objects.create(
+        project=project,
+        hour=now,
+        category="error",
+        reason="network_error",
+        quantity=1,
+    )
+
+    result = prune.prune_expired(now)
+
+    assert result.client_discards == 1
+    assert list(
+        ingest_models.ClientDiscard.objects.values_list("reason", flat=True)
+    ) == ["network_error"]
 
 
 def test_hourly_stats_past_retention_are_removed(project, issue):

@@ -15,7 +15,7 @@ from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 
 from pandora.core.models import DsnKey, IngestToken, TokenScope, TokenSource
-from pandora.ingest import json_payload, monitors, sizes
+from pandora.ingest import client_reports, json_payload, monitors, sizes
 from pandora.ingest.gate import Verdict, get_gate
 from pandora.ingest.models import ProcessedEvent, RawEnvelope
 from pandora.ingest.queue import get_queue
@@ -41,6 +41,7 @@ log = logging.getLogger(__name__)
 SESSION_ITEMS = ("session", "sessions")
 LOG_LINE_LIMIT = 500
 REPORT_ITEMS = ("user_report", "feedback")
+CLIENT_REPORT_ITEM = "client_report"
 
 
 def _refused(verdict: Verdict) -> JsonResponse:
@@ -132,6 +133,10 @@ def envelope(request: HttpRequest, project_id: int) -> JsonResponse:
     events = envelope_translator.event_items(parsed)
     taken = len(events)
     for item in parsed.items:
+        if item.type == CLIENT_REPORT_ITEM:
+            _accept_client_report(key, item)
+            taken += 1
+            continue
         if item.type in REPORT_ITEMS:
             _accept_user_report(key, item)
             taken += 1
@@ -188,6 +193,18 @@ def _accept_session(key: DsnKey, item: envelope_translator.Item) -> None:
         log.warning("envelope ingest dropped a session item that is not valid JSON")
         return
     sessions.accept(key.project, payload, timezone.now())
+
+
+def _accept_client_report(key: DsnKey, item: envelope_translator.Item) -> None:
+    if not sizes.fits(item.type, len(item.payload)):
+        log.warning("envelope ingest dropped an oversized client report")
+        return
+    try:
+        payload = json_payload.loads(item.payload)
+    except ValueError:
+        log.warning("envelope ingest dropped a client report that is not valid JSON")
+        return
+    client_reports.accept(key.project, payload, timezone.now())
 
 
 @csrf_exempt
