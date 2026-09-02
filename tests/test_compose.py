@@ -20,7 +20,9 @@ def justfile_text():
 def recipe_body(name):
     text = justfile_text()
     match = re.search(
-        rf"^{re.escape(name)}:.*?$(.*?)(?=^\S|\Z)", text, re.MULTILINE | re.DOTALL
+        rf"^{re.escape(name)}(?:\s+[^:\n]+)?:.*?$(.*?)(?=^\S|\Z)",
+        text,
+        re.MULTILINE | re.DOTALL,
     )
     assert match, f"no `{name}` recipe in the justfile"
     return match.group(1)
@@ -191,6 +193,13 @@ def test_the_e2e_recipe_uses_the_e2e_override():
     result = "compose_e2e" in recipe_body("ci-e2e")
 
     assert result is True
+
+
+@pytest.mark.parametrize("recipe", ("ci-test", "ci-test-pg-focus", "ci-e2e"))
+def test_focused_test_recipes_accept_pytest_arguments(recipe):
+    result = re.search(rf"^{re.escape(recipe)} \*args:", justfile_text(), re.MULTILINE)
+
+    assert result is not None
 
 
 def test_the_default_gate_leaves_the_browser_suite_out():

@@ -267,12 +267,15 @@ ci-migration-lint:
     {{ ci_compose_run_deps }} --entrypoint python web manage.py lintmigrations
 
 # pytest against SQLite (the default backend, no services needed)
-ci-test:
-    {{ ci_compose_run }} --entrypoint pytest web
+ci-test *args:
+    {{ ci_compose_run }} --entrypoint pytest web {{ args }}
 
 # pytest against postgres — runs both event stores, so this is the run that gates coverage
 ci-test-pg:
     {{ ci_compose_run_deps }} -e TEST_DATABASE_URL={{ pg_test_url }} --entrypoint pytest web --cov --cov-report=term-missing --cov-report=xml
+
+ci-test-pg-focus *args:
+    {{ ci_compose_run_deps }} -e TEST_DATABASE_URL={{ pg_test_url }} --entrypoint pytest web {{ args }}
 
 # pip-audit dependency CVE scan (installed env; skip editable self)
 ci-security:
@@ -317,9 +320,9 @@ ci-fix:
     fi
 
 # End-to-end: a real browser against the running stack (optional extra, not in default ci)
-ci-e2e:
+ci-e2e *args:
     {{ compose_e2e }} build e2e
-    {{ compose_e2e }} run --rm e2e
+    {{ compose_e2e }} run --rm e2e {{ args }}
 
 # Tear down the e2e stack and its volumes
 ci-e2e-down:

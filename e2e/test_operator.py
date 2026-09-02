@@ -2,14 +2,17 @@ import hashlib
 import io
 import json
 import zipfile
+from datetime import timedelta
 
 import pytest
 import requests
+from django.utils import timezone
 
 from pandora.core import models as core_models
 from pandora.ingest import models as ingest_models
 from pandora.issues import models as issue_models
 from pandora.people import models as people_models
+from pandora.releases import models as release_models
 
 pytestmark = pytest.mark.e2e
 
@@ -240,6 +243,65 @@ def test_the_ingest_page_renders(page, base_url, dsn_key, make_user, sign_in):
     page.goto(f"{base_url}/ingest/")
 
     assert page.locator(".kpi-label", has_text="Backlog").first.is_visible()
+
+
+def test_a_stalled_rollout_reaches_the_overview(
+    page, base_url, dsn_key, make_user, sign_in
+):
+    release = release_models.Release.objects.create(
+        project=dsn_key.project,
+        version="2.4.1",
+    )
+    release_models.Deploy.objects.create(
+        release=release,
+        environment="production",
+        started_at=timezone.now() - timedelta(hours=2),
+    )
+    sign_in(make_user("operator", is_superuser=True))
+
+    page.goto(f"{base_url}/overview/")
+
+    row = page.locator("tr", has_text="2.4.1")
+    assert row.get_by_text("production").is_visible()
+
+
+def test_a_client_report_reaches_the_ingest_page(
+    page, base_url, dsn_key, make_user, sign_in
+):
+    envelope = "\n".join(
+        [
+            json.dumps({}),
+            json.dumps({"type": "client_report"}),
+            json.dumps(
+                {
+                    "timestamp": timezone.now().isoformat(),
+                    "discarded_events": [
+                        {
+                            "reason": "queue_overflow",
+                            "category": "error",
+                            "quantity": 13,
+                        }
+                    ],
+                }
+            ),
+        ]
+    )
+    response = requests.post(
+        f"{base_url}/api/{dsn_key.project_id}/envelope/",
+        data=envelope.encode(),
+        headers={
+            "Content-Type": "application/x-sentry-envelope",
+            "X-Sentry-Auth": f"Sentry sentry_key={dsn_key.public_key}",
+        },
+        timeout=10,
+    )
+    response.raise_for_status()
+    sign_in(make_user("operator", is_superuser=True))
+
+    page.goto(f"{base_url}/ingest/")
+
+    row = page.locator("tr", has_text="queue_overflow")
+    assert row.get_by_text("13", exact=True).is_visible()
 
 
 def test_the_markdown_export_is_served(page, base_url, dsn_key, make_user, sign_in):

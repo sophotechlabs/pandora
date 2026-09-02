@@ -11,4 +11,4 @@ services:
     depends_on:
       web:
         condition: service_healthy
-    entrypoint: ["pytest", "e2e", "-q"]
+    entrypoint: ["pytest", "-c", "e2e/pytest.ini", "e2e", "-q"]

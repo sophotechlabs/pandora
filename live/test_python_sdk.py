@@ -7,6 +7,7 @@ repo — which is the only way to know the wire contract actually holds.
 import pytest
 
 from live.support import body_of, issue_titled
+from pandora.ingest import models as ingest_models
 from pandora.issues import models as issue_models
 from pandora.releases import models as release_models
 
@@ -157,6 +158,19 @@ def test_a_scoped_tag_overrides_the_global_one():
     expected = {"worker"}
 
     assert result == expected
+
+
+def test_the_sdk_reports_an_event_dropped_by_before_send():
+    row = ingest_models.ClientDiscard.objects.get(reason="before_send")
+
+    assert row.category == "error"
+    assert row.quantity >= 1
+    assert (
+        issue_models.Issue.objects.filter(
+            title__icontains="client report compatibility check"
+        ).exists()
+        is False
+    )
 
 
 # release health

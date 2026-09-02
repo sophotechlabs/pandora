@@ -16,6 +16,20 @@ from sentry_sdk.integrations.logging import LoggingIntegration
 
 RELEASE = "1.4.2"
 ENVIRONMENT = "live"
+DROPPED_MESSAGE = "client report compatibility check"
+
+
+def before_send(event: dict, hint: dict) -> dict | None:
+    message = event.get("message")
+    if message == DROPPED_MESSAGE:
+        return None
+    logentry = event.get("logentry")
+    if not isinstance(logentry, dict):
+        return event
+    formatted = logentry.get("formatted")
+    if formatted == DROPPED_MESSAGE:
+        return None
+    return event
 
 
 def charge(order: dict, rate: float) -> float:
@@ -44,6 +58,7 @@ def main() -> None:
         include_local_variables=True,
         max_breadcrumbs=50,
         traces_sample_rate=0,
+        before_send=before_send,
         integrations=[LoggingIntegration(level=None, event_level=None)],
     )
 
@@ -74,6 +89,7 @@ def main() -> None:
         print(f"captured exception {event_id}")
 
     sentry_sdk.capture_message("checkout queue is backing up", level="warning")
+    sentry_sdk.capture_message(DROPPED_MESSAGE, level="error")
 
     with sentry_sdk.new_scope() as scope:
         scope.set_tag("service", "worker")

@@ -26,6 +26,7 @@ OWNED = (
     artifact_models.UploadChunk,
     artifact_models.BundleFile,
     artifact_models.ArtifactBundle,
+    ingest_models.ClientDiscard,
     ingest_models.Monitor,
     issue_models.UserReport,
     issue_models.SavedView,

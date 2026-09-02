@@ -62,9 +62,8 @@ def rollout() -> None:
     kubectl("rollout", "status", f"deployment/{DEPLOYMENT}", "--timeout=5m")
 
 
-@contextlib.contextmanager
-def endpoint():
-    process = subprocess.Popen(
+def start_port_forward() -> subprocess.Popen[str]:
+    return subprocess.Popen(
         [
             "kubectl",
             "--context",
@@ -80,31 +79,61 @@ def endpoint():
         stderr=subprocess.PIPE,
         text=True,
     )
-    base_url = f"http://localhost:{PORT}"
+
+
+def stop_port_forward(process: subprocess.Popen[str]) -> None:
+    if process.poll() is not None:
+        return
+    process.terminate()
     try:
-        for _ in range(60):
-            if process.poll() is not None:
-                detail = ""
-                if process.stderr is not None:
-                    detail = process.stderr.read()
-                raise RuntimeError(f"kubectl port-forward stopped: {detail}")
-            try:
-                response = requests.get(f"{base_url}/ready/", timeout=1)
-                if response.status_code == requests.codes.ok:
-                    break
-            except requests.RequestException:
-                pass
-            time.sleep(1)
-        else:
-            raise RuntimeError("Pandora did not become reachable through port-forward")
+        process.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait(timeout=5)
+
+
+def wait_for_endpoint(
+    process: subprocess.Popen[str], base_url: str, deadline: float
+) -> tuple[bool, str]:
+    while time.monotonic() < deadline:
+        if process.poll() is not None:
+            if process.stderr is None:
+                return False, ""
+            return False, process.stderr.read().strip()
+        try:
+            response = requests.get(f"{base_url}/ready/", timeout=1)
+            if response.status_code == requests.codes.ok:
+                return True, ""
+        except requests.RequestException:
+            pass
+        time.sleep(1)
+    return False, ""
+
+
+@contextlib.contextmanager
+def endpoint():
+    base_url = f"http://localhost:{PORT}"
+    deadline = time.monotonic() + 60
+    detail = ""
+    process = start_port_forward()
+    while True:
+        ready, failure_detail = wait_for_endpoint(process, base_url, deadline)
+        if ready:
+            break
+        if failure_detail:
+            detail = failure_detail
+        stop_port_forward(process)
+        if time.monotonic() >= deadline:
+            message = "Pandora did not become reachable through port-forward"
+            if detail:
+                message = f"{message}: {detail}"
+            raise RuntimeError(message)
+        time.sleep(1)
+        process = start_port_forward()
+    try:
         yield base_url
     finally:
-        process.terminate()
-        try:
-            process.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            process.kill()
-            process.wait(timeout=5)
+        stop_port_forward(process)
 
 
 def credentials() -> tuple[int, str]:
@@ -277,8 +306,8 @@ def full_cases() -> None:
         "RawEnvelope.objects.create(project=r.project, source=r.source, environment=r.environment, payload=r.payload, state=EnvelopeState.FAILED, error='kind replay'); "
         "print('created')"
     )
-    run_job("prune")
-    run_job("replay")
+    for name in ("monitors", "prune", "replay", "rollouts"):
+        run_job(name)
     result = shell(
         "from pandora.artifacts.models import UploadChunk; "
         "from pandora.ingest.models import EnvelopeState, RawEnvelope; "
