@@ -85,10 +85,16 @@ reconcile:
       memory: 256Mi
 
 cronJobs:
+  monitors:
+    enabled: true
+    schedule: "*/5 * * * *"
   prune:
     enabled: true
     schedule: "17 3 * * *"
   replay:
+    enabled: true
+    schedule: "*/15 * * * *"
+  rollouts:
     enabled: true
     schedule: "*/15 * * * *"
 
