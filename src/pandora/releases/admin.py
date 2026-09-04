@@ -21,9 +21,17 @@ class ReleaseAdmin(ModelAdmin):
 
 @admin.register(Deploy)
 class DeployAdmin(ModelAdmin):
-    list_display = ("release", "environment", "state", "started_at", "finished_at")
-    list_filter = ("state", "environment")
-    list_select_related = ("release",)
+    list_display = (
+        "identifier",
+        "release",
+        "environment",
+        "state",
+        "started_at",
+        "finished_at",
+    )
+    list_filter = ("state", "environment", "project")
+    list_select_related = ("project", "release")
+    search_fields = ("identifier", "release__version", "name")
 
 
 @admin.register(Resolution)

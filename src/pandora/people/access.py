@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 from django.contrib.auth.models import AbstractBaseUser, AnonymousUser
+from django.db.models import Q
 
 from pandora.core.models import Project
-from pandora.people.models import ROLE_ORDER, ROLE_PERMISSIONS, Membership
+from pandora.people.models import ROLE_ORDER, ROLE_PERMISSIONS, Membership, Role
 
 User = AbstractBaseUser
 
@@ -46,3 +47,15 @@ def may(user: User | AnonymousUser, permission: str) -> bool:
     if getattr(user, "has_perm", None) and user.has_perm(permission):
         return True
     return permission in permissions_of(user)
+
+
+def owns_project(user: User | AnonymousUser, project: Project) -> bool:
+    if getattr(user, "is_superuser", False):
+        return True
+    if not getattr(user, "is_authenticated", False):
+        return False
+    return (
+        Membership.objects.filter(user=user, role=Role.OWNER)
+        .filter(Q(team__projects=project) | Q(team__projects__isnull=True))
+        .exists()
+    )

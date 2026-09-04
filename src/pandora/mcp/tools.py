@@ -4,7 +4,7 @@ from typing import Any
 
 from django.utils import timezone
 
-from pandora.core.models import READ_SCOPES, IngestToken, TokenScope
+from pandora.core.models import IngestToken, TokenScope
 from pandora.events.store import get_store
 from pandora.issues import detail as issue_detail
 from pandora.issues.models import Issue
@@ -24,7 +24,7 @@ class ToolError(RuntimeError):
 def resolve_token(value: str) -> IngestToken:
     token = (
         IngestToken.objects.select_related("project")
-        .filter(token=value, active=True, scope__in=READ_SCOPES)
+        .filter(token=value, active=True, scope_grants__scope=TokenScope.READ)
         .first()
     )
     if token is None:
@@ -95,10 +95,9 @@ def get_issue_events(
         )
     except NotImplementedError:
         return {"supported": False, "results": []}
-    payloads = token.scope == TokenScope.READ_PAYLOAD
     return {
         "supported": True,
-        "results": [api.serialize_event(event, payloads) for event in events],
+        "results": api.serialize_events(token, events),
     }
 
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from django.core.exceptions import ValidationError
 from django.db import models
 from django.utils import timezone
 
@@ -71,11 +72,17 @@ class ReleaseEnvironment(models.Model):
 
 
 class Deploy(models.Model):
+    project = models.ForeignKey(
+        Project,
+        on_delete=models.CASCADE,
+        related_name="deploys",
+    )
     release = models.ForeignKey(
         Release,
         on_delete=models.CASCADE,
         related_name="deploys",
     )
+    identifier = models.CharField(max_length=128)
     environment = models.CharField(max_length=100, blank=True, default="")
     state = models.CharField(
         max_length=16,
@@ -88,6 +95,12 @@ class Deploy(models.Model):
     url = models.CharField(max_length=500, blank=True, default="")
 
     class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["project", "identifier"],
+                name="releases_deploy_identity_uq",
+            ),
+        ]
         indexes = [
             models.Index(fields=["-started_at"], name="releases_deploy_started"),
         ]
@@ -95,6 +108,19 @@ class Deploy(models.Model):
 
     def __str__(self) -> str:
         return f"{self.release_id} to {self.environment or 'everywhere'} ({self.state})"
+
+    def clean(self) -> None:
+        super().clean()
+        project_id = self.__dict__.get("project_id")
+        if project_id is None:
+            return
+        release_id = self.__dict__.get("release_id")
+        if release_id is None:
+            return
+        if self.release.project_id != project_id:
+            raise ValidationError(
+                {"release": "deploy release must belong to the deploy project"}
+            )
 
 
 class SessionBucket(models.Model):

@@ -9,6 +9,7 @@ urlpatterns = [
     path("ready/", ready, name="ready"),
     path("", include("pandora.ingest.urls")),
     path("", include("pandora.artifacts.urls")),
+    path("", include("pandora.releases.urls")),
     path("api/v1/", include("pandora.web.api")),
     path("", include("django_prometheus.urls")),
     path("", include("pandora.ui.urls")),

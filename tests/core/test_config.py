@@ -156,6 +156,77 @@ def test_a_token_reads_its_value_from_the_environment(write, monkeypatch):
     assert result == expected
 
 
+def test_a_token_accepts_several_capabilities(write):
+    body = (
+        BASE
+        + """
+    tokens:
+      - name: ci
+        project: infrastructure
+        token: ci-secret
+        source: ci
+        scopes: [artifacts, deploy]
+    """
+    )
+
+    run(write(body))
+
+    token = models.IngestToken.objects.get(name="ci")
+
+    assert token.source == models.TokenSource.CI
+    assert token.scopes == ("artifacts", "deploy")
+
+
+@pytest.mark.parametrize(
+    ("fields", "message"),
+    [
+        ("scope: read\n        scopes: [read]", "both scope and scopes"),
+        ("scopes: []", "must not be empty"),
+        ("scopes: [read, read]", "must not contain duplicates"),
+        ("scopes: [unknown]", "unknown token scope"),
+    ],
+)
+def test_invalid_token_capabilities_are_rejected(write, fields, message):
+    body = (
+        BASE
+        + f"""
+    tokens:
+      - name: ci
+        project: infrastructure
+        token: ci-secret
+        {fields}
+    """
+    )
+
+    with pytest.raises(CommandError, match=message):
+        run(write(body))
+
+
+@pytest.mark.parametrize(
+    ("legacy", "expected"),
+    [
+        ("ingest", ("artifacts", "ingest")),
+        ("read", ("read",)),
+        ("payload", ("payload", "read")),
+    ],
+)
+def test_legacy_token_scopes_preserve_effective_access(write, legacy, expected):
+    body = (
+        BASE
+        + f"""
+    tokens:
+      - name: legacy
+        project: infrastructure
+        token: old-secret
+        scope: {legacy}
+    """
+    )
+
+    run(write(body))
+
+    assert models.IngestToken.objects.get(name="legacy").scopes == expected
+
+
 def test_an_unset_variable_is_an_error(write):
     """Should fail loudly rather than writing an empty token nothing can authenticate with."""
     body = (

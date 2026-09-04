@@ -4,16 +4,20 @@ import io
 import json
 import logging
 import secrets
+import tempfile
 import zlib
 from http import HTTPStatus
 from typing import Any
 
 import brotli
 import zstandard as zstd
+from django.conf import settings
 from django.http import HttpRequest, JsonResponse
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 
+from pandora.attachments import envelope as attachment_envelope
+from pandora.attachments import service as attachments
 from pandora.core.models import DsnKey, IngestToken, TokenScope, TokenSource
 from pandora.ingest import client_reports, json_payload, monitors, sizes
 from pandora.ingest.gate import Verdict, get_gate
@@ -115,24 +119,51 @@ def envelope(request: HttpRequest, project_id: int) -> JsonResponse:
             status=HTTPStatus.UNAUTHORIZED,
         )
 
-    body, refusal = _read_body(request, key)
+    body, refusal = _read_envelope_body(request, key)
     if refusal is not None:
         return refusal
 
     try:
-        parsed = envelope_translator.parse_envelope(body)
+        parsed = attachment_envelope.parse(
+            body,
+            settings.PANDORA_ATTACHMENT_MAX_BYTES,
+            settings.PANDORA_INGEST_MAX_BYTES,
+        )
+    except attachment_envelope.AttachmentTooLarge as error:
+        log.warning(
+            "envelope ingest refused an oversized body from project %s: %s",
+            key.project_id,
+            error,
+        )
+        return JsonResponse(
+            {"detail": str(error)},
+            status=HTTPStatus.REQUEST_ENTITY_TOO_LARGE,
+        )
     except envelope_translator.EnvelopeError as error:
         log.warning(
             "envelope ingest refused %s bytes from project %s: %s",
-            len(body),
+            body.tell(),
             key.project_id,
             error,
         )
         return JsonResponse({"detail": str(error)}, status=HTTPStatus.BAD_REQUEST)
+    finally:
+        body.close()
 
-    events = envelope_translator.event_items(parsed)
+    try:
+        _accept_envelope(key, parsed)
+        return JsonResponse({"id": parsed.envelope.event_id}, status=HTTPStatus.OK)
+    finally:
+        parsed.close()
+
+
+def _accept_envelope(
+    key: DsnKey,
+    parsed: attachment_envelope.ParsedEnvelope,
+) -> None:
+    events = envelope_translator.event_items(parsed.envelope)
     taken = len(events)
-    for item in parsed.items:
+    for item in parsed.envelope.items:
         if item.type == CLIENT_REPORT_ITEM:
             _accept_client_report(key, item)
             taken += 1
@@ -143,17 +174,53 @@ def envelope(request: HttpRequest, project_id: int) -> JsonResponse:
             continue
         if item.type in SESSION_ITEMS:
             if not sizes.fits(item.type, len(item.payload)):
-                log.warning("envelope ingest dropped an oversized %s item", item.type)
+                log.warning(
+                    "envelope ingest dropped an oversized %s item",
+                    item.type,
+                )
                 continue
             _accept_session(key, item)
             taken += 1
-    dropped = len(parsed.items) - taken
+    dropped = len(parsed.envelope.items) - taken
     if dropped:
         log.info("envelope ingest acked and dropped %s unhandled items", dropped)
 
+    accepted_ids = []
     for item in events:
-        _accept_event(key, item, parsed.event_id)
-    return JsonResponse({"id": parsed.event_id}, status=HTTPStatus.OK)
+        event_id = _accept_event(key, item, parsed.envelope.event_id)
+        if event_id:
+            accepted_ids.append(event_id)
+    if parsed.attachments and len(set(accepted_ids)) == 1:
+        _accept_attachments(key, accepted_ids[0], parsed.attachments)
+    elif parsed.attachments:
+        log.warning("envelope ingest dropped attachments without one accepted event")
+
+
+def _read_envelope_body(
+    request: HttpRequest,
+    key: DsnKey,
+) -> tuple[Any, JsonResponse | None]:
+    verdict = get_gate().check(key.project_id, 0)
+    if not verdict.allowed:
+        return (None, _refused(verdict))
+    try:
+        return (_decoded_stream(request), None)
+    except _TooLarge:
+        return (
+            None,
+            JsonResponse(
+                {"detail": "oversized"},
+                status=HTTPStatus.REQUEST_ENTITY_TOO_LARGE,
+            ),
+        )
+    except DECODE_ERRORS:
+        return (
+            None,
+            JsonResponse(
+                {"detail": "body is not decodable"},
+                status=HTTPStatus.BAD_REQUEST,
+            ),
+        )
 
 
 def _read_body(request: HttpRequest, key: DsnKey) -> tuple[bytes, JsonResponse | None]:
@@ -460,26 +527,54 @@ def _issue_for_event(project_id: int, sentry_id: str) -> Issue | None:
     return processed.issue
 
 
-def _accept_event(key: DsnKey, item: envelope_translator.Item, fallback: str) -> None:
+def _accept_event(
+    key: DsnKey,
+    item: envelope_translator.Item,
+    fallback: str,
+) -> str:
     if not sizes.fits(sizes.EVENT, len(item.payload)):
         log.warning("envelope ingest dropped an event item over the per-item limit")
-        return
+        return ""
     try:
         payload = json_payload.loads(item.payload)
     except ValueError:
         log.warning("envelope ingest dropped an event item that is not valid JSON")
-        return
+        return ""
     if not isinstance(payload, dict):
         log.warning("envelope ingest dropped an event item that is not a JSON object")
-        return
+        return ""
     payload.setdefault("event_id", fallback)
+    event_id = envelope_translator.sentry_event_id(payload, fallback)
+    if not event_id:
+        log.warning("envelope ingest dropped attachments for an event without an id")
 
     rule = scrub.dropped_by(payload, key.project)
     if rule is not None:
         scrub.record_drop(rule, TokenSource.SDK)
-        return
+        return ""
 
     _store_event(key, payload)
+    return event_id
+
+
+def _accept_attachments(
+    key: DsnKey,
+    event_id: str,
+    pending: list[attachment_envelope.PendingAttachment],
+) -> None:
+    received_at = timezone.now()
+    for attachment in pending:
+        attachments.store(
+            key.project,
+            event_id,
+            filename=attachment.filename,
+            content_type=attachment.content_type,
+            attachment_type=attachment.attachment_type,
+            size=attachment.size,
+            sha256=attachment.sha256,
+            body=attachment.body,
+            received_at=received_at,
+        )
 
 
 def _dsn_key(request: HttpRequest, project_id: int) -> DsnKey | None:
@@ -518,6 +613,133 @@ def _auth_fields(raw: str) -> str:
 
 class _TooLarge(Exception):
     pass
+
+
+def _spooled_file() -> Any:
+    return tempfile.SpooledTemporaryFile(max_size=1024 * 1024)
+
+
+def _decoded_stream(request: HttpRequest) -> Any:
+    encoding = request.headers.get("Content-Encoding", "").strip().lower()
+    expanded_limit = (
+        settings.PANDORA_ATTACHMENT_MAX_BYTES
+        + settings.PANDORA_INGEST_MAX_BYTES
+        + attachment_envelope.HEADER_TOTAL_LIMIT
+        + attachment_envelope.ITEM_LIMIT * 2
+    )
+    raw_limit = expanded_limit
+    compressed = encoding in GZIP_ENCODINGS
+    if encoding == DEFLATE_ENCODING:
+        compressed = True
+    if encoding == BROTLI_ENCODING:
+        compressed = True
+    if encoding == ZSTD_ENCODING:
+        compressed = True
+    if compressed:
+        raw_limit = settings.PANDORA_INGEST_COMPRESSED_MAX_BYTES
+    raw = _spool_request(request, raw_limit)
+    if not compressed:
+        return raw
+    try:
+        decoded = _decompress_stream(raw, encoding, expanded_limit)
+    finally:
+        raw.close()
+    return decoded
+
+
+def _spool_request(request: HttpRequest, limit: int) -> Any:
+    stream: Any = request
+    if request.headers.get("Transfer-Encoding", "").strip().lower() == "chunked":
+        stream = getattr(request, "environ", {}).get("wsgi.input")
+        if stream is None:
+            stream = request
+    return _spool(stream, limit)
+
+
+def _spool(stream: Any, limit: int) -> Any:
+    target = _spooled_file()
+    total = 0
+    try:
+        while total <= limit:
+            piece = stream.read(min(READ_SIZE, limit + 1 - total))
+            if not piece:
+                break
+            target.write(piece)
+            total += len(piece)
+        if total > limit:
+            raise _TooLarge
+        target.seek(0)
+        return target
+    except Exception:
+        target.close()
+        raise
+
+
+def _decompress_stream(raw: Any, encoding: str, limit: int) -> Any:
+    if encoding in GZIP_ENCODINGS:
+        return _decompress_zlib(raw, limit)
+    if encoding == DEFLATE_ENCODING:
+        return _decompress_zlib(raw, limit)
+    if encoding == BROTLI_ENCODING:
+        return _decompress_brotli(raw, limit)
+    if encoding == ZSTD_ENCODING:
+        machine = zstd.ZstdDecompressor()
+        with machine.stream_reader(raw) as reader:
+            return _spool(reader, limit)
+    raise zlib.error("unsupported content encoding")
+
+
+def _decompress_zlib(raw: Any, limit: int) -> Any:
+    machine = zlib.decompressobj(AUTO_WBITS)
+    target = _spooled_file()
+    total = 0
+    try:
+        while True:
+            piece = raw.read(READ_SIZE)
+            if not piece:
+                break
+            expanded = machine.decompress(piece, limit + 1 - total)
+            if len(expanded) > limit - total:
+                raise _TooLarge
+            target.write(expanded)
+            total += len(expanded)
+            if machine.unconsumed_tail:
+                raise _TooLarge
+        expanded = machine.flush(limit + 1 - total)
+        if len(expanded) > limit - total:
+            raise _TooLarge
+        target.write(expanded)
+        total += len(expanded)
+        if not machine.eof:
+            raise zlib.error("incomplete compressed body")
+        target.seek(0)
+        return target
+    except Exception:
+        target.close()
+        raise
+
+
+def _decompress_brotli(raw: Any, limit: int) -> Any:
+    machine = brotli.Decompressor()
+    target = _spooled_file()
+    total = 0
+    try:
+        while True:
+            piece = raw.read(READ_SIZE)
+            if not piece:
+                break
+            expanded = machine.process(piece)
+            if len(expanded) > limit - total:
+                raise _TooLarge
+            target.write(expanded)
+            total += len(expanded)
+        if not machine.is_finished():
+            raise brotli.error("incomplete brotli body")
+        target.seek(0)
+        return target
+    except Exception:
+        target.close()
+        raise
 
 
 def _decoded(request: HttpRequest) -> bytes:
@@ -602,11 +824,15 @@ def _token_for(request: HttpRequest) -> IngestToken | None:
     if not presented:
         return None
 
-    candidates = IngestToken.objects.filter(
-        source=TokenSource.AM,
-        scope=TokenScope.INGEST,
-        active=True,
-    ).select_related("project")
+    candidates = (
+        IngestToken.objects.filter(
+            source=TokenSource.AM,
+            scope_grants__scope=TokenScope.INGEST,
+            active=True,
+        )
+        .select_related("project")
+        .distinct()
+    )
     for candidate in candidates:
         if secrets.compare_digest(candidate.token, presented):
             return candidate

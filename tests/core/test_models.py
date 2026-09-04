@@ -10,10 +10,10 @@ def test_ingest_token_defaults_to_alertmanager_ingest(token):
     """Should default a new token to the Alertmanager ingest scope, active."""
     result = {
         "source": token.source,
-        "scope": token.scope,
+        "scopes": token.scopes,
         "active": token.active,
     }
-    expected = {"source": "am", "scope": "ingest", "active": True}
+    expected = {"source": "am", "scopes": ("artifacts", "ingest"), "active": True}
 
     assert result == expected
 
@@ -21,17 +21,48 @@ def test_ingest_token_defaults_to_alertmanager_ingest(token):
 def test_token_sources_name_every_front_door():
     """Should name each way an occurrence can arrive, so the ingest page can split them."""
     result = list(models.TokenSource.values)
-    expected = ["am", "sdk", "log", "cron", "otlp"]
+    expected = ["am", "sdk", "log", "cron", "otlp", "ci"]
 
     assert result == expected
 
 
-def test_token_scopes_separate_ingest_from_read():
-    """Should offer exactly ingest, read, and read-with-payloads — the split exists so a token can list issues without seeing what an SDK sent."""
+def test_token_scopes_are_independent_capabilities():
+    """Should let one automation token carry only the capabilities it needs."""
     result = list(models.TokenScope.values)
-    expected = ["ingest", "read", "payload"]
+    expected = ["ingest", "artifacts", "deploy", "read", "payload"]
 
     assert result == expected
+
+
+@pytest.mark.django_db
+def test_a_token_without_an_explicit_capability_keeps_legacy_access(project):
+    token = models.IngestToken.objects.create(
+        project=project,
+        name="legacy default",
+        token="legacy-default-token",
+    )
+
+    assert token.scopes == ("artifacts", "ingest")
+
+
+@pytest.mark.django_db(databases="__all__")
+def test_capability_writes_stay_on_the_selected_database():
+    alias = next(
+        name for name in db.connections if db.connections[name].vendor == "sqlite"
+    )
+    project = models.Project.objects.using(alias).create(
+        slug="selected-database",
+        name="Selected database",
+    )
+
+    token = models.IngestToken.objects.db_manager(alias).create(
+        project=project,
+        name="selected database token",
+        token="selected-database-token",
+        scopes=(models.TokenScope.READ, models.TokenScope.PAYLOAD),
+    )
+
+    assert token.scopes == ("payload", "read")
 
 
 @pytest.mark.django_db

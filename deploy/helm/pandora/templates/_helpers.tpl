@@ -70,6 +70,12 @@ app.kubernetes.io/instance: {{ .Release.Name }}
   value: {{ .Values.settings.envelopeRetentionDays | quote }}
 - name: PANDORA_INGEST_MAX_BYTES
   value: {{ .Values.settings.ingestMaxBytes | int | quote }}
+- name: PANDORA_INGEST_COMPRESSED_MAX_BYTES
+  value: {{ .Values.settings.ingestCompressedMaxBytes | int | quote }}
+- name: PANDORA_ATTACHMENT_MAX_BYTES
+  value: {{ .Values.settings.attachmentMaxBytes | int | quote }}
+- name: PANDORA_ATTACHMENT_RETENTION_DAYS
+  value: {{ .Values.settings.attachmentRetentionDays | int | quote }}
 - name: PANDORA_CORRELATION_KEYS
   value: {{ .Values.settings.correlationKeys | quote }}
 - name: DATABASE_URL

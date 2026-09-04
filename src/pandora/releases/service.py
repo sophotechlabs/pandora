@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
+from django.db import IntegrityError, transaction
 from django.db.models import F, Max, Min, Value
 from django.db.models.functions import Greatest, Least
 
@@ -18,6 +19,15 @@ from pandora.releases.models import (
 from pandora.releases.versions import is_parsed, sort_key
 
 DEPLOY_TIMEOUT = timedelta(minutes=60)
+TERMINAL_DEPLOY_STATES = (
+    DeployState.SUCCEEDED,
+    DeployState.FAILED,
+    DeployState.TIMED_OUT,
+)
+
+
+class DeployConflict(ValueError):
+    pass
 
 
 def record(
@@ -58,6 +68,238 @@ def record(
     return release
 
 
+def ensure_release(
+    project: Project,
+    version: str,
+    dist: str,
+    at: datetime,
+) -> Release:
+    name = version.strip()
+    if not name:
+        raise DeployConflict("release must not be empty")
+    if len(name) > 250:
+        raise DeployConflict("release is too long")
+    variant = dist.strip()
+    if len(variant) > 100:
+        raise DeployConflict("release dist is too long")
+    release, _ = Release.objects.get_or_create(
+        project=project,
+        version=name,
+        dist=variant,
+        defaults={
+            "sort_key": sort_key(name),
+            "parsed": is_parsed(name),
+            "first_seen": at,
+            "last_seen": at,
+        },
+    )
+    return release
+
+
+def transition_deploy(
+    project: Project,
+    release: Release,
+    *,
+    identifier: str,
+    environment: str,
+    state: DeployState | str,
+    at: datetime,
+    name: str = "",
+    url: str = "",
+) -> tuple[Deploy, bool]:
+    _validate_release_project(project, release)
+    key = identifier.strip()
+    if not key:
+        raise DeployConflict("deploy identifier must not be empty")
+    if len(key) > 128:
+        raise DeployConflict("deploy identifier is too long")
+    environment_value = environment.strip()
+    if len(environment_value) > 100:
+        raise DeployConflict("deploy environment is too long")
+    name_value = name.strip()
+    if len(name_value) > 200:
+        raise DeployConflict("deploy name is too long")
+    url_value = url.strip()
+    if len(url_value) > 500:
+        raise DeployConflict("deploy URL is too long")
+    state_value = str(state)
+    if state_value not in DeployState.values:
+        raise DeployConflict(f"unknown deploy state {state_value!r}")
+    try:
+        with transaction.atomic():
+            return _transition_deploy(
+                project,
+                release,
+                identifier=key,
+                environment=environment_value,
+                state=state_value,
+                at=at,
+                name=name_value,
+                url=url_value,
+            )
+    except IntegrityError:
+        with transaction.atomic():
+            return _transition_deploy(
+                project,
+                release,
+                identifier=key,
+                environment=environment_value,
+                state=state_value,
+                at=at,
+                name=name_value,
+                url=url_value,
+            )
+
+
+def _transition_deploy(
+    project: Project,
+    release: Release,
+    *,
+    identifier: str,
+    environment: str,
+    state: str,
+    at: datetime,
+    name: str,
+    url: str,
+) -> tuple[Deploy, bool]:
+    deploy = (
+        Deploy.objects.select_for_update()
+        .filter(project=project, identifier=identifier)
+        .first()
+    )
+    if deploy is None:
+        if state != DeployState.STARTED:
+            raise DeployConflict("deploy must be started before it can finish")
+        return (
+            Deploy.objects.create(
+                project=project,
+                release=release,
+                identifier=identifier,
+                environment=environment,
+                state=DeployState.STARTED,
+                started_at=at,
+                name=name,
+                url=url,
+            ),
+            True,
+        )
+    _validate_deploy_context(deploy, release, environment, name, url)
+    if state == DeployState.STARTED:
+        if deploy.state == DeployState.STARTED:
+            return deploy, False
+        raise DeployConflict(f"deploy is already {deploy.state}")
+    if at < deploy.started_at:
+        raise DeployConflict("deploy finish is before its start")
+    if deploy.state == state:
+        return deploy, False
+    allowed = deploy.state == DeployState.STARTED
+    late_finish = deploy.state == DeployState.TIMED_OUT and state in (
+        DeployState.SUCCEEDED,
+        DeployState.FAILED,
+    )
+    if not allowed and not late_finish:
+        raise DeployConflict(f"deploy is already {deploy.state}")
+    deploy.state = state
+    deploy.finished_at = at
+    deploy.save(update_fields=["state", "finished_at"])
+    return deploy, True
+
+
+def _validate_deploy_context(
+    deploy: Deploy,
+    release: Release,
+    environment: str,
+    name: str,
+    url: str,
+) -> None:
+    if deploy.release_id != release.pk:
+        raise DeployConflict("deploy identifier belongs to another release")
+    if deploy.environment != environment:
+        raise DeployConflict("deploy identifier belongs to another environment")
+    if name and deploy.name != name:
+        raise DeployConflict("deploy identifier has a different name")
+    if url and deploy.url != url:
+        raise DeployConflict("deploy identifier has a different URL")
+
+
+def record_completed_deploy(
+    project: Project,
+    release: Release,
+    *,
+    identifier: str,
+    environment: str,
+    started_at: datetime,
+    finished_at: datetime,
+    name: str = "",
+    url: str = "",
+) -> tuple[Deploy, bool]:
+    _validate_release_project(project, release)
+    key = identifier.strip()
+    if not key:
+        raise DeployConflict("deploy identifier must not be empty")
+    if len(key) > 128:
+        raise DeployConflict("deploy identifier is too long")
+    environment_value = environment.strip()
+    if len(environment_value) > 100:
+        raise DeployConflict("deploy environment is too long")
+    name_value = name.strip()
+    if len(name_value) > 200:
+        raise DeployConflict("deploy name is too long")
+    url_value = url.strip()
+    if len(url_value) > 500:
+        raise DeployConflict("deploy URL is too long")
+    if finished_at < started_at:
+        raise DeployConflict("deploy finish is before its start")
+    try:
+        with transaction.atomic():
+            deploy, created = Deploy.objects.get_or_create(
+                project=project,
+                identifier=key,
+                defaults={
+                    "release": release,
+                    "environment": environment_value,
+                    "state": DeployState.SUCCEEDED,
+                    "started_at": started_at,
+                    "finished_at": finished_at,
+                    "name": name_value,
+                    "url": url_value,
+                },
+            )
+    except IntegrityError:
+        deploy = Deploy.objects.get(project=project, identifier=key)
+        created = False
+    if not created:
+        _validate_completed_deploy(
+            deploy,
+            release,
+            environment_value,
+            name_value,
+            url_value,
+        )
+    return deploy, created
+
+
+def _validate_completed_deploy(
+    deploy: Deploy,
+    release: Release,
+    environment: str,
+    name: str,
+    url: str,
+) -> None:
+    _validate_deploy_context(deploy, release, environment, name, url)
+    if deploy.name != name:
+        raise DeployConflict("deploy identifier has a different name")
+    if deploy.url != url:
+        raise DeployConflict("deploy identifier has a different URL")
+    if deploy.state != DeployState.SUCCEEDED:
+        raise DeployConflict(f"deploy is already {deploy.state}")
+
+
+def _validate_release_project(project: Project, release: Release) -> None:
+    if release.project_id != project.pk:
+        raise DeployConflict("release belongs to another project")
+
+
 def _record_environment(release: Release, environment: str, at: datetime) -> None:
     rollout, created = ReleaseEnvironment.objects.get_or_create(
         release=release,
@@ -94,7 +336,8 @@ def suspect_deploy(issue: Issue) -> Deploy | None:
     """
     return (
         Deploy.objects.filter(
-            release__project_id=issue.project_id, started_at__lte=issue.first_seen
+            project_id=issue.project_id,
+            started_at__lte=issue.first_seen,
         )
         .order_by("-started_at")
         .select_related("release")
@@ -164,10 +407,8 @@ def stalled_for(project_ids: list[int] | None, now: datetime) -> list[Deploy]:
         started_at__lt=cutoff,
     )
     if project_ids is not None:
-        rows = rows.filter(release__project_id__in=project_ids)
-    return list(
-        rows.select_related("release", "release__project").order_by("started_at")
-    )
+        rows = rows.filter(project_id__in=project_ids)
+    return list(rows.select_related("project", "release").order_by("started_at"))
 
 
 def time_out(now: datetime) -> int:

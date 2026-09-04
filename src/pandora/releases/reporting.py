@@ -26,7 +26,7 @@ SUCCESSFUL_DEPLOYS = Gauge(
 def counts(now: datetime) -> dict[tuple[str, str], int]:
     since = now - WINDOW
     rows = (
-        Deploy.objects.values("release__project__slug", "environment")
+        Deploy.objects.values("project__slug", "environment")
         .annotate(
             succeeded=Count(
                 "pk",
@@ -40,8 +40,7 @@ def counts(now: datetime) -> dict[tuple[str, str], int]:
         .order_by()
     )
     return {
-        (row["release__project__slug"], row["environment"]): row["succeeded"]
-        for row in rows
+        (row["project__slug"], row["environment"]): row["succeeded"] for row in rows
     }
 
 

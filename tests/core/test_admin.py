@@ -95,9 +95,14 @@ def test_adding_a_token_generates_and_stores_one(admin_client, project):
         "project": str(project.pk),
         "name": "p-mk1 alertmanager",
         "source": models.TokenSource.AM,
-        "scope": models.TokenScope.INGEST,
         "environment": "p-mk1",
         "active": "on",
+        "scope_grants-TOTAL_FORMS": "2",
+        "scope_grants-INITIAL_FORMS": "0",
+        "scope_grants-MIN_NUM_FORMS": "0",
+        "scope_grants-MAX_NUM_FORMS": "1000",
+        "scope_grants-0-scope": models.TokenScope.INGEST,
+        "scope_grants-1-scope": models.TokenScope.ARTIFACTS,
     }
 
     response = admin_client.post("/admin/core/ingesttoken/add/", payload)
@@ -106,6 +111,7 @@ def test_adding_a_token_generates_and_stores_one(admin_client, project):
 
     assert response.status_code == http.HTTPStatus.FOUND
     assert len(token.token) >= 40
+    assert token.scopes == ("artifacts", "ingest")
 
 
 def test_adding_a_token_shows_the_secret_once(admin_client, project):
@@ -114,9 +120,14 @@ def test_adding_a_token_shows_the_secret_once(admin_client, project):
         "project": str(project.pk),
         "name": "p-mk1 alertmanager",
         "source": models.TokenSource.AM,
-        "scope": models.TokenScope.INGEST,
         "environment": "p-mk1",
         "active": "on",
+        "scope_grants-TOTAL_FORMS": "2",
+        "scope_grants-INITIAL_FORMS": "0",
+        "scope_grants-MIN_NUM_FORMS": "0",
+        "scope_grants-MAX_NUM_FORMS": "1000",
+        "scope_grants-0-scope": models.TokenScope.INGEST,
+        "scope_grants-1-scope": models.TokenScope.ARTIFACTS,
     }
 
     response = admin_client.post("/admin/core/ingesttoken/add/", payload)
@@ -188,10 +199,17 @@ def test_editing_a_token_keeps_the_secret(admin_client, token):
         "project": str(token.project_id),
         "name": "renamed",
         "source": token.source,
-        "scope": token.scope,
         "environment": token.environment,
         "active": "on",
+        "scope_grants-TOTAL_FORMS": str(token.scope_grants.count()),
+        "scope_grants-INITIAL_FORMS": str(token.scope_grants.count()),
+        "scope_grants-MIN_NUM_FORMS": "0",
+        "scope_grants-MAX_NUM_FORMS": "1000",
     }
+    for index, grant in enumerate(token.scope_grants.order_by("pk")):
+        payload[f"scope_grants-{index}-id"] = str(grant.pk)
+        payload[f"scope_grants-{index}-token"] = str(token.pk)
+        payload[f"scope_grants-{index}-scope"] = grant.scope
 
     admin_client.post(url, payload)
 

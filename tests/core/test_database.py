@@ -140,6 +140,21 @@ def test_incremental_vacuum_is_skipped_on_postgres():
     assert result is False
 
 
+@pytest.mark.django_db(databases="__all__")
+def test_token_scope_migration_runs_on_each_database():
+    for alias in db.connections:
+        connection = db.connections[alias]
+        with connection.cursor() as cursor:
+            tables = connection.introspection.table_names(cursor)
+            description = connection.introspection.get_table_description(
+                cursor,
+                "core_ingesttoken",
+            )
+        columns = {column.name for column in description}
+        assert "core_tokenscopegrant" in tables
+        assert "scope" not in columns
+
+
 def test_vacuum_into_writes_a_readable_snapshot(standalone, tmp_path):
     """Should produce a consistent copy that opens on its own."""
     target = tmp_path / "snapshot.sqlite3"

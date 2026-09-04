@@ -1,14 +1,17 @@
 import datetime
 import io
+from pathlib import Path
 
 import freezegun
 import pytest
 from django import test
 from django.conf import settings
 from django.core import management
+from django.core.files.base import ContentFile
 from django.utils import timezone
 
 from pandora.am.management.commands import prune
+from pandora.attachments import models as attachment_models
 from pandora.events import store
 from pandora.ingest import models as ingest_models
 from pandora.issues import models as issue_models
@@ -75,6 +78,7 @@ def test_prune_reports_every_retention_class():
         "audit_entries",
         "bundles",
         "client_discards",
+        "attachments",
     ]
 
     assert result == expected
@@ -235,7 +239,7 @@ def test_the_command_reports_an_empty_run():
         "prune: 0 events, 0 envelopes, 0 processed events, 0 silences,"
         " 0 hourly stats, 0 activities, 0 ingest counters, 0 deliveries, "
         "0 audit entries, "
-        "0 artifact bundles, 0 client discards\n"
+        "0 artifact bundles, 0 client discards, 0 attachments\n"
     )
 
     assert result == expected
@@ -260,7 +264,7 @@ def test_the_command_reports_what_it_removed(project, issue):
         "prune: 0 events, 1 envelopes, 0 processed events, 1 silences,"
         " 0 hourly stats, 0 activities, 0 ingest counters, 0 deliveries, "
         "0 audit entries, "
-        "0 artifact bundles, 0 client discards\n"
+        "0 artifact bundles, 0 client discards, 0 attachments\n"
     )
 
     assert result == expected
@@ -292,6 +296,45 @@ def test_client_discards_past_retention_are_removed(project):
     assert list(
         ingest_models.ClientDiscard.objects.values_list("reason", flat=True)
     ) == ["network_error"]
+
+
+def test_attachments_have_their_own_thirty_day_retention(
+    project,
+    tmp_path,
+    django_capture_on_commit_callbacks,
+):
+    now = timezone.now()
+    with test.override_settings(MEDIA_ROOT=tmp_path):
+        old = attachment_models.EventAttachment.objects.create(
+            project=project,
+            event_id="old.txt",
+            filename="old.txt",
+            size=4,
+            sha256="old.txt".ljust(64, "0"),
+            blob=ContentFile(b"data", name="old.txt"),
+            received_at=now - datetime.timedelta(days=31),
+        )
+        current = attachment_models.EventAttachment.objects.create(
+            project=project,
+            event_id="current.txt",
+            filename="current.txt",
+            size=4,
+            sha256="current.txt".ljust(64, "0"),
+            blob=ContentFile(b"data", name="current.txt"),
+            received_at=now,
+        )
+        old_path = old.blob.path
+        current_path = current.blob.path
+
+        with django_capture_on_commit_callbacks(execute=True):
+            result = prune.prune_expired(now)
+
+        assert result.attachments == 1
+        assert list(
+            attachment_models.EventAttachment.objects.values_list("filename", flat=True)
+        ) == ["current.txt"]
+        assert Path(old_path).exists() is False
+        assert Path(current_path).exists() is True
 
 
 def test_hourly_stats_past_retention_are_removed(project, issue):

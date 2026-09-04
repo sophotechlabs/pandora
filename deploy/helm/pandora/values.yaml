@@ -47,6 +47,9 @@ settings:
   retentionDays: 30
   envelopeRetentionDays: 7
   ingestMaxBytes: 1048576
+  ingestCompressedMaxBytes: 20000000
+  attachmentMaxBytes: 100000000
+  attachmentRetentionDays: 30
   logLevel: INFO
   environment: ""
   correlationKeys: "namespace,pod,node,cluster,service"

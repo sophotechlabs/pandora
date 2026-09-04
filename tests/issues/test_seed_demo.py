@@ -41,9 +41,14 @@ def test_seed_demo_creates_the_two_demo_projects(seeded):
 def test_seed_demo_gives_every_project_an_ingest_and_a_read_token(seeded):
     """Should mint one Alertmanager ingest token and one read token per project."""
     result = sorted(
-        core_models.IngestToken.objects.values_list("source", "scope").distinct()
+        {
+            (token.source, token.scopes)
+            for token in core_models.IngestToken.objects.prefetch_related(
+                "scope_grants"
+            )
+        }
     )
-    expected = [("am", "ingest"), ("sdk", "read")]
+    expected = [("am", ("ingest",)), ("sdk", ("read",))]
 
     assert result == expected
 

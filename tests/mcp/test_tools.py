@@ -19,7 +19,7 @@ def read_token(project):
         name="mcp",
         token="read-token-value",
         source=core_models.TokenSource.SDK,
-        scope=core_models.TokenScope.READ_PAYLOAD,
+        scope=core_models.TokenScope.PAYLOAD,
     )
 
 
@@ -48,7 +48,7 @@ def make_issue(project):
 
 
 @pytest.mark.parametrize(
-    "scope", [core_models.TokenScope.READ, core_models.TokenScope.READ_PAYLOAD]
+    "scope", [core_models.TokenScope.READ, core_models.TokenScope.PAYLOAD]
 )
 def test_either_read_scope_resolves(project, scope):
     """Should accept the credentials the JSON API already uses, not invent a second kind."""

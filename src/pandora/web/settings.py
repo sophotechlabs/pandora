@@ -88,6 +88,7 @@ INSTALLED_APPS = [
     "pandora.people",
     "pandora.releases",
     "pandora.artifacts",
+    "pandora.attachments",
 ]
 
 if importlib.util.find_spec("django_migration_linter"):
@@ -204,6 +205,18 @@ PANDORA_BASE_URL = os.environ.get("PANDORA_BASE_URL", "")
 PANDORA_RETENTION_DAYS = _int("PANDORA_RETENTION_DAYS", 30)
 PANDORA_ENVELOPE_RETENTION_DAYS = _int("PANDORA_ENVELOPE_RETENTION_DAYS", 7)
 PANDORA_INGEST_MAX_BYTES = _int("PANDORA_INGEST_MAX_BYTES", 1024 * 1024)
+PANDORA_INGEST_COMPRESSED_MAX_BYTES = min(
+    _int("PANDORA_INGEST_COMPRESSED_MAX_BYTES", 20_000_000),
+    20_000_000,
+)
+PANDORA_ATTACHMENT_MAX_BYTES = min(
+    _int("PANDORA_ATTACHMENT_MAX_BYTES", 100_000_000),
+    100_000_000,
+)
+PANDORA_ATTACHMENT_RETENTION_DAYS = _int(
+    "PANDORA_ATTACHMENT_RETENTION_DAYS",
+    30,
+)
 PANDORA_RECONCILE_IGNORE = os.environ.get(
     "PANDORA_RECONCILE_IGNORE",
     "Watchdog,InfoInhibitor",

@@ -9,7 +9,13 @@ from typing import Any
 import yaml
 from django.contrib.auth import get_user_model
 
-from pandora.core.models import DsnKey, IngestToken, Project, ServiceLink
+from pandora.core.models import (
+    DsnKey,
+    IngestToken,
+    Project,
+    ServiceLink,
+    TokenScope,
+)
 from pandora.issues.models import GroupingRule, PathRule
 from pandora.people import ownership
 from pandora.people.models import Membership, OwnershipRule, Role, Team
@@ -150,6 +156,7 @@ def _apply_tokens(
     declared = []
     for row in _rows(document, "tokens"):
         _required(row, "tokens", "name", "project")
+        scopes = _token_scopes(row)
         project = _project(projects, row["project"], "tokens")
         token, created = IngestToken.objects.get_or_create(
             project=project,
@@ -161,14 +168,47 @@ def _apply_tokens(
             {
                 "token": _secret(row, "tokens", "token"),
                 "source": str(row.get("source", "am")),
-                "scope": str(row.get("scope", "ingest")),
                 "environment": str(row.get("environment", "")),
                 "active": True,
             },
         )
+        previous_scopes = set(token.scopes)
+        token.set_scopes(scopes)
+        if previous_scopes != set(scopes):
+            changed = True
         declared.append(token.pk)
         _record(report, created, changed, f"token {project.slug}/{token.name}")
     _deactivate(IngestToken.objects.exclude(pk__in=declared), report, "token")
+
+
+def _token_scopes(row: Mapping[str, Any]) -> tuple[str, ...]:
+    has_scope = "scope" in row
+    has_scopes = "scopes" in row
+    if has_scope and has_scopes:
+        raise ConfigError("tokens entry sets both scope and scopes")
+    if has_scopes:
+        raw = row["scopes"]
+        if not isinstance(raw, Sequence):
+            raise ConfigError("tokens scopes must be a list")
+        if isinstance(raw, str):
+            raise ConfigError("tokens scopes must be a list")
+        scopes = tuple(str(scope) for scope in raw)
+    else:
+        legacy = str(row.get("scope", TokenScope.INGEST))
+        if legacy == TokenScope.INGEST:
+            scopes = (TokenScope.INGEST, TokenScope.ARTIFACTS)
+        elif legacy == TokenScope.PAYLOAD:
+            scopes = (TokenScope.READ, TokenScope.PAYLOAD)
+        else:
+            scopes = (legacy,)
+    if not scopes:
+        raise ConfigError("tokens scopes must not be empty")
+    if len(scopes) != len(set(scopes)):
+        raise ConfigError("tokens scopes must not contain duplicates")
+    unknown = sorted(set(scopes) - set(TokenScope.values))
+    if unknown:
+        raise ConfigError(f"unknown token scope(s): {', '.join(unknown)}")
+    return scopes
 
 
 def _apply_dsn_keys(

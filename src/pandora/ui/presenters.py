@@ -7,6 +7,7 @@ from typing import Any
 
 from django.db.models import OuterRef, Prefetch, QuerySet, Subquery
 
+from pandora.attachments.models import EventAttachment
 from pandora.events.types import Event
 from pandora.issues import components, sparkline
 from pandora.issues.models import Episode, HourlyStat, Issue
@@ -64,6 +65,7 @@ class EventRow:
     tags: tuple[tuple[str, str], ...]
     raw: str
     body: event_view.EventBody | None
+    attachments: tuple[EventAttachment, ...]
 
 
 def stream_queryset(now: datetime) -> QuerySet[Issue]:
@@ -165,7 +167,10 @@ def chart(stats: QuerySet[HourlyStat], now: datetime) -> tuple[ChartBar, ...]:
     )
 
 
-def event_row(event: Event) -> EventRow:
+def event_row(
+    event: Event,
+    attachments: tuple[EventAttachment, ...] = (),
+) -> EventRow:
     return EventRow(
         id=event.id,
         short_id=event.id[:EVENT_ID_HEAD],
@@ -175,6 +180,7 @@ def event_row(event: Event) -> EventRow:
         tags=tuple(sorted((event.tags or {}).items())),
         raw=_raw(event),
         body=event_view.build(event.payload, event.project_id),
+        attachments=attachments,
     )
 
 

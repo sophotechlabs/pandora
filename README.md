@@ -66,13 +66,13 @@ just test-local   # pytest without docker (SQLite)
 
 `just ci-test` runs the suite on SQLite; `just ci-test-pg` runs the same suite against the compose Postgres. Both run in CI — portability is enforced, not trusted. The Postgres run also carries coverage: it is the only run that exercises both `EventStore` implementations, because it adds a second in-memory SQLite connection alongside Postgres.
 
-`just ci-e2e` drives a real browser against the running stack. `just ci-live` goes further and is the one that catches compatibility bugs a unit test cannot: it stands up Pandora with Postgres and gunicorn, then points the **official** `sentry-sdk` for Python, `@sentry/node`, `sentry-cli`, Vector, the OpenTelemetry collector, Alertmanager and the `pandora-wrap` binary at it, and reads the result back off the pages. Nothing in it builds a payload by hand. Three real defects came out of its first run: the source-map upload negotiation was refused by `sentry-cli`, `@sentry/node` sends every envelope chunked and Django reads a chunked body as empty, and a Python traceback whose exception class does not end in `Error` was losing its type.
+`just test-e2e` drives Chromium against a disposable Kind cluster. `just test-e2e-full` runs all six capability groups; `just test-e2e-group foundation-ingest` runs one. The same typed suite manifest selects affected groups in CI and refuses unowned specs or unmapped production paths. `just ci-live` goes further and is the one that catches compatibility bugs a unit test cannot: it stands up Pandora with Postgres and gunicorn, then points the **official** `sentry-sdk` for Python, `@sentry/node`, `sentry-cli`, Vector, the OpenTelemetry collector, Alertmanager and the `pandora-wrap` binary at it, and reads the result back off the pages. Nothing in it builds a payload by hand. Three real defects came out of its first run: the source-map upload negotiation was refused by `sentry-cli`, `@sentry/node` sends every envelope chunked and Django reads a chunked body as empty, and a Python traceback whose exception class does not end in `Error` was losing its type.
 
 ## Storage
 
 `DATABASE_URL` picks the backend. On SQLite the connection is opened with `auto_vacuum=INCREMENTAL`, WAL and `synchronous=NORMAL`, and every write takes the lock immediately with a 20s busy timeout — so the web workers, the reconcile loop and the cron commands can share one file. The `auto_vacuum` pragma only takes on a database that does not exist yet, and only because it is set before `journal_mode`, which is the first statement that writes to the file.
 
-`PANDORA_RETENTION_DAYS` (30) covers stored events, dedup markers, hourly buckets and activity rows; `PANDORA_ENVELOPE_RETENTION_DAYS` (7) covers the envelope inbox. Episodes and tag stats are never pruned. The floor on retention is the sparkline, which reads a 7-day window. `prune` hands the freed pages back with `PRAGMA incremental_vacuum` and republishes `pandora_database_bytes`, the gauge the readiness probe also keeps fresh.
+`PANDORA_RETENTION_DAYS` (30) covers stored events, dedup markers, hourly buckets and activity rows; `PANDORA_ENVELOPE_RETENTION_DAYS` (7) covers the envelope inbox; `PANDORA_ATTACHMENT_RETENTION_DAYS` (30) covers event attachment metadata and blobs. Episodes and tag stats are never pruned. The floor on event retention is the sparkline, which reads a 7-day window. `prune` deletes expired attachment files as well as their rows, hands freed database pages back with `PRAGMA incremental_vacuum`, and republishes `pandora_database_bytes`, the gauge the readiness probe also keeps fresh.
 
 ```sh
 python manage.py backup --to /scratch/pandora-$(date +%Y%m%d).sqlite3
@@ -105,9 +105,11 @@ Copies stored events out of another pandora database into this one, paging per p
 | `/api/<project_id>/cron/<slug>/<key>/` | cron check-in | live |
 | `/api/0/organizations/<org>/chunk-upload/` | source-map chunks, `sentry-cli` protocol (Bearer token) | live |
 | `/api/0/organizations/<org>/artifactbundle/assemble/` | joins the chunks into a bundle (Bearer token) | live |
+| `/api/0/organizations/<org>/releases/<version>/deploys/` | records an idempotent successful deploy (Bearer token) | live |
 | `/api/v1/issues` | issue list, filtered and cursor-paged | live |
 | `/api/v1/issues/<id>` | one issue with its episodes and tag stats | live |
 | `/api/v1/issues/<id>/events` | the stored events of one issue | live |
+| `/api/v1/attachments/<id>/download` | downloads an event attachment (Bearer token) | live |
 
 ## The UI
 
@@ -138,7 +140,9 @@ Triage needs the `issues.change_issue` permission and replay needs `ingest.chang
 
 Both ingest routes existed from the first commit and answered 501 until their phase landed — the URL and auth scheme are what SDKs and Alertmanager configs hard-code, so they were pinned before anything was written behind them. Both doors are open now.
 
-An SDK points at Pandora with a DSN of the form `http://<public_key>@<host>/<project_id>`, where the key is a `DsnKey` row. Envelopes arrive gzipped or plain; `event` items become one durable `RawEnvelope` each, and every other item type — transactions, sessions, attachments — is counted, acked with `200` and dropped, so an SDK never retries what Pandora will not keep. Retries are free: the Sentry event id is the dedup key, held in `ProcessedEvent`, and an issue's `event_count` moves only when that row is genuinely new. SDK events carry no episode; the firing/resolved column stays null on an issue that only SDKs feed.
+An SDK points at Pandora with a DSN of the form `http://<public_key>@<host>/<project_id>`, where the key is a `DsnKey` row. Envelopes arrive compressed or plain; `event` items become one durable `RawEnvelope` each and event attachments are streamed to the artifact volume without copying their bytes into that row. Attachments are associated only when the envelope identifies one accepted event. Transactions and unknown items are acknowledged with `200` and dropped, so an SDK never retries what Pandora will not keep. Retries are free: the Sentry event id is the dedup key, held in `ProcessedEvent`, and an issue's `event_count` moves only when that row is genuinely new. SDK events carry no episode; the firing/resolved column stays null on an issue that only SDKs feed.
+
+The protocol caps compressed envelopes at 20 MB and attachment bytes at 100 MB. `PANDORA_INGEST_MAX_BYTES` remains the non-attachment item cap, while `PANDORA_INGEST_COMPRESSED_MAX_BYTES` and `PANDORA_ATTACHMENT_MAX_BYTES` may lower their protocol ceilings. Attachment metadata is visible with read access. API downloads require `read` and `payload` capabilities; UI downloads require the project owner role.
 
 Pandora reimplements the Sentry ingest wire format from public protocol documentation so unmodified MIT-licensed Sentry SDKs can point at it. No Sentry server code is used. "Sentry-compatible" is a statement about the wire format, nothing more.
 
@@ -237,7 +241,7 @@ python manage.py consume --loop 5
 
 The envelope table has been a durable, replayable queue since the first commit — this is the consumer it never had. A pass claims a batch (`SELECT … FOR UPDATE SKIP LOCKED` on Postgres; the single writer is the same guarantee on SQLite), applies it, and reports what it did. A consumer that dies leaves its batch claimed, and the next pass puts anything claimed for more than fifteen minutes back. **No broker.**
 
-**Per-item size limits.** `PANDORA_INGEST_MAX_BYTES` (1 MiB) remains the cap on a whole envelope — raise it toward the protocol's 200 MiB if you want to. Inside it each item type now gets the limit the protocol names: 1 MiB an event, 100 KiB a check-in or a session batch, 4 KiB a client report. One number for everything let a 1 MiB client report through where the spec says 4 KiB.
+**Per-item size limits.** `PANDORA_INGEST_MAX_BYTES` (1 MiB) bounds a non-attachment item. Each handled item type also gets the narrower limit the protocol names: 1 MiB an event, 100 KiB a check-in or a session batch, 4 KiB a client report. One number for everything let a 1 MiB client report through where the spec says 4 KiB. Attachments are streamed separately under the fixed protocol ceilings described above.
 
 **Client-side loss accounting.** SDKs send `client_report` items when sampling, `before_send`, a full queue or a network error drops an event before Pandora can see it. Pandora aggregates those quantities by project, hour, category and reason. The Ingest page shows the last 24 hours, so a lower event count has an explanation instead of a guess; the normal retention job bounds the history.
 
@@ -341,10 +345,10 @@ Pandora ships a read-only MCP server as an optional extra, so an agent can look 
 
 ```sh
 pip install 'pandora[mcp]'
-PANDORA_MCP_TOKEN=<a read-scoped ingest token> python manage.py mcp
+PANDORA_MCP_TOKEN=<a token with the read capability> python manage.py mcp
 ```
 
-Four tools over stdio: `search_issues` (the same query language the UI uses), `get_issue`, `get_issue_events` — occurrences with their stack traces — and `issue_as_markdown`. Everything is scoped to the token's project, nothing writes, and an ingest-scoped token is refused. The extra is not in the image; the base install does not carry it.
+Four tools over stdio: `search_issues` (the same query language the UI uses), `get_issue`, `get_issue_events` — occurrences with their stack traces — and `issue_as_markdown`. Everything is scoped to the token's project, nothing writes, and a token without `read` is refused. Add `payload` to return stored payloads and extras. The extra is not in the image; the base install does not carry it.
 
 ## Configuration as a file
 
@@ -359,6 +363,7 @@ tokens:
     project: infrastructure
     token_env: PANDORA_TOKEN_AM_PMK1
     environment: p-mk1
+    scopes: [ingest]
 dsn_keys:
   - project: infrastructure
     public_key_env: PANDORA_DSN_INFRA
@@ -410,7 +415,9 @@ Versions are **parsed and stored as a sort key**, semver and calendar versions b
 
 **Suspect deploy** is the last deploy before the issue was first seen, shown on the issue page. It needs no repository access — suspect *commit* does, and is not built.
 
-`manage.py deploy --project infrastructure --release 1.2.3 --environment p-mk1` marks a deploy from CI when you want one, with a state — started, succeeded, failed, timed out — and the chart sweeps every fifteen minutes to mark a deploy left started for an hour as timed out. With `resolve_on_deploy` on for a project, it also resolves everything currently open in that environment against the new release: wipe the board, and let what comes back come back. Honeybadger does this by default; here it is off until a project asks.
+`manage.py deploy --project infrastructure --release 1.2.3 --deploy-id "$CI_PIPELINE_ID" --environment p-mk1` marks a deploy from CI. Send `--state started` first, then repeat the same stable identifier with `succeeded` or `failed`; retries are idempotent, conflicting release or environment reuse is refused, and a late terminal result may replace `timed_out`. The chart sweeps every fifteen minutes to time out a deploy left started for an hour. With `resolve_on_deploy` on for a project, a successful transition also resolves everything currently open in that environment against the new release: wipe the board, and let what comes back come back. Honeybadger does this by default; here it is off until a project asks.
+
+Sentry-style CI can instead post `environment`, optional `name`, `url`, `dateStarted`, `dateFinished`, and the token project slug to `/api/0/organizations/<org>/releases/<version>/deploys/`. A token needs the `deploy` capability. Identical requests return the same completed deploy, so a retried CI job cannot double-count or repeat resolve-on-deploy.
 
 ### Release health
 
@@ -539,12 +546,12 @@ The issue stream and the issue page can silence for 1h, 4h or 1d. Matchers are s
 Read-only and versioned from the first commit — `/api/v1/` is what consumers pin. Paths carry no trailing slash. One header authenticates:
 
 ```
-Authorization: Bearer <IngestToken with scope=read>
+Authorization: Bearer <IngestToken with the read capability>
 ```
 
 A token belongs to one project and every response is scoped to it: another project's issues are absent from the list and answer 404 by id. A token with the wrong scope gets 403, an unknown or deactivated one 401, an unsafe verb 405. Errors are `{"detail": "..."}` with the matching status.
 
-Two read scopes. `read` returns the issue and everything around it with the event `payload` and `extra` blanked; `payload` returns the stored event whole. Reading an issue and reading what an event carried — a request body, a user, frame locals — are different permissions, so a dashboard or an agent can have the first without the second. The MCP tools honour the same split.
+Tokens hold one or more capabilities. `ingest` accepts Alertmanager traffic, `artifacts` uploads source maps, `deploy` reports releases, `read` returns issues with event `payload` and `extra` blanked, and `payload` returns stored events and attachment bytes. Reading an issue and reading what an event carried — a request body, a user, frame locals — are different permissions, so a dashboard or an agent can have the first without the second. The MCP tools honour the same split. Legacy singular `scope` config remains accepted and is expanded to the access it had before this model.
 
 ### `GET /api/v1/issues`
 

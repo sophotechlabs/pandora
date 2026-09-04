@@ -70,11 +70,15 @@ class ReconcileReport:
 
 
 def resolve_scope(project_slug: str = "", environment: str = "") -> Scope:
-    tokens = IngestToken.objects.filter(
-        source=TokenSource.AM,
-        scope=TokenScope.INGEST,
-        active=True,
-    ).select_related("project")
+    tokens = (
+        IngestToken.objects.filter(
+            source=TokenSource.AM,
+            scope_grants__scope=TokenScope.INGEST,
+            active=True,
+        )
+        .select_related("project")
+        .distinct()
+    )
     if project_slug:
         tokens = tokens.filter(project__slug=project_slug)
     if environment:

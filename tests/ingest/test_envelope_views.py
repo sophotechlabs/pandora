@@ -7,6 +7,7 @@ import zlib
 import pytest
 from django import test
 
+from pandora.attachments import models as attachment_models
 from pandora.core import models as core_models
 from pandora.ingest import models as ingest_models
 from pandora.ingest import views
@@ -45,6 +46,28 @@ def default_body(event_id="a" * 32, **event):
         line({"event_id": event_id}),
         line({"type": "event"}),
         line(payload),
+    )
+
+
+def attachment_body(
+    payload=b"diagnostic data",
+    event_id="a" * 32,
+    filename="debug.txt",
+    **headers,
+):
+    item_headers = {
+        "type": "attachment",
+        "length": len(payload),
+        "filename": filename,
+        "content_type": "text/plain",
+    }
+    item_headers.update(headers)
+    return envelope_body(
+        line({"event_id": event_id}),
+        line({"type": "event"}),
+        line({"event_id": event_id, "message": "boom"}),
+        line(item_headers),
+        payload,
     )
 
 
@@ -353,6 +376,156 @@ def test_non_event_items_are_acked_and_dropped(post, published):
     assert result == expected
 
 
+@pytest.mark.django_db
+@test.override_settings(PANDORA_QUEUE=RECORDING_QUEUE)
+def test_an_attachment_is_stored_with_its_metadata(post):
+    response = post(body=attachment_body(attachment_type="event.attachment"))
+
+    attachment = attachment_models.EventAttachment.objects.get()
+    attachment.blob.open("rb")
+
+    assert response.status_code == http.HTTPStatus.OK
+    assert attachment.event_id == "a" * 32
+    assert attachment.filename == "debug.txt"
+    assert attachment.content_type == "text/plain"
+    assert attachment.attachment_type == "event.attachment"
+    assert attachment.blob.read() == b"diagnostic data"
+
+
+@pytest.mark.django_db
+@test.override_settings(PANDORA_QUEUE=RECORDING_QUEUE)
+def test_an_attachment_retry_is_idempotent(post):
+    body = attachment_body()
+
+    post(body=body)
+    post(body=body)
+
+    assert attachment_models.EventAttachment.objects.count() == 1
+
+
+@pytest.mark.django_db
+@test.override_settings(
+    PANDORA_QUEUE=RECORDING_QUEUE,
+    PANDORA_ATTACHMENT_MAX_BYTES=4,
+)
+def test_attachment_bytes_are_bounded_per_event(post):
+    response = post(body=attachment_body(payload=b"12345"))
+
+    assert response.status_code == http.HTTPStatus.REQUEST_ENTITY_TOO_LARGE
+    assert attachment_models.EventAttachment.objects.count() == 0
+
+
+@pytest.mark.django_db
+@test.override_settings(PANDORA_QUEUE=RECORDING_QUEUE)
+def test_an_attachment_requires_a_filename(post):
+    response = post(body=attachment_body(filename=""))
+
+    assert response.status_code == http.HTTPStatus.BAD_REQUEST
+    assert attachment_models.EventAttachment.objects.count() == 0
+
+
+@pytest.mark.django_db
+@test.override_settings(PANDORA_QUEUE=RECORDING_QUEUE)
+def test_attachment_metadata_cannot_inject_response_headers(post):
+    response = post(
+        body=attachment_body(
+            filename="debug\r\nInjected: yes.txt",
+            content_type="text/plain\r\nInjected: yes",
+        )
+    )
+
+    attachment = attachment_models.EventAttachment.objects.get()
+    assert response.status_code == http.HTTPStatus.OK
+    assert attachment.filename == "debug  Injected: yes.txt"
+    assert attachment.content_type == "text/plain  Injected: yes"
+
+
+@pytest.mark.django_db
+@test.override_settings(PANDORA_QUEUE=RECORDING_QUEUE)
+def test_an_attachment_requires_its_declared_bytes(post):
+    body = attachment_body(payload=b"short").replace(b'"length": 5', b'"length": 10')
+
+    response = post(body=body)
+
+    assert response.status_code == http.HTTPStatus.BAD_REQUEST
+    assert attachment_models.EventAttachment.objects.count() == 0
+
+
+@pytest.mark.django_db
+@test.override_settings(PANDORA_QUEUE=RECORDING_QUEUE)
+def test_an_item_length_must_be_a_non_negative_integer(post):
+    body = envelope_body(
+        line({"event_id": "a" * 32}),
+        line({"type": "event", "length": True}),
+        line({"event_id": "a" * 32, "message": "boom"}),
+    )
+
+    response = post(body=body)
+
+    assert response.status_code == http.HTTPStatus.BAD_REQUEST
+
+
+@pytest.mark.django_db
+@test.override_settings(PANDORA_QUEUE=RECORDING_QUEUE)
+def test_declared_items_require_a_newline_before_the_next_header(post):
+    payload = line({"event_id": "a" * 32, "message": "boom"})
+    body = envelope_body(
+        line({"event_id": "a" * 32}),
+        line({"type": "event", "length": len(payload)}),
+        payload,
+    )
+    body += line({"type": "session"})
+    body += b"\n{}"
+
+    response = post(body=body)
+
+    assert response.status_code == http.HTTPStatus.BAD_REQUEST
+    assert response.json()["detail"] == "item payload is not followed by a newline"
+
+
+@pytest.mark.django_db
+@test.override_settings(PANDORA_QUEUE=RECORDING_QUEUE)
+def test_an_attachment_without_an_event_is_acked_and_dropped(post):
+    body = envelope_body(
+        line({"event_id": "a" * 32}),
+        line(
+            {
+                "type": "attachment",
+                "length": 4,
+                "filename": "orphan.txt",
+            }
+        ),
+        b"data",
+    )
+
+    response = post(body=body)
+
+    assert response.status_code == http.HTTPStatus.OK
+    assert attachment_models.EventAttachment.objects.count() == 0
+
+
+@pytest.mark.django_db
+@test.override_settings(PANDORA_QUEUE=RECORDING_QUEUE)
+def test_attachment_bytes_are_not_copied_into_the_raw_envelope(post):
+    post(body=attachment_body(payload=b"private diagnostic"))
+
+    stored = json.dumps(ingest_models.RawEnvelope.objects.get().payload)
+
+    assert "private diagnostic" not in stored
+
+
+@pytest.mark.django_db
+@test.override_settings(PANDORA_QUEUE=RECORDING_QUEUE)
+def test_a_compressed_envelope_can_carry_an_attachment(post):
+    response = post(
+        body=gzip.compress(attachment_body()),
+        headers={"Content-Encoding": "gzip"},
+    )
+
+    assert response.status_code == http.HTTPStatus.OK
+    assert attachment_models.EventAttachment.objects.count() == 1
+
+
 def test_a_client_report_is_accounted(post):
     body = envelope_body(
         line({}),
@@ -579,6 +752,29 @@ def test_a_brotli_bomb_is_refused(post):
     expected = http.HTTPStatus.REQUEST_ENTITY_TOO_LARGE
 
     assert result == expected
+
+
+def test_a_brotli_bomb_is_not_written_past_the_cap(monkeypatch):
+    import brotli
+
+    class MeteredBuffer(io.BytesIO):
+        def __init__(self):
+            super().__init__()
+            self.total_written = 0
+
+        def write(self, value):
+            self.total_written += len(value)
+            return super().write(value)
+
+    target = MeteredBuffer()
+    raw = default_body(message="x" * 3000)
+    body = io.BytesIO(brotli.compress(raw))
+    monkeypatch.setattr(views, "_spooled_file", lambda: target)
+
+    with pytest.raises(views._TooLarge):
+        views._decompress_brotli(body, 400)
+
+    assert target.total_written <= 400
 
 
 # the store endpoint

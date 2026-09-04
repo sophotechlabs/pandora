@@ -10,6 +10,7 @@ from django.core.management.base import BaseCommand
 from django.utils import timezone
 
 from pandora.artifacts import service as artifacts
+from pandora.attachments import service as attachments
 from pandora.core import database
 from pandora.events import relevance
 from pandora.events.store import get_store
@@ -39,6 +40,7 @@ class PruneResult:
     audit_entries: int = 0
     bundles: int = 0
     client_discards: int = 0
+    attachments: int = 0
 
 
 def _thin_by_relevance(store: Any, now: datetime) -> int:
@@ -55,11 +57,13 @@ def _thin_by_relevance(store: Any, now: datetime) -> int:
 def prune_expired(now: datetime) -> PruneResult:
     retention_cutoff = now - timedelta(days=settings.PANDORA_RETENTION_DAYS)
     envelope_cutoff = now - timedelta(days=settings.PANDORA_ENVELOPE_RETENTION_DAYS)
+    attachment_cutoff = now - timedelta(days=settings.PANDORA_ATTACHMENT_RETENTION_DAYS)
 
     store = get_store()
     events = store.prune(retention_cutoff)
     events += _thin_by_relevance(store, now)
     bundles = artifacts.prune(now)
+    attachment_count = attachments.prune(attachment_cutoff)
     envelopes, _ = RawEnvelope.objects.filter(
         state=EnvelopeState.DONE,
         received_at__lt=envelope_cutoff,
@@ -90,11 +94,13 @@ def prune_expired(now: datetime) -> PruneResult:
         audit_entries=audit_entries,
         bundles=bundles,
         client_discards=client_discards,
+        attachments=attachment_count,
     )
     logger.info(
         "prune: %s events, %s envelopes, %s processed events, %s silences,"
         " %s hourly stats, %s activities, %s ingest counters, %s deliveries,"
-        " %s audit entries, %s artifact bundles, %s client discards",
+        " %s audit entries, %s artifact bundles, %s client discards,"
+        " %s attachments",
         result.events,
         result.envelopes,
         result.processed_events,
@@ -106,6 +112,7 @@ def prune_expired(now: datetime) -> PruneResult:
         result.audit_entries,
         result.bundles,
         result.client_discards,
+        result.attachments,
     )
     return result
 
@@ -122,5 +129,6 @@ class Command(BaseCommand):
             f"{result.counters} ingest counters, {result.deliveries} deliveries, "
             f"{result.audit_entries} audit entries, "
             f"{result.bundles} artifact bundles, "
-            f"{result.client_discards} client discards"
+            f"{result.client_discards} client discards, "
+            f"{result.attachments} attachments"
         )

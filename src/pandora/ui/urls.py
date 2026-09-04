@@ -16,6 +16,11 @@ urlpatterns = [
         name="occurrence-delete",
     ),
     path(
+        "issues/<int:issue_id>/attachments/<int:attachment_id>/download/",
+        views.download_attachment,
+        name="attachment-download",
+    ),
+    path(
         "issues/<int:issue_id>/unmerge/<str:fingerprint>/",
         views.unmerge,
         name="unmerge",

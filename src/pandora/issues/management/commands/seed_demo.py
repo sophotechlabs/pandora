@@ -397,24 +397,24 @@ def _seed_projects(now: datetime) -> dict[str, Project]:
     projects = {}
     for slug, name, environment in DEMO_PROJECTS:
         project = Project.objects.create(slug=slug, name=name, created_at=now)
-        IngestToken.objects.create(
+        alert_token = IngestToken.objects.create(
             project=project,
             name=f"{environment} alertmanager",
             token=f"demo-am-{slug}-{secrets.token_urlsafe(24)}",
             source=TokenSource.AM,
-            scope=TokenScope.INGEST,
             environment=environment,
             created_at=now,
         )
-        IngestToken.objects.create(
+        alert_token.set_scopes((TokenScope.INGEST,))
+        read_token = IngestToken.objects.create(
             project=project,
             name=f"{environment} api reader",
             token=f"demo-read-{slug}-{secrets.token_urlsafe(24)}",
             source=TokenSource.SDK,
-            scope=TokenScope.READ,
             environment=environment,
             created_at=now,
         )
+        read_token.set_scopes((TokenScope.READ,))
         DsnKey.objects.create(
             project=project,
             public_key=_digest(slug)[:32],

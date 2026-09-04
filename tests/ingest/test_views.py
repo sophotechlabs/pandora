@@ -177,8 +177,7 @@ def test_a_deactivated_token_is_rejected(post, token):
 @pytest.mark.django_db
 def test_a_read_scoped_token_cannot_ingest(post, token):
     """Should keep an API read token out of the ingest door."""
-    token.scope = core_models.TokenScope.READ
-    token.save(update_fields=["scope"])
+    token.set_scopes((core_models.TokenScope.READ,))
 
     response = post()
 

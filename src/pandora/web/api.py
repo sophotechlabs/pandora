@@ -9,14 +9,16 @@ from collections.abc import Callable, Iterable, Sequence
 from http import HTTPStatus
 from typing import Any
 
-from django.db.models import Q, QuerySet
-from django.http import HttpRequest, JsonResponse, QueryDict
+from django.db.models import Exists, OuterRef, Q, QuerySet
+from django.http import FileResponse, HttpRequest, JsonResponse, QueryDict
 from django.urls import path
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 from django.views.decorators.csrf import csrf_exempt
 
-from pandora.core.models import READ_SCOPES, IngestToken, TokenScope
+from pandora.attachments import service as attachments
+from pandora.attachments.models import EventAttachment
+from pandora.core.models import IngestToken, TokenScope, TokenScopeGrant
 from pandora.events.store import get_store
 from pandora.events.types import Event
 from pandora.issues.models import Episode, Issue, SourceState, TagStat, TriageState
@@ -54,23 +56,32 @@ def authenticate(request: HttpRequest) -> IngestToken:
     if not presented:
         raise ApiError(HTTPStatus.UNAUTHORIZED, "bearer token required")
     offered = presented.encode()
-    for candidate in IngestToken.objects.select_related("project").filter(active=True):
+    grants = TokenScopeGrant.objects.filter(token_id=OuterRef("pk"))
+    candidates = (
+        IngestToken.objects.select_related("project")
+        .annotate(
+            _has_read_scope=Exists(grants.filter(scope=TokenScope.READ)),
+            _has_payload_scope=Exists(grants.filter(scope=TokenScope.PAYLOAD)),
+        )
+        .filter(active=True)
+    )
+    for candidate in candidates:
         if hmac.compare_digest(candidate.token.encode(), offered):
             return require_read_scope(candidate)
     raise ApiError(HTTPStatus.UNAUTHORIZED, "unknown token")
 
 
 def require_read_scope(token: IngestToken) -> IngestToken:
-    if token.scope not in READ_SCOPES:
+    if not token.has_scope(TokenScope.READ):
         raise ApiError(
             HTTPStatus.FORBIDDEN,
-            f"token scope {token.scope!r} cannot read",
+            "token lacks the read capability",
         )
     return token
 
 
 def _payloads(token: IngestToken) -> bool:
-    return token.scope == TokenScope.READ_PAYLOAD
+    return token.has_scope(TokenScope.PAYLOAD)
 
 
 def api_view(
@@ -274,13 +285,47 @@ def tag_page(stats: Iterable[TagStat]) -> list[TagStat]:
     return page
 
 
-def serialize_event(event: Event, with_payload: bool = True) -> dict[str, Any]:
+def serialize_event(
+    event: Event,
+    with_payload: bool = True,
+    event_attachments: Sequence[EventAttachment] = (),
+) -> dict[str, Any]:
     body = dataclasses.asdict(event)
     body["timestamp"] = isoformat(event.timestamp)
+    body["attachments"] = [
+        serialize_attachment(attachment) for attachment in event_attachments
+    ]
     if not with_payload:
         body["payload"] = {}
         body["extra"] = {}
     return body
+
+
+def serialize_attachment(attachment: EventAttachment) -> dict[str, Any]:
+    return {
+        "id": attachment.pk,
+        "filename": attachment.filename,
+        "content_type": attachment.content_type,
+        "attachment_type": attachment.attachment_type,
+        "size": attachment.size,
+        "received_at": isoformat(attachment.received_at),
+        "download_url": f"/api/v1/attachments/{attachment.pk}/download",
+    }
+
+
+def serialize_events(
+    token: IngestToken,
+    events: Sequence[Event],
+) -> list[dict[str, Any]]:
+    attachment_map = attachments.for_events(token.project_id, events)
+    return [
+        serialize_event(
+            event,
+            _payloads(token),
+            attachment_map.get(attachments.sentry_id(event), ()),
+        )
+        for event in events
+    ]
 
 
 @api_view
@@ -352,7 +397,7 @@ def issue_events(
         found = found[:limit]
         next_cursor = found[-1].id
     return {
-        "results": [serialize_event(event, _payloads(token)) for event in found],
+        "results": serialize_events(token, found),
         "next_cursor": next_cursor,
     }
 
@@ -379,7 +424,41 @@ def events_search(request: HttpRequest, token: IngestToken) -> dict[str, Any]:
             HTTPStatus.NOT_IMPLEMENTED,
             "event store is not implemented for this database yet",
         ) from error
-    return {"results": [serialize_event(event, _payloads(token)) for event in found]}
+    return {"results": serialize_events(token, found)}
+
+
+@csrf_exempt
+def attachment_download(request: HttpRequest, attachment_id: int):
+    if request.method not in SAFE_METHODS:
+        response = error_response(HTTPStatus.METHOD_NOT_ALLOWED, "read-only endpoint")
+        response["Allow"] = ", ".join(SAFE_METHODS)
+        return response
+    try:
+        token = authenticate(request)
+    except ApiError as error:
+        return error_response(error.status, error.detail)
+    if not token.has_scope(TokenScope.PAYLOAD):
+        return error_response(
+            HTTPStatus.FORBIDDEN,
+            "token lacks the payload capability",
+        )
+    attachment = EventAttachment.objects.filter(
+        pk=attachment_id,
+        project=token.project,
+    ).first()
+    if attachment is None:
+        return error_response(HTTPStatus.NOT_FOUND, "attachment not found")
+    content_type = attachment.content_type
+    if not content_type:
+        content_type = "application/octet-stream"
+    download = FileResponse(
+        attachment.blob.open("rb"),
+        as_attachment=True,
+        filename=attachment.filename,
+        content_type=content_type,
+    )
+    download["Content-Length"] = str(attachment.size)
+    return download
 
 
 urlpatterns = [
@@ -387,4 +466,9 @@ urlpatterns = [
     path("issues/<int:issue_id>", issue_detail, name="api-v1-issue"),
     path("issues/<int:issue_id>/events", issue_events, name="api-v1-issue-events"),
     path("events", events_search, name="api-v1-events"),
+    path(
+        "attachments/<int:attachment_id>/download",
+        attachment_download,
+        name="api-v1-attachment-download",
+    ),
 ]

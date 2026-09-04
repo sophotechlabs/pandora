@@ -10,7 +10,13 @@ from django.contrib.admin.views.decorators import staff_member_required
 from django.contrib.auth import login
 from django.core.paginator import Page, Paginator
 from django.db.models import Count, Q, QuerySet, Sum
-from django.http import Http404, HttpRequest, HttpResponse, HttpResponseForbidden
+from django.http import (
+    FileResponse,
+    Http404,
+    HttpRequest,
+    HttpResponse,
+    HttpResponseForbidden,
+)
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.utils import timezone
@@ -18,11 +24,18 @@ from django.utils.http import url_has_allowed_host_and_scheme, urlencode
 from django.views.decorators.http import require_POST
 
 from pandora.am import client as am_client
+from pandora.attachments import service as attachments
+from pandora.attachments.models import EventAttachment
 from pandora.core.models import IngestToken, Project
 from pandora.events.store import get_store
 from pandora.events.types import Event
 from pandora.ingest import replay as ingest_replay
-from pandora.ingest.models import ClientDiscard, EnvelopeState, RawEnvelope
+from pandora.ingest.models import (
+    ClientDiscard,
+    EnvelopeState,
+    ProcessedEvent,
+    RawEnvelope,
+)
 from pandora.issues import (
     actions,
     attributes,
@@ -417,6 +430,8 @@ def delete_occurrence(
         return redirect(_next_url(request))
 
     removed = store.delete(issue.project_id, found)
+    if removed:
+        attachments.delete_for_events(issue.project_id, found)
     audit.from_request(
         request,
         audit.DELETE_OCCURRENCE,
@@ -426,6 +441,34 @@ def delete_occurrence(
     )
     messages.success(request, f"Deleted {removed} occurrence(s)")
     return redirect(_next_url(request))
+
+
+@staff_member_required(login_url=LOGIN_URL)
+def download_attachment(
+    request: HttpRequest,
+    issue_id: int,
+    attachment_id: int,
+) -> HttpResponse:
+    issue = get_object_or_404(_scoped(Issue.objects.all(), request), pk=issue_id)
+    if not access.owns_project(request.user, issue.project):
+        return HttpResponseForbidden("attachment download requires the owner role")
+    attachment = get_object_or_404(
+        EventAttachment,
+        pk=attachment_id,
+        project=issue.project,
+        event_id__in=ProcessedEvent.objects.filter(issue=issue).values("event_id"),
+    )
+    content_type = attachment.content_type
+    if not content_type:
+        content_type = "application/octet-stream"
+    response = FileResponse(
+        attachment.blob.open("rb"),
+        as_attachment=True,
+        filename=attachment.filename,
+        content_type=content_type,
+    )
+    response["Content-Length"] = str(attachment.size)
+    return response
 
 
 @staff_member_required(login_url=LOGIN_URL)
@@ -558,6 +601,7 @@ def _issue_context(
         "suspect": releases.suspect_deploy(issue),
         "next_url": request.get_full_path(),
         "can_triage": access.may(request.user, TRIAGE_PERMISSION),
+        "can_download_attachments": access.owns_project(request.user, issue.project),
         "grouping_reason": grouping.reason_for(issue.grouping_source),
     }
     context.update(_owner_context(issue))
@@ -605,7 +649,10 @@ def _latest(issue: Issue) -> presenters.EventRow | None:
         return None
     if not found:
         return None
-    return presenters.event_row(found[0])
+    attachment_map = attachments.for_events(issue.project_id, found)
+    return presenters.event_row(
+        found[0], attachment_map.get(attachments.sentry_id(found[0]), ())
+    )
 
 
 def _events(issue: Issue, cursor: str) -> EventPage:
@@ -623,8 +670,15 @@ def _events(issue: Issue, cursor: str) -> EventPage:
     if len(found) > EVENT_ROWS:
         found = found[:EVENT_ROWS]
         next_cursor = found[-1].id
+    attachment_map = attachments.for_events(issue.project_id, found)
     return EventPage(
-        rows=tuple(presenters.event_row(event) for event in found),
+        rows=tuple(
+            presenters.event_row(
+                event,
+                attachment_map.get(attachments.sentry_id(event), ()),
+            )
+            for event in found
+        ),
         next_cursor=next_cursor,
         supported=True,
     )

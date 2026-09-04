@@ -25,6 +25,26 @@
             {% if event.body %}
               {% include "ui/partials/event_body.html" with body=event.body %}
             {% endif %}
+            {% if event.attachments %}
+              <section class="event-attachments">
+                <h3>Attachments</h3>
+                <ul>
+                  {% for attachment in event.attachments %}
+                    <li>
+                      {% if can_download_attachments %}
+                        <a href="{% url 'ui:attachment-download' issue.pk attachment.pk %}">{{ attachment.filename }}</a>
+                      {% else %}
+                        <span>{{ attachment.filename }}</span>
+                      {% endif %}
+                      <span class="muted">
+                        {{ attachment.size|filesizeformat }}
+                        {% if attachment.content_type %}· {{ attachment.content_type }}{% endif %}
+                      </span>
+                    </li>
+                  {% endfor %}
+                </ul>
+              </section>
+            {% endif %}
             <details class="raw">
               <summary class="raw-toggle">Raw payload</summary>
               <pre class="payload">{{ event.raw }}</pre>

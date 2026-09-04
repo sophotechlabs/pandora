@@ -6,7 +6,14 @@ from django.contrib import admin, messages
 from django.db.models import Count, Q
 from unfold.admin import ModelAdmin
 
-from pandora.core.models import DsnKey, IngestToken, Project, ServiceLink
+from pandora.core.models import (
+    DsnKey,
+    IngestToken,
+    Project,
+    ServiceLink,
+    TokenScope,
+    TokenScopeGrant,
+)
 from pandora.issues.models import SourceState
 
 TOKEN_BYTES = 32
@@ -70,18 +77,23 @@ class DsnKeyAdmin(ModelAdmin):
         super().save_model(request, obj, form, change)
 
 
+class TokenScopeGrantInline(admin.TabularInline):
+    model = TokenScopeGrant
+    extra = 1
+
+
 @admin.register(IngestToken)
 class IngestTokenAdmin(ModelAdmin):
     list_display = (
         "project",
         "name",
         "source",
-        "scope",
+        "scope_list",
         "environment",
         "token_preview",
         "active",
     )
-    list_filter = ("source", "scope", "active", "project")
+    list_filter = ("source", "scope_grants__scope", "active", "project")
     list_select_related = ("project",)
     search_fields = ("name",)
     readonly_fields = ("token_preview", "created_at")
@@ -89,12 +101,12 @@ class IngestTokenAdmin(ModelAdmin):
         "project",
         "name",
         "source",
-        "scope",
         "environment",
         "active",
         "token_preview",
         "created_at",
     )
+    inlines = (TokenScopeGrantInline,)
     actions = ("regenerate",)
 
     @admin.display(description="Token")
@@ -103,6 +115,10 @@ class IngestTokenAdmin(ModelAdmin):
             return "—"
         return f"{obj.token[:6]}…"
 
+    @admin.display(description="Scopes")
+    def scope_list(self, obj):
+        return ", ".join(obj.scopes)
+
     def save_model(self, request, obj, form, change):
         issued = not obj.token
         if issued:
@@ -110,6 +126,12 @@ class IngestTokenAdmin(ModelAdmin):
         super().save_model(request, obj, form, change)
         if issued:
             self._show_once(request, obj)
+
+    def save_related(self, request, form, formsets, change):
+        super().save_related(request, form, formsets, change)
+        token = form.instance
+        if not token.scope_grants.exists():
+            token.set_scopes((TokenScope.INGEST, TokenScope.ARTIFACTS))
 
     @admin.action(description="Regenerate token")
     def regenerate(self, request, queryset):

@@ -147,7 +147,9 @@ def _token(request: HttpRequest) -> IngestToken | None:
         return None
     return (
         IngestToken.objects.filter(
-            token=presented, active=True, scope=TokenScope.INGEST
+            token=presented,
+            active=True,
+            scope_grants__scope=TokenScope.ARTIFACTS,
         )
         .select_related("project")
         .first()
