@@ -48,6 +48,7 @@ USER pandora
 RUN uv sync --frozen --extra web --extra dev
 
 COPY --chown=pandora:pandora . .
+COPY --chown=pandora:pandora --chmod=755 docker/entrypoint.sh ./docker/entrypoint.sh
 
 EXPOSE 8000
 
@@ -55,7 +56,7 @@ ENTRYPOINT ["/app/docker/entrypoint.sh"]
 CMD ["python", "manage.py", "runserver", "0.0.0.0:8000"]
 
 
-FROM mcr.microsoft.com/playwright/python:v1.56.0-noble AS e2e
+FROM mcr.microsoft.com/playwright/python:v1.56.0-noble AS live
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -69,10 +70,13 @@ COPY --from=ghcr.io/astral-sh/uv:0.11.33 /uv /usr/local/bin/uv
 WORKDIR /app
 
 COPY pyproject.toml uv.lock ./
-RUN uv sync --frozen --extra web --extra e2e --no-install-project
+RUN uv sync --frozen --extra web --extra live --no-install-project
 
-COPY . .
-RUN uv sync --frozen --extra web --extra e2e
+COPY --chown=1000:1000 . .
+RUN uv sync --frozen --extra web --extra live \
+    && chown 1000:1000 /app
+
+USER 1000:1000
 
 
 FROM base AS prod
@@ -81,9 +85,11 @@ COPY --from=builder --chown=root:root /opt/venv /opt/venv
 RUN chown root:root /opt/venv
 COPY pyproject.toml manage.py LICENSE ./
 COPY docker/ ./docker/
+COPY --chmod=755 docker/entrypoint.sh ./docker/entrypoint.sh
 COPY src/ ./src/
 
-RUN mkdir -p /app/staticfiles /data \
+RUN chmod -R a+rX /app \
+    && mkdir -p /app/staticfiles /data \
     && chown pandora:pandora /app/staticfiles /data \
     && DJANGO_DEBUG=False \
        DJANGO_SECRET_KEY=build-time-only \

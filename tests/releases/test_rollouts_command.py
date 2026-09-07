@@ -14,12 +14,18 @@ def test_the_sweep_times_out_only_old_started_deploys(project):
     now = timezone.now()
     release = models.Release.objects.create(project=project, version="1.2.3")
     old = models.Deploy.objects.create(
+        project=project,
         release=release,
+        identifier="old",
         started_at=now - datetime.timedelta(hours=2),
     )
-    recent = models.Deploy.objects.create(release=release, started_at=now)
+    recent = models.Deploy.objects.create(
+        project=project, release=release, identifier="recent", started_at=now
+    )
     finished = models.Deploy.objects.create(
+        project=project,
         release=release,
+        identifier="finished",
         state=models.DeployState.SUCCEEDED,
         started_at=now - datetime.timedelta(hours=2),
         finished_at=now,

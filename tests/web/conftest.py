@@ -17,7 +17,7 @@ def read_token(project):
         name="spinoza panel",
         token="test-read-token",
         source=core_models.TokenSource.AM,
-        scope=core_models.TokenScope.READ_PAYLOAD,
+        scope=core_models.TokenScope.PAYLOAD,
         environment="p-mk1",
     )
 

@@ -1,0 +1,121 @@
+{
+  "schemaVersion": 1,
+  "smokeGroup": "foundation-ingest",
+  "specRoots": ["specs"],
+  "productionRoots": [
+    "Dockerfile",
+    "deploy/**",
+    "justfile",
+    "pyproject.toml",
+    "src/**",
+    "uv.lock"
+  ],
+  "fullRunPaths": [
+    ".github/workflows/**",
+    "Dockerfile",
+    "e2e/harness/**",
+    "e2e/package-lock.json",
+    "e2e/package.json",
+    "e2e/playwright.config.ts",
+    "e2e/scripts/**",
+    "e2e/suite.json",
+    "e2e/tsconfig.json",
+    "justfile",
+    "mise.lock",
+    "mise.toml",
+    "pyproject.toml",
+    "src/pandora/__init__.py",
+    "src/pandora/core/**",
+    "src/pandora/ui/**",
+    "src/pandora/web/**",
+    "uv.lock"
+  ],
+  "groups": [
+    {
+      "id": "foundation-ingest",
+      "label": "Foundation and event ingest",
+      "runner": "playwright",
+      "profile": "core",
+      "timeoutMinutes": 45,
+      "specs": ["specs/foundation-ingest.spec.ts"],
+      "paths": [
+        "src/pandora/attachments/**",
+        "src/pandora/events/**",
+        "src/pandora/ingest/**",
+        "src/pandora/scrub/**",
+        "e2e/specs/foundation-ingest.spec.ts"
+      ]
+    },
+    {
+      "id": "access-triage",
+      "label": "Access, ownership and triage",
+      "runner": "playwright",
+      "profile": "core",
+      "timeoutMinutes": 45,
+      "specs": ["specs/access-triage.spec.ts"],
+      "paths": [
+        "src/pandora/issues/**",
+        "src/pandora/notify/**",
+        "src/pandora/people/**",
+        "e2e/specs/access-triage.spec.ts"
+      ]
+    },
+    {
+      "id": "search-export",
+      "label": "Search, saved views and export",
+      "runner": "playwright",
+      "profile": "core",
+      "timeoutMinutes": 45,
+      "specs": ["specs/search-export.spec.ts"],
+      "paths": [
+        "src/pandora/issues/**",
+        "src/pandora/search/**",
+        "e2e/specs/search-export.spec.ts"
+      ]
+    },
+    {
+      "id": "releases-deploys",
+      "label": "Releases, deploys and reporting",
+      "runner": "playwright",
+      "profile": "core",
+      "timeoutMinutes": 45,
+      "specs": ["specs/releases-deploys.spec.ts"],
+      "paths": [
+        "src/pandora/releases/**",
+        "e2e/specs/releases-deploys.spec.ts"
+      ]
+    },
+    {
+      "id": "protocols-maintenance",
+      "label": "Protocols and maintenance",
+      "runner": "playwright",
+      "profile": "full",
+      "timeoutMinutes": 60,
+      "specs": ["specs/protocols-maintenance.spec.ts"],
+      "paths": [
+        "cmd/**",
+        "live/**",
+        "src/pandora/am/**",
+        "src/pandora/artifacts/**",
+        "src/pandora/ingest/**",
+        "src/pandora/mcp/**",
+        "e2e/specs/protocols-maintenance.spec.ts"
+      ]
+    },
+    {
+      "id": "helm-lifecycle",
+      "label": "Helm lifecycle and persistence",
+      "runner": "playwright",
+      "profile": "full",
+      "timeoutMinutes": 75,
+      "specs": ["specs/helm-lifecycle.spec.ts"],
+      "paths": [
+        "deploy/**",
+        "Dockerfile",
+        "e2e/kind-storage.yaml",
+        "e2e/kind.yaml",
+        "e2e/specs/helm-lifecycle.spec.ts"
+      ]
+    }
+  ]
+}

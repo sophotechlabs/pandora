@@ -101,7 +101,9 @@ def test_the_overview_renders(operator_client, make_issue):
 def test_a_stalled_rollout_is_visible(operator_client, project):
     release = release_models.Release.objects.create(project=project, version="1.2.3")
     release_models.Deploy.objects.create(
+        project=project,
         release=release,
+        identifier="stalled",
         environment="production",
         started_at=timezone.now() - datetime.timedelta(hours=2),
     )
@@ -116,7 +118,9 @@ def test_a_stalled_rollout_is_visible(operator_client, project):
 def test_a_recent_rollout_is_not_called_stalled(operator_client, project):
     release = release_models.Release.objects.create(project=project, version="1.2.3")
     release_models.Deploy.objects.create(
+        project=project,
         release=release,
+        identifier="recent",
         environment="production",
         started_at=timezone.now(),
     )

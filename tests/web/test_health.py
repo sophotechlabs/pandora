@@ -168,7 +168,9 @@ def test_a_failed_readiness_probe_leaves_the_size_alone(client, monkeypatch):
 def test_readiness_republishes_deploy_frequency(client, project):
     release = release_models.Release.objects.create(project=project, version="1.2.3")
     release_models.Deploy.objects.create(
+        project=project,
         release=release,
+        identifier="readiness",
         environment="production",
         state=release_models.DeployState.SUCCEEDED,
     )

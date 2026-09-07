@@ -36,17 +36,26 @@ def test_pandora_defaults_are_the_documented_ones(load_settings):
         PANDORA_RETENTION_DAYS=None,
         PANDORA_ENVELOPE_RETENTION_DAYS=None,
         PANDORA_INGEST_MAX_BYTES=None,
+        PANDORA_INGEST_COMPRESSED_MAX_BYTES=None,
+        PANDORA_ATTACHMENT_MAX_BYTES=None,
+        PANDORA_ATTACHMENT_RETENTION_DAYS=None,
     )
 
     result = {
         "retention_days": settings.PANDORA_RETENTION_DAYS,
         "envelope_retention_days": settings.PANDORA_ENVELOPE_RETENTION_DAYS,
         "ingest_max_bytes": settings.PANDORA_INGEST_MAX_BYTES,
+        "ingest_compressed_max_bytes": settings.PANDORA_INGEST_COMPRESSED_MAX_BYTES,
+        "attachment_max_bytes": settings.PANDORA_ATTACHMENT_MAX_BYTES,
+        "attachment_retention_days": settings.PANDORA_ATTACHMENT_RETENTION_DAYS,
     }
     expected = {
         "retention_days": 30,
         "envelope_retention_days": 7,
         "ingest_max_bytes": 1048576,
+        "ingest_compressed_max_bytes": 20000000,
+        "attachment_max_bytes": 100000000,
+        "attachment_retention_days": 30,
     }
     assert result == expected
 
@@ -56,10 +65,19 @@ def test_pandora_numeric_settings_come_from_the_env(load_settings):
     settings = load_settings(
         PANDORA_RETENTION_DAYS=45,
         PANDORA_INGEST_MAX_BYTES=2048,
+        PANDORA_INGEST_COMPRESSED_MAX_BYTES=4096,
+        PANDORA_ATTACHMENT_MAX_BYTES=8192,
+        PANDORA_ATTACHMENT_RETENTION_DAYS=12,
     )
 
-    result = (settings.PANDORA_RETENTION_DAYS, settings.PANDORA_INGEST_MAX_BYTES)
-    expected = (45, 2048)
+    result = (
+        settings.PANDORA_RETENTION_DAYS,
+        settings.PANDORA_INGEST_MAX_BYTES,
+        settings.PANDORA_INGEST_COMPRESSED_MAX_BYTES,
+        settings.PANDORA_ATTACHMENT_MAX_BYTES,
+        settings.PANDORA_ATTACHMENT_RETENTION_DAYS,
+    )
+    expected = (45, 2048, 4096, 8192, 12)
 
     assert result == expected
 
@@ -98,7 +116,7 @@ def test_the_enrichment_urls_default_to_empty(load_settings):
 
 
 def test_every_pandora_app_is_installed(load_settings):
-    """Should install all twelve pandora apps plus the metrics exporter."""
+    """Should install all thirteen pandora apps plus the metrics exporter."""
     settings = load_settings()
 
     result = [app for app in settings.INSTALLED_APPS if app.startswith("pandora.")]
@@ -115,6 +133,7 @@ def test_every_pandora_app_is_installed(load_settings):
         "pandora.people",
         "pandora.releases",
         "pandora.artifacts",
+        "pandora.attachments",
     ]
 
     assert result == expected

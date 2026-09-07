@@ -148,7 +148,9 @@ def test_the_issue_page_names_the_suspect_deploy(operator_client, make_issue, re
 
     issue = make_issue()
     release_models.Deploy.objects.create(
+        project=issue.project,
         release=release("1.2.3"),
+        identifier="suspect",
         environment="p-mk1",
         started_at=issue.first_seen - datetime.timedelta(minutes=5),
     )

@@ -60,7 +60,7 @@ services:
   sdk-python:
     build:
       context: .
-      target: e2e
+      target: live
       network: host
     environment:
       PANDORA_LIVE_URL: http://web:8000
@@ -114,7 +114,7 @@ services:
   sdk-python-crash:
     build:
       context: .
-      target: e2e
+      target: live
       network: host
     environment:
       SENTRY_DSN: http://5eb1ve0000000000000000000000dsn0@web:8000/1
@@ -129,7 +129,7 @@ services:
   produce:
     build:
       context: .
-      target: e2e
+      target: live
       network: host
     env_file: .env
     environment:
@@ -148,7 +148,7 @@ services:
   live:
     build:
       context: .
-      target: e2e
+      target: live
       network: host
     env_file: .env
     environment:

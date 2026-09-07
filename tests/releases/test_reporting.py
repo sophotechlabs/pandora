@@ -21,7 +21,9 @@ def record(project, *, days_ago=0, environment="production", state=None):
     if deploy_state is None:
         deploy_state = models.DeployState.SUCCEEDED
     return models.Deploy.objects.create(
+        project=project,
         release=release,
+        identifier=f"deploy-{days_ago}-{environment}-{deploy_state}",
         environment=environment,
         state=deploy_state,
         started_at=NOW - datetime.timedelta(days=days_ago),

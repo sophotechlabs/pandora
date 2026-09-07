@@ -38,10 +38,10 @@ oidc = [
 mcp = [
     "mcp>=2.0",
 ]
-e2e = [
+live = [
+    "playwright==1.56.0",
     "pytest>=8.0",
     "pytest-playwright>=0.7",
-    "playwright==1.56.0",
     "sentry-sdk>=2.42",
 ]
 dev = [
@@ -70,6 +70,7 @@ where = ["src"]
 
 [tool.django_migration_linter]
 include_apps = [
+    "attachments",
     "artifacts",
     "core",
     "events",
@@ -83,8 +84,10 @@ include_apps = [
 no_cache = true
 exclude_migration_tests = ["NOT_NULL"]
 ignore_name = [
+    "0003_deploy_identity",
     "0003_remove_issue_issues_issue_fingerprint_uq_and_more",
     "0003_alter_ingesttoken_scope",
+    "0006_token_scopes",
     "0007_issue_environment",
 ]
 
@@ -180,6 +183,7 @@ python_version = "3.12"
 plugins = ["mypy_django_plugin.main"]
 mypy_path = "src"
 packages = [
+    "pandora.attachments",
     "pandora.artifacts",
     "pandora.releases",
     "pandora.mcp",

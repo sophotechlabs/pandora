@@ -229,6 +229,23 @@ def test_the_ingest_byte_limit_is_rendered_as_an_integer():
     assert result == ["1048576"] * len(result)
 
 
+@needs_helm
+def test_the_attachment_limits_are_rendered_as_integers():
+    result = []
+    for spec in pod_specs(render(*FULL)):
+        for container in spec["containers"]:
+            env = env_of(container)
+            result.append(
+                (
+                    env["PANDORA_INGEST_COMPRESSED_MAX_BYTES"],
+                    env["PANDORA_ATTACHMENT_MAX_BYTES"],
+                    env["PANDORA_ATTACHMENT_RETENTION_DAYS"],
+                )
+            )
+
+    assert result == [("20000000", "100000000", "30")] * len(result)
+
+
 # migrations, which two writers must not race
 
 

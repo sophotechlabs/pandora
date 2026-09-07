@@ -3,8 +3,10 @@ import http
 import inspect
 
 import pytest
+from django.core.files.base import ContentFile
 from django.utils import timezone
 
+from pandora.attachments import models as attachment_models
 from pandora.events import store as event_store
 from pandora.events import types as event_types
 from pandora.issues import models as issue_models
@@ -170,9 +172,82 @@ def test_an_event_serialises_to_the_documented_shape(
         "source": "am",
         "environment": "p-mk1",
         "payload": {},
+        "attachments": [],
     }
 
     assert result == expected
+
+
+def test_event_metadata_lists_attachments(client, auth, issue, store):
+    event = build_event(1, issue.project_id, issue.pk)
+    event = event_types.Event(
+        **{
+            **event.__dict__,
+            "extra": {"event_id": "a" * 32},
+        }
+    )
+    store.insert([event])
+    attachment = attachment_models.EventAttachment.objects.create(
+        project=issue.project,
+        event_id="a" * 32,
+        filename="debug.txt",
+        content_type="text/plain",
+        size=4,
+        sha256="b" * 64,
+        blob=ContentFile(b"data", name="debug.txt"),
+    )
+
+    response = client.get(events_url(issue.pk), headers=auth)
+
+    assert response.json()["results"][0]["attachments"] == [
+        {
+            "id": attachment.pk,
+            "filename": "debug.txt",
+            "content_type": "text/plain",
+            "attachment_type": "",
+            "size": 4,
+            "received_at": api.isoformat(attachment.received_at),
+            "download_url": f"/api/v1/attachments/{attachment.pk}/download",
+        }
+    ]
+
+
+def test_payload_tokens_can_download_attachment(client, auth, project):
+    attachment = attachment_models.EventAttachment.objects.create(
+        project=project,
+        event_id="a" * 32,
+        filename="debug.txt",
+        content_type="text/plain",
+        size=4,
+        sha256="b" * 64,
+        blob=ContentFile(b"data", name="debug.txt"),
+    )
+
+    response = client.get(
+        f"/api/v1/attachments/{attachment.pk}/download",
+        headers=auth,
+    )
+
+    assert response.status_code == http.HTTPStatus.OK
+    assert b"".join(response.streaming_content) == b"data"
+
+
+def test_read_only_tokens_cannot_download_attachments(client, read_only_token, project):
+    attachment = attachment_models.EventAttachment.objects.create(
+        project=project,
+        event_id="a" * 32,
+        filename="debug.txt",
+        size=4,
+        sha256="b" * 64,
+        blob=ContentFile(b"data", name="debug.txt"),
+    )
+
+    response = client.get(
+        f"/api/v1/attachments/{attachment.pk}/download",
+        headers={"Authorization": f"Bearer {read_only_token.token}"},
+    )
+
+    assert response.status_code == http.HTTPStatus.FORBIDDEN
 
 
 def test_an_issue_without_events_returns_an_empty_page(client, auth, issue, store):
@@ -396,6 +471,7 @@ def test_a_live_event_serialises_to_the_documented_shape(
         "source": "am",
         "environment": "p-mk1",
         "payload": {},
+        "attachments": [],
     }
 
     assert result == expected

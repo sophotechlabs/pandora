@@ -1,5 +1,4 @@
 compose_local := "docker compose -f docker-compose.yml -f docker-compose.local.yml"
-compose_e2e := "docker compose -f docker-compose.yml -f docker-compose.e2e.yml"
 compose_live := "docker compose -f docker-compose.yml -f docker-compose.live.yml"
 quickstart_name := "pandora-quickstart"
 quickstart_image := "pandora:quickstart"
@@ -319,15 +318,6 @@ ci-fix:
         {{ ci_compose_run }} --entrypoint djlint web src --reformat
     fi
 
-# End-to-end: a real browser against the running stack (optional extra, not in default ci)
-ci-e2e *args:
-    {{ compose_e2e }} build e2e
-    {{ compose_e2e }} run --rm e2e {{ args }}
-
-# Tear down the e2e stack and its volumes
-ci-e2e-down:
-    {{ compose_e2e }} down -v
-
 # Real SDKs, real shippers, a real Alertmanager, read back off the pages
 ci-live: ci-live-up ci-live-clients ci-live-verify
 
@@ -337,6 +327,7 @@ ci-live-up:
     set -euo pipefail
     {{ compose_live }} down -v --remove-orphans
     {{ compose_live }} build
+    {{ compose_live }} run --rm -T --no-deps --user root --entrypoint chown produce 1000:1000 /var/log/live
     {{ compose_live }} up -d --wait db web
     {{ compose_live }} run --rm --no-deps web python manage.py apply_config --path live/config.yaml
     {{ compose_live }} up -d --wait alertmanager
@@ -348,7 +339,7 @@ ci-live-clients:
     set -euo pipefail
     {{ compose_live }} run --rm sdk-python
     {{ compose_live }} run --rm sdk-python-crash
-    {{ compose_live }} run --rm sdk-node
+    {{ compose_live }} run --rm -T sdk-node
     set +e
     {{ compose_live }} run --rm wrap
     status=$?
@@ -417,21 +408,86 @@ kind-install: kind-image
     kubectl --context {{ kind_context }} --namespace {{ kind_namespace }} \
         rollout status deployment/{{ kind_release }}-pandora --timeout=5m
 
-ci-kind-smoke: kind-install
-    uv sync --frozen --extra web --extra e2e
-    PANDORA_KIND_CONTEXT={{ kind_context }} \
-        PANDORA_KIND_NAMESPACE={{ kind_namespace }} \
-        PANDORA_KIND_RELEASE={{ kind_release }} \
-        PANDORA_KIND_IMAGE={{ kind_image }} \
-        uv run python e2e/kind_lifecycle.py smoke
+test-e2e name='':
+    PANDORA_E2E_GROUP=foundation-ingest just e2e-run chromium {{ quote(name) }}
 
-ci-kind-full: kind-install
-    uv sync --frozen --extra web --extra e2e
-    PANDORA_KIND_CONTEXT={{ kind_context }} \
-        PANDORA_KIND_NAMESPACE={{ kind_namespace }} \
-        PANDORA_KIND_RELEASE={{ kind_release }} \
-        PANDORA_KIND_IMAGE={{ kind_image }} \
-        uv run python e2e/kind_lifecycle.py full
+test-e2e-full name='':
+    just e2e-run chromium {{ quote(name) }}
+
+test-e2e-group group browser='chromium' name='':
+    #!/usr/bin/env bash
+    set -euo pipefail
+    group={{ quote(group) }}
+    browser={{ quote(browser) }}
+    profile=$(node e2e/scripts/group-field.mjs "$group" profile)
+    runner=$(node e2e/scripts/group-field.mjs "$group" runner)
+    if [ "$runner" != playwright ]; then
+        echo "test-e2e-group: $group uses $runner"
+        exit 1
+    fi
+    case "$profile" in
+        core|full)
+            ;;
+        *)
+            echo "test-e2e-group: $group has unsupported Playwright profile $profile"
+            exit 1
+            ;;
+    esac
+    export PANDORA_E2E_PROFILE="$profile"
+    export PANDORA_E2E_GROUP="$group"
+    export PANDORA_E2E_BROWSER="$browser"
+    just e2e-run "$browser" {{ quote(name) }}
+
+validate-e2e-suite:
+    node e2e/scripts/validate-suite.mjs
+
+[private]
+e2e-run browser name='':
+    #!/usr/bin/env bash
+    set -euo pipefail
+    export PANDORA_KIND_CLUSTER='{{ kind_cluster }}'
+    export PANDORA_KIND_NAMESPACE='{{ kind_namespace }}'
+    export PANDORA_KIND_RELEASE='{{ kind_release }}'
+    export PANDORA_KIND_IMAGE='{{ kind_image }}'
+    mkdir -p e2e/.tmp
+    export PANDORA_E2E_LOGFILE="$PWD/e2e/.tmp/kubectl.log"
+    cd e2e
+    install=0
+    if [ ! -d node_modules ]; then
+        install=1
+    fi
+    if [ -d node_modules ]; then
+        if [ package-lock.json -nt node_modules ]; then
+            install=1
+        fi
+    fi
+    if [ "$install" -eq 1 ]; then
+        npm ci
+    fi
+    browser={{ quote(browser) }}
+    install_deps=no
+    if [ -n "${CI:-}" ]; then
+        if command -v sudo > /dev/null 2>&1; then
+            if sudo -n true > /dev/null 2>&1; then
+                install_deps=yes
+            fi
+        fi
+    fi
+    if [ "$install_deps" = yes ]; then
+        npx playwright install --with-deps "$browser"
+    else
+        npx playwright install "$browser"
+    fi
+    run=(test --project="$browser")
+    name={{ quote(name) }}
+    if [ -n "$name" ]; then
+        run+=(--grep "$name")
+    fi
+    npx playwright "${run[@]}"
+
+ci-kind-smoke: test-e2e
+
+ci-kind-full: test-e2e-full
 
 ci-kind-logs:
     #!/usr/bin/env bash
@@ -443,10 +499,6 @@ ci-kind-logs:
 
 ci-kind-down:
     kind delete cluster --name {{ kind_cluster }}
-
-# Print what the stack logged and stop — for a CI runner with no terminal to tail
-logs-once:
-    {{ compose_e2e }} logs --no-color --tail 200
 
 # Everything a GitHub runner runs, on the host toolchain rather than in compose
 gh: gh-lint gh-migrations gh-audit gh-test gh-test-pg chart-lint gh-dockerfile gh-go

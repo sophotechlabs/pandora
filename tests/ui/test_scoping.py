@@ -110,7 +110,9 @@ def test_the_overview_hides_another_projects_stalled_rollout(
     hidden = Release.objects.create(project=other_project, version="theirs")
     for release in (visible, hidden):
         Deploy.objects.create(
+            project=release.project,
             release=release,
+            identifier=f"deploy-{release.project_id}",
             started_at=timezone.now() - datetime.timedelta(hours=2),
         )
 

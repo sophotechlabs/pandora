@@ -536,7 +536,7 @@ def test_an_ingest_token_may_not_read(client, token):
     result = (response.status_code, response.json())
     expected = (
         http.HTTPStatus.FORBIDDEN,
-        {"detail": "token scope 'ingest' cannot read"},
+        {"detail": "token lacks the read capability"},
     )
     assert result == expected
 

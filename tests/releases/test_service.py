@@ -3,6 +3,7 @@ import datetime
 import pytest
 from django.utils import timezone
 
+from pandora.core import models as core_models
 from pandora.releases import models as release_models
 from pandora.releases import service
 
@@ -189,7 +190,9 @@ def test_a_deploy_that_never_finished_is_visible(seen, project):
     """Should be a fact on the page rather than something nobody notices."""
     release = seen("1.2.3")
     release_models.Deploy.objects.create(
+        project=project,
         release=release,
+        identifier="stalled",
         environment="p-mk1",
         started_at=NOW - datetime.timedelta(hours=3),
     )
@@ -204,7 +207,11 @@ def test_a_recent_deploy_is_not_stalled(seen, project):
     """Should give a rollout an hour before calling it stuck."""
     release = seen("1.2.3")
     release_models.Deploy.objects.create(
-        release=release, environment="p-mk1", started_at=NOW
+        project=project,
+        release=release,
+        identifier="recent",
+        environment="p-mk1",
+        started_at=NOW,
     )
 
     result = service.stalled(project, NOW)
@@ -212,11 +219,13 @@ def test_a_recent_deploy_is_not_stalled(seen, project):
     assert result == []
 
 
-def test_timing_out_marks_the_state(seen):
+def test_timing_out_marks_the_state(seen, project):
     """Should record what happened rather than leaving it started forever."""
     release = seen("1.2.3")
     release_models.Deploy.objects.create(
+        project=project,
         release=release,
+        identifier="timeout",
         environment="p-mk1",
         started_at=NOW - datetime.timedelta(hours=3),
     )
@@ -232,7 +241,9 @@ def test_timing_out_marks_the_state(seen):
 def test_a_timed_out_deploy_remains_visible_as_stalled(seen, project):
     release = seen("1.2.3")
     deploy = release_models.Deploy.objects.create(
+        project=project,
         release=release,
+        identifier="timed-out",
         environment="p-mk1",
         started_at=NOW - datetime.timedelta(hours=3),
     )
@@ -243,14 +254,111 @@ def test_a_timed_out_deploy_remains_visible_as_stalled(seen, project):
     assert [row.pk for row in result] == [deploy.pk]
 
 
-def test_a_deploy_reads_as_where_it_went(seen):
+def test_a_deploy_reads_as_where_it_went(seen, project):
     """Should be legible in the admin without following the id."""
     release = seen("1.2.3")
-    deploy = release_models.Deploy.objects.create(release=release, environment="p-mk1")
+    deploy = release_models.Deploy.objects.create(
+        project=project,
+        release=release,
+        identifier="readable",
+        environment="p-mk1",
+    )
 
     result = str(deploy)
 
     assert "p-mk1" in result and "started" in result
+
+
+def test_a_deploy_cannot_cross_project_boundaries(seen):
+    release = seen("1.2.3")
+    other_project = core_models.Project.objects.create(
+        slug="other",
+        name="Other",
+    )
+
+    with pytest.raises(service.DeployConflict, match="another project"):
+        service.transition_deploy(
+            other_project,
+            release,
+            identifier="cross-project",
+            environment="p-mk1",
+            state=release_models.DeployState.STARTED,
+            at=NOW,
+        )
+
+
+def test_a_deploy_cannot_finish_before_it_started(seen, project):
+    release = seen("1.2.3")
+    service.transition_deploy(
+        project,
+        release,
+        identifier="pipeline-42",
+        environment="production",
+        state=release_models.DeployState.STARTED,
+        at=NOW,
+    )
+
+    with pytest.raises(service.DeployConflict, match="before its start"):
+        service.transition_deploy(
+            project,
+            release,
+            identifier="pipeline-42",
+            environment="production",
+            state=release_models.DeployState.SUCCEEDED,
+            at=NOW - datetime.timedelta(minutes=1),
+        )
+
+
+def test_an_unknown_deploy_state_is_rejected_before_the_write(seen, project):
+    release = seen("1.2.3")
+
+    with pytest.raises(service.DeployConflict, match="unknown deploy state"):
+        service.transition_deploy(
+            project,
+            release,
+            identifier="pipeline-42",
+            environment="production",
+            state="unknown",
+            at=NOW,
+        )
+
+    assert release_models.Deploy.objects.exists() is False
+
+
+def test_a_completed_deploy_rejects_an_identifier_collision(seen, project):
+    release = seen("1.2.3")
+    service.record_completed_deploy(
+        project,
+        release,
+        identifier="pipeline-42",
+        environment="production",
+        started_at=NOW,
+        finished_at=NOW,
+    )
+
+    with pytest.raises(service.DeployConflict, match="another environment"):
+        service.record_completed_deploy(
+            project,
+            release,
+            identifier="pipeline-42",
+            environment="staging",
+            started_at=NOW,
+            finished_at=NOW,
+        )
+
+
+def test_a_completed_deploy_rejects_an_impossible_window(seen, project):
+    release = seen("1.2.3")
+
+    with pytest.raises(service.DeployConflict, match="before its start"):
+        service.record_completed_deploy(
+            project,
+            release,
+            identifier="pipeline-42",
+            environment="production",
+            started_at=NOW,
+            finished_at=NOW - datetime.timedelta(minutes=1),
+        )
 
 
 # suspect deploy
@@ -260,17 +368,23 @@ def test_the_last_deploy_before_the_issue_is_the_suspect(seen, issue):
     """Should answer the question people actually ask, with no repository access."""
     release = seen("1.2.3")
     older = release_models.Deploy.objects.create(
+        project=issue.project,
         release=release,
+        identifier="older",
         environment="p-mk1",
         started_at=issue.first_seen - datetime.timedelta(hours=8),
     )
     wanted = release_models.Deploy.objects.create(
+        project=issue.project,
         release=release,
+        identifier="wanted",
         environment="p-mk1",
         started_at=issue.first_seen - datetime.timedelta(minutes=5),
     )
     release_models.Deploy.objects.create(
+        project=issue.project,
         release=release,
+        identifier="newer",
         environment="p-mk1",
         started_at=issue.first_seen + datetime.timedelta(hours=1),
     )
@@ -285,7 +399,9 @@ def test_an_issue_older_than_every_deploy_has_no_suspect(seen, issue):
     """Should say nothing rather than blame the first deploy ever made."""
     release = seen("1.2.3")
     release_models.Deploy.objects.create(
+        project=issue.project,
         release=release,
+        identifier="future",
         environment="p-mk1",
         started_at=issue.first_seen + datetime.timedelta(hours=1),
     )
