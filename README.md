@@ -93,6 +93,7 @@ Copies stored events out of another pandora database into this one, paging per p
 | `/` | issue stream | live |
 | `/issues/<id>/` | one issue: latest stack trace, occurrences, episodes, tags, activity | live |
 | `/overview/` | headline numbers, what is firing, what is new | live |
+| `/performance/` | endpoint throughput, latency and failure rate | live |
 | `/ingest/` | envelope backlog, failures, replay, tokens | live |
 | `/admin/` | configuration: projects, tokens, DSN keys, grouping rules | live |
 | `/health/` | liveness/readiness | live |
@@ -103,8 +104,12 @@ Copies stored events out of another pandora database into this one, paging per p
 | `/api/<project_id>/logs/` | JSON-lines log shipping (DSN key) | live |
 | `/api/<project_id>/integration/otlp/v1/logs` | OTLP/JSON logs (DSN key) | live |
 | `/api/<project_id>/cron/<slug>/<key>/` | cron check-in | live |
+| `/api/<project_id>/security/` | CSP, Expect-CT and HPKP reports, posted by the browser (DSN key) | live |
+| `/api/<project_id>/nel/` | Network Error Logging reports (DSN key) | live |
 | `/api/0/organizations/<org>/chunk-upload/` | source-map chunks, `sentry-cli` protocol (Bearer token) | live |
 | `/api/0/organizations/<org>/artifactbundle/assemble/` | joins the chunks into a bundle (Bearer token) | live |
+| `/api/0/organizations/<org>/releases/` | creates a release, `sentry-cli releases new` (Bearer token) | live |
+| `/api/0/organizations/<org>/releases/<version>/` | attaches commits, `sentry-cli releases set-commits` (Bearer token) | live |
 | `/api/0/organizations/<org>/releases/<version>/deploys/` | records an idempotent successful deploy (Bearer token) | live |
 | `/api/v1/issues` | issue list, filtered and cursor-paged | live |
 | `/api/v1/issues/<id>` | one issue with its episodes and tag stats | live |
@@ -130,17 +135,23 @@ The stream opens on `is:unresolved`. The search box takes a query rather than a 
 | `is:snoozed` | `is:snoozed` | quiet on purpose, by time or by occurrence count |
 | `is:awake` | `is:awake` | everything not currently snoozed |
 | `age:` | `age:1d` | first seen inside the window |
-| `owner:` | `owner:platform` `owner:me` `owner:none` | the team or person an ownership rule routed it to |
+| `owner:` | `owner:platform` `owner:me` `owner:none` | the team or person an ownership rule routed it to; `assigned:` is the Sentry spelling |
+| `priority:` | `priority:high` `priority:>=medium` | how the issue ranks — see [Priority and the review queue](#priority-and-the-review-queue) |
+| `is:for_review` | `is:for_review` | nobody has looked at it since it appeared, regressed or escalated |
+| `events:` `users:` | `events:>100` `users:>=10` | a comparison against the counters — `>`, `>=`, `<`, `<=`, or a bare number |
+| `has:` | `has:release` `has:owner` | the issue carries that tag key, or an owner |
+| `release:` and friends | `release:1.4.0` `browser:Chrome*` `url:*/checkout` | shorthand for the tag of that name |
+| `tags[key]:` | `tags[pod]:api-*` | the explicit form, for a key whose name collides with a filter |
 
-Anything else is matched against the title, the culprit, the newest message and the frame paths it came from, and a bare hash prefix matches the fingerprint. Repeating a key widens it (`level:error level:fatal`); different keys narrow together. A term Pandora does not understand is named back above the table rather than silently returning nothing.
+Anything else is matched against the title, the culprit, the newest message and the frame paths it came from, and a bare hash prefix matches the fingerprint. Repeating a key widens it (`level:error level:fatal`); different keys narrow together. `level:[error,fatal]` is the same thing in one term. A leading `!` inverts any term or bare word (`!level:info`, `!has:release`, `!checkout`). A `*` anywhere in a value is a glob, not a regular expression, so `C++*` matches what it looks like it matches. A term Pandora does not understand is named back above the table rather than silently returning nothing.
 
-Selecting rows raises an action bar: acknowledge, resolve, ignore, snooze, merge, or silence in Alertmanager for 1h, 4h or 1d. `/` focuses the search box, `j` and `k` move through the rows, `x` selects one, `Enter` opens it.
+Selecting rows raises an action bar: acknowledge, resolve, ignore, snooze, merge, set a priority, mark reviewed, or silence in Alertmanager for 1h, 4h or 1d. `/` focuses the search box, `j` and `k` move through the rows, `x` selects one, `Enter` opens it.
 
 Triage needs the `issues.change_issue` permission and replay needs `ingest.change_rawenvelope`, the same permissions the admin checks — a staff account without them gets a read-only UI. A team role grants the same permissions without touching the admin; see [More than one person](#more-than-one-person).
 
 Both ingest routes existed from the first commit and answered 501 until their phase landed — the URL and auth scheme are what SDKs and Alertmanager configs hard-code, so they were pinned before anything was written behind them. Both doors are open now.
 
-An SDK points at Pandora with a DSN of the form `http://<public_key>@<host>/<project_id>`, where the key is a `DsnKey` row. Envelopes arrive compressed or plain; `event` items become one durable `RawEnvelope` each and event attachments are streamed to the artifact volume without copying their bytes into that row. Attachments are associated only when the envelope identifies one accepted event. Transactions and unknown items are acknowledged with `200` and dropped, so an SDK never retries what Pandora will not keep. Retries are free: the Sentry event id is the dedup key, held in `ProcessedEvent`, and an issue's `event_count` moves only when that row is genuinely new. SDK events carry no episode; the firing/resolved column stays null on an issue that only SDKs feed.
+An SDK points at Pandora with a DSN of the form `http://<public_key>@<host>/<project_id>`, where the key is a `DsnKey` row. Envelopes arrive compressed or plain; `event` items become one durable `RawEnvelope` each and event attachments are streamed to the artifact volume without copying their bytes into that row. Attachments are associated only when the envelope identifies one accepted event. `transaction` items are counted into the hourly endpoint buckets and then dropped; unknown items are acknowledged with `200` and dropped, so an SDK never retries what Pandora will not keep. Retries are free: the Sentry event id is the dedup key, held in `ProcessedEvent`, and an issue's `event_count` moves only when that row is genuinely new. SDK events carry no episode; the firing/resolved column stays null on an issue that only SDKs feed.
 
 The protocol caps compressed envelopes at 20 MB and attachment bytes at 100 MB. `PANDORA_INGEST_MAX_BYTES` remains the non-attachment item cap, while `PANDORA_INGEST_COMPRESSED_MAX_BYTES` and `PANDORA_ATTACHMENT_MAX_BYTES` may lower their protocol ceilings. Attachment metadata is visible with read access. API downloads require `read` and `payload` capabilities; UI downloads require the project owner role.
 
@@ -205,6 +216,18 @@ An occurrence can also be **deleted one at a time** from the occurrences tab, be
 
 **Drop rules** refuse a payload before the durable write, so the saving is disk rather than only noise. Each matches a field — `alertname`, `namespace`, `severity`, `type`, `value`, `message`, `release`, `environment`, `server_name`, `transaction`, `platform` — against a regular expression, counts what it refused, and works on both ingest doors. An invalid pattern never matches rather than taking ingest down.
 
+**Standard inbound filters** are the patterns nobody should have to write twice. Each is a switch on a project, off until it is turned on, and each counts what it refused:
+
+| Filter | Refuses |
+|---|---|
+| `browser_extension` | a frame from `chrome-extension://` and friends, and the classic extension messages |
+| `legacy_browser` | Internet Explorer, Opera Mini, and versions below what anybody would fix a bug for |
+| `localhost` | a request whose URL or client address is the loopback |
+| `web_crawler` | a user agent that names a bot |
+| `health_check` | a transaction or path ending in `/healthz`, `/ready`, `/ping` and the rest |
+| `chunk_load` | `ChunkLoadError`, hydration mismatches, and the other errors a deploy causes and a reload fixes |
+| `allowed_domains` | a request from a host outside `options.domains` — globs allowed, inert until one is listed |
+
 ## Getting told
 
 Pandora had no way to tell anyone anything until now, which means the default could be chosen rather than retrofitted. **Notification is a property of the issue's state machine, not a rules engine.** There are five events and no condition builder:
@@ -216,8 +239,21 @@ Pandora had no way to tell anyone anything until now, which means the default co
 | `issue.unsnoozed` | a snooze expired and the issue is still live |
 | `issue.milestone` | the 10th, 100th, 1000th, 10000th occurrence |
 | `issue.resolved` | a person closed it |
+| `issue.escalating` | something archived started happening far more than it used to |
+| `issue.comment` | somebody left a note on an issue |
+| `report.periodic` | the summary of a day, week or month |
 
 Nothing fires on the second occurrence of an open issue. That is the behaviour that gets a tool muted.
+
+**Metric monitors** are the one place a threshold makes sense, and they produce an alert rather than a second kind of notification. Each is a row: a dataset, an optional query, a window, a comparison and a number. `manage.py alerts` evaluates them — the chart schedules it every five minutes — and a breach opens an ordinary alert in the stream, with an episode, a triage state, notifications and the alert-error join already working on it. It closes the same episode when the number comes back.
+
+| Dataset | Measures |
+|---|---|
+| `events` `issues` `new_issues` `users` | over the issues the monitor's query selects, in the stream's own filter language |
+| `crash_free` | the crash-free session percentage, from the session buckets |
+| `throughput` `p50` `p95` `failure_rate` | over the endpoint buckets; here the query is a transaction name, optionally with one `*` |
+
+Set `comparison_delta_minutes` and the number becomes a percent change against the same window that far back — *worse than yesterday* rather than *over a fixed line*. A window with nothing in it reads as no data, never as a breach: a monitor that fires because a service is idle is a monitor nobody keeps.
 
 A **destination** is a row: a webhook, an email list, or a Slack, Discord or Teams incoming-webhook URL. It picks which events it wants, a minimum level, an optional project, and a digest window. Webhooks are signed with HMAC-SHA256 in `X-Pandora-Signature` when a secret is set, so a receiver can prove the call came from this Pandora.
 
@@ -384,7 +420,7 @@ service_links:
 python manage.py apply_config --path /etc/pandora/config.yaml --dry-run
 ```
 
-Two more sections, `teams` and `ownership_rules`, are described under [More than one person](#more-than-one-person). `PANDORA_CONFIG` supplies the path when the flag is absent. Secrets go in by reference — any field takes a `_env` suffix naming the variable to read — so the file itself is committable.
+Four more sections — `teams`, `ownership_rules`, `repositories` and `code_mappings` — are described under [More than one person](#more-than-one-person) and [Suspect commits](#suspect-commits-without-a-forge-integration), and `inbound_filters` switches on the standard filters. `PANDORA_CONFIG` supplies the path when the flag is absent. Secrets go in by reference — any field takes a `_env` suffix naming the variable to read — so the file itself is committable.
 
 **It reconciles rather than creates.** A token dropped from the file is deactivated, not left live; rows are never deleted, so the episodes and issues pointing at them survive. A run either applies completely or leaves nothing behind, and `--dry-run` prints the diff and rolls back.
 
@@ -413,11 +449,47 @@ Versions are **parsed and stored as a sort key**, semver and calendar versions b
 
 **Resolving is release-aware.** Resolve now, in the next release, in the current release, or in a named one. The choice stores a boundary, and every later event's release is compared to it: an equal or lower version leaves the issue resolved, a higher one reopens it. That is Countly's *reoccurred* semantics, nobody free implements it, and it is what stops a lagging replica from reopening something that is genuinely fixed. An event with no release reopens it, because the event cannot say what it was running.
 
-**Suspect deploy** is the last deploy before the issue was first seen, shown on the issue page. It needs no repository access — suspect *commit* does, and is not built.
+**Suspect deploy** is the last deploy before the issue was first seen, shown on the issue page. It needs no repository access, and neither does suspect commit — see below.
 
 `manage.py deploy --project infrastructure --release 1.2.3 --deploy-id "$CI_PIPELINE_ID" --environment p-mk1` marks a deploy from CI. Send `--state started` first, then repeat the same stable identifier with `succeeded` or `failed`; retries are idempotent, conflicting release or environment reuse is refused, and a late terminal result may replace `timed_out`. The chart sweeps every fifteen minutes to time out a deploy left started for an hour. With `resolve_on_deploy` on for a project, a successful transition also resolves everything currently open in that environment against the new release: wipe the board, and let what comes back come back. Honeybadger does this by default; here it is off until a project asks.
 
 Sentry-style CI can instead post `environment`, optional `name`, `url`, `dateStarted`, `dateFinished`, and the token project slug to `/api/0/organizations/<org>/releases/<version>/deploys/`. A token needs the `deploy` capability. Identical requests return the same completed deploy, so a retried CI job cannot double-count or repeat resolve-on-deploy.
+
+### Suspect commits, without a forge integration
+
+Sentry finds the commit that broke something by holding an OAuth app against your GitHub organisation. Pandora never talks to a forge: **CI already has the commits, so CI sends them.**
+
+```sh
+sentry-cli --url https://pandora.example.com \
+  releases new 1.4.0
+sentry-cli --url https://pandora.example.com \
+  releases set-commits 1.4.0 --local
+```
+
+`--local` reads `git log` in the checkout and posts each commit with its author, its message and the files it touched. That is the whole integration: no token against a forge, no webhook, nothing to revoke, and it works for a repository that is not on a forge at all.
+
+A **code mapping** says how a path in a stack trace becomes a path in a repository — `/app/` in the container is `src/` in the repo — and it is the only thing an operator configures. With one in place:
+
+- every frame gets an **Open source** link straight to the line, built as a URL rather than fetched;
+- the issue page names the **suspect commits**: walking in-app frames from the fault outward, the last commit to touch each file, inside a year, only from releases of this project;
+- an issue nobody owns is **assigned to the commit author** when the address matches an account, after ownership rules have had their say — a stated rule always beats an inference from git history;
+- a commit message saying `fixes #412` **resolves that issue in the release it went out in**, so the next event on an older release does not reopen it.
+
+```yaml
+repositories:
+  - name: sophotechlabs/pandora
+    project: infrastructure
+    provider: github
+    url: https://github.com/sophotechlabs/pandora
+code_mappings:
+  - project: infrastructure
+    repository: sophotechlabs/pandora
+    stack_root: /app/
+    source_root: src/
+    default_branch: main
+```
+
+GitHub, GitLab and Bitbucket blob URLs are all built; a plain `git` repository stores the commits and skips the links.
 
 ### Release health
 
@@ -432,6 +504,34 @@ Sessions bypass the gate and sampling by design and nobody bills for them, which
 **Ignore** is the triage state for something you have decided not to act on. **Resolve** says it is fixed, and a further occurrence is a regression.
 
 Snoozing never stops ingest; the counts keep moving and `is:snoozed` lists what is quiet. To stop *recording* something, use a drop rule.
+
+**Quiet is not permanent.** `manage.py triage` runs hourly from the chart and does three things. It **escalates**: an ignored or snoozed issue whose last hour is more than `PANDORA_ESCALATION_FACTOR` times its own median hour over the previous week — and over `PANDORA_ESCALATION_FLOOR` events — comes back as new, at high priority, with the snooze cleared and `issue.escalating` sent. The median rather than the mean, so one earlier spike inside the baseline cannot hide the next one. It **auto-resolves**: with `auto_resolve_days` set on a project, or `PANDORA_AUTO_RESOLVE_DAYS` for all of them, an open issue nobody has seen for that long is closed with its own activity kind — never one with an alert still firing, never one somebody deliberately snoozed. And it **re-ranks** whatever a person has not pinned by hand.
+
+## Priority and the review queue
+
+**Priority is derived and overridable.** Level sets the floor — fatal is high, error is medium, everything else is low. Three things raise it: an alert still firing, a fault that has reached more people than `PANDORA_PRIORITY_USER_THRESHOLD`, and an escalation. Nothing lowers it automatically; a person who disagrees picks a priority from the action bar and the sweep stops touching that issue. `priority:high` and `priority:>=medium` filter, and Priority is a sort.
+
+**The review queue** is what Sentry calls For Review. An issue needs review when it appears, when it regresses and when it escalates; acknowledging, resolving, ignoring or **Mark reviewed** takes it out. `is:for_review` is the filter and the segment strip carries the count — so "I have looked at everything new" is a state the tool can hold, not a thing you remember.
+
+**How many people it reached** is counted per issue from the `user` tag, as distinct identities rather than events. The stream shows it beside the event count, `users:>=100` filters on it and Users sorts by it. Counting stops at `PANDORA_USER_COUNT_CAP` (10,000) and the number is then rendered as `10000+` — an issue that reached everybody must not grow a row per request.
+
+## Comments, watching and what looks like this
+
+A note on an issue is an **activity row**, so it reads in order beside the state changes it is about rather than in a separate thread. Commenting subscribes you; so does being assigned, and so does acting on the issue. **Watch** and **Stop watching** are on the issue page for everything else. `issue.comment` reaches the project's destinations, and an email destination also delivers to the watchers' own addresses.
+
+The **Similar** tab lists issues in the same project whose grouping signature overlaps this one's, with the percentage they share. It is set overlap over the fingerprint, the title and the culprit, computed when the tab is opened over a bounded candidate list — no model, no training corpus, and nothing extra written at ingest. It answers *did we already decide about something like this*.
+
+## Performance, without a span store
+
+Pandora accepts `transaction` envelope items and **counts them instead of storing them**. One row per endpoint per hour holds the request count, the failure count, the duration sum, the slowest request and a fixed-boundary histogram; span durations are summed by operation on the same row. Nothing about an individual request survives, so the storage cost is the number of endpoints rather than the number of requests — which is the whole reason Sentry needs Kafka, ClickHouse and Snuba for this and Pandora does not.
+
+`/performance/` lists endpoints by throughput, failure rate, p50, p95 and the slowest request seen, over 24 hours, 7 days or 30 days. Picking one shows where its time went by span operation — *database or outbound call* is the question the waterfall gets used for often enough to pay for. A percentile is the bucket it falls in, and the page says so, because a histogram cannot honestly claim more precision than its boundaries.
+
+What is deliberately absent: the trace waterfall, span search, and every performance-issue detector. Those need the span store, and the span store is the trade this design refuses. `p50`, `p95`, `throughput` and `failure_rate` are metric-monitor datasets, so an endpoint regression is an alert like any other.
+
+## Periodic reports
+
+`manage.py report --period week` summarises each project — events, new issues, regressions, resolutions, what is still open, the loudest five, and the change against the period before — and queues it to any destination that asked for `report.periodic`. `--period` takes `day`, `week` or `month`; `--dry-run` prints it without sending. The chart has the cron job and it is off by default.
 
 ## Grouping
 
@@ -571,7 +671,11 @@ Filters: `triage_state` and `source_state` (repeatable — `?triage_state=new&tr
       "environments": ["p-mk1", "p-mk2"],
       "source_state": "firing",
       "triage_state": "new",
+      "priority": "medium",
+      "needs_review": true,
       "event_count": 3,
+      "user_count": 0,
+      "users_capped": false,
       "open_episode_count": 1,
       "grouping_labels": {"alertname": "TargetDown", "namespace": "monitoring"},
       "first_seen": "2026-08-04T06:00:00Z",
