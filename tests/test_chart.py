@@ -98,6 +98,8 @@ def test_a_default_install_needs_no_values():
         "CronJob",
         "CronJob",
         "CronJob",
+        "CronJob",
+        "CronJob",
         "Deployment",
         "PersistentVolumeClaim",
         "Secret",
@@ -130,6 +132,8 @@ def test_the_default_maintenance_jobs_run_their_management_commands():
         "pandora-pandora-prune": ["python", "manage.py", "prune"],
         "pandora-pandora-replay": ["python", "manage.py", "replay"],
         "pandora-pandora-rollouts": ["python", "manage.py", "rollouts"],
+        "pandora-pandora-alerts": ["python", "manage.py", "alerts"],
+        "pandora-pandora-triage": ["python", "manage.py", "triage"],
     }
 
     assert result == expected
@@ -140,6 +144,8 @@ def test_turning_everything_on_renders():
     """Should hold together with the optional pieces enabled, which is how it runs in a real cluster."""
     kinds = sorted(doc["kind"] for doc in render(*FULL))
     expected = [
+        "CronJob",
+        "CronJob",
         "CronJob",
         "CronJob",
         "CronJob",
@@ -167,7 +173,7 @@ def test_every_pod_runs_as_a_non_root_user():
     ]
 
     assert result == [True] * len(result)
-    assert len(result) == 6
+    assert len(result) == 8
 
 
 @needs_helm

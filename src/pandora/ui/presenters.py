@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any
@@ -11,6 +12,7 @@ from pandora.attachments.models import EventAttachment
 from pandora.events.types import Event
 from pandora.issues import components, sparkline
 from pandora.issues.models import Episode, HourlyStat, Issue
+from pandora.releases.models import CodeMapping
 from pandora.ui import event_view
 
 CHART_WINDOW = timedelta(days=30)
@@ -47,6 +49,7 @@ class Row:
     duration: str
     state_label: str
     owner: str
+    users: str
 
 
 @dataclass(frozen=True)
@@ -120,7 +123,14 @@ def row(issue: Issue, now: datetime) -> Row:
         ),
         state_label=state_label(issue),
         owner=owner_of(issue),
+        users=user_count(issue),
     )
+
+
+def user_count(issue: Issue) -> str:
+    if issue.users_capped:
+        return f"{issue.user_count}+"
+    return str(issue.user_count)
 
 
 def owner_of(issue: Issue) -> str:
@@ -170,6 +180,7 @@ def chart(stats: QuerySet[HourlyStat], now: datetime) -> tuple[ChartBar, ...]:
 def event_row(
     event: Event,
     attachments: tuple[EventAttachment, ...] = (),
+    mappings: Sequence[CodeMapping] | None = None,
 ) -> EventRow:
     return EventRow(
         id=event.id,
@@ -179,7 +190,7 @@ def event_row(
         message=event.message,
         tags=tuple(sorted((event.tags or {}).items())),
         raw=_raw(event),
-        body=event_view.build(event.payload, event.project_id),
+        body=event_view.build(event.payload, event.project_id, mappings),
         attachments=attachments,
     )
 

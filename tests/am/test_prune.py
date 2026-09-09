@@ -79,6 +79,7 @@ def test_prune_reports_every_retention_class():
         "bundles",
         "client_discards",
         "attachments",
+        "transactions",
     ]
 
     assert result == expected

@@ -1,0 +1,79 @@
+{% extends "ui/base.html" %}
+{% block title %}Performance | Pandora{% endblock %}
+{% block content %}
+  <div class="page-head">
+    <h1>Performance</h1>
+    <span class="count">last {{ window_hours }}h</span>
+  </div>
+  <div class="toolbar">
+    <span class="toolbar-label">Window</span>
+    {% for hours in windows %}
+      <a class="toolbar-link
+                {% if hours == window_hours %}active{% endif %}"
+         href="?hours={{ hours }}">{{ hours }}h</a>
+    {% endfor %}
+    <span class="toolbar-hint">
+      Counted per endpoint per hour — no spans are stored, so a percentile is the
+      bucket it falls in.
+    </span>
+  </div>
+  <table class="issues">
+    <thead>
+      <tr>
+        <th>Endpoint</th>
+        <th>Project</th>
+        <th class="num">Requests</th>
+        <th class="num">Failures</th>
+        <th class="num">p50</th>
+        <th class="num">p95</th>
+        <th class="num">Slowest</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for project, row in rows %}
+        <tr>
+          <td class="subject">
+            <a class="subject-title"
+               href="?hours={{ window_hours }}&amp;transaction={{ row.transaction|urlencode }}">{{ row.transaction }}</a>
+          </td>
+          <td><span class="project">{{ project.slug }}</span></td>
+          <td class="num">{{ row.count }}</td>
+          <td class="num">{{ row.failure_rate|floatformat:1 }}%</td>
+          <td class="num">{{ row.p50|floatformat:0 }} ms</td>
+          <td class="num">{{ row.p95|floatformat:0 }} ms</td>
+          <td class="num">{{ row.duration_max|floatformat:0 }} ms</td>
+        </tr>
+      {% empty %}
+        <tr>
+          <td class="empty" colspan="7">
+            <p class="empty-title">No transaction has been received yet</p>
+            <p class="empty-hint">Set a traces sample rate in the SDK and its transaction items land here.</p>
+          </td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% if breakdown %}
+    <section class="card">
+      <h2 class="card-title">Where the time goes</h2>
+      <table class="issues">
+        <thead>
+          <tr>
+            <th>Operation</th>
+            <th class="num">Spans</th>
+            <th class="num">Total</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for op, count, total in breakdown %}
+            <tr>
+              <td>{{ op }}</td>
+              <td class="num">{{ count }}</td>
+              <td class="num">{{ total|floatformat:0 }} ms</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </section>
+  {% endif %}
+{% endblock %}

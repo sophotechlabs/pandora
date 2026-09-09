@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Mapping
+from dataclasses import dataclass
 from typing import Any
 
 from django.conf import settings
@@ -10,8 +11,8 @@ from django.db.models import F
 from prometheus_client import Counter
 
 from pandora.core.models import Project
-from pandora.scrub import paths, rules
-from pandora.scrub.models import DropRule, ScrubRule
+from pandora.scrub import inbound, paths, rules
+from pandora.scrub.models import DropRule, InboundFilter, ScrubRule
 
 DROPPED = Counter(
     "pandora_ingest_dropped_total",
@@ -132,3 +133,52 @@ def scrub_message(text: str) -> str:
 def record_drop(rule: DropRule, source: str) -> None:
     DROPPED.labels(source=source, rule=rule.name).inc()
     DropRule.objects.filter(pk=rule.pk).update(dropped=F("dropped") + 1)
+
+
+@dataclass(frozen=True)
+class Refusal:
+    """Why a payload was refused, whichever half of the gate refused it."""
+
+    name: str
+    rule: DropRule | None = None
+    inbound_filter: InboundFilter | None = None
+
+
+def refused(payload: Any, project: Project | None) -> Refusal | None:
+    rule = dropped_by(payload, project)
+    if rule is not None:
+        return Refusal(name=rule.name, rule=rule)
+    found = filtered_by(payload, project)
+    if found is not None:
+        return Refusal(name=found.kind, inbound_filter=found)
+    return None
+
+
+def filtered_by(payload: Any, project: Project | None) -> InboundFilter | None:
+    if not isinstance(payload, Mapping):
+        return None
+    for row in _inbound_filters(project):
+        if inbound.matches(row.kind, payload, row.options):
+            return row
+    return None
+
+
+def _inbound_filters(project: Project | None) -> list[InboundFilter]:
+    queryset = InboundFilter.objects.filter(active=True)
+    if project is None:
+        return list(queryset.filter(project=None))
+    return list(
+        queryset.filter(models.Q(project=None) | models.Q(project_id=project.pk))
+    )
+
+
+def record_refusal(refusal: Refusal, source: str) -> None:
+    if refusal.rule is not None:
+        record_drop(refusal.rule, source)
+        return
+    if refusal.inbound_filter is None:
+        return
+    DROPPED.labels(source=source, rule=refusal.name).inc()
+    InboundFilter.objects.filter(pk=refusal.inbound_filter.pk).update(
+        dropped=F("dropped") + 1
+    )

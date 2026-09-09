@@ -242,6 +242,8 @@ def test_a_new_issue_starts_from_the_occurrence_with_empty_counters():
         "open_episode_count": 0,
         "source_state": None,
         "triage_state": "new",
+        "priority": "low",
+        "needs_review": True,
     }
 
     assert result == expected

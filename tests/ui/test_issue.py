@@ -591,3 +591,16 @@ def test_an_issue_with_nothing_distinguishing_shows_no_panel(
     issue = make_issue()
 
     assert "What sets this apart" not in body(operator_client, issue)
+
+
+def test_the_similar_tab_lists_the_nearest_issues(operator_client, make_issue):
+    """Should be reachable, which is what makes the computation worth doing."""
+    first = make_issue(title="ValueError: pandora.checkout in charge")
+    make_issue(title="TypeError: pandora.checkout in charge")
+
+    response = operator_client.get(f"/issues/{first.pk}/similar/")
+
+    result = (response.status_code, len(response.context["similar"]))
+    expected = (http.HTTPStatus.OK, 1)
+
+    assert result == expected

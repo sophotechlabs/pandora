@@ -1,0 +1,16 @@
+{% if similar %}
+  <p class="muted">
+    Issues in this project whose grouping signature overlaps this one's. The
+    percentage is how much of everything the two name that they share.
+  </p>
+  <ul class="plain">
+    {% for match in similar %}
+      <li class="merged-row">
+        <a href="{% url 'ui:issue' match.issue.pk %}">{{ match.issue.title|truncatechars:80 }}</a>
+        <span class="muted">{{ match.percent }}% · {{ match.issue.event_count }} events · {{ match.issue.get_triage_state_display }}</span>
+      </li>
+    {% endfor %}
+  </ul>
+{% else %}
+  <p class="muted">Nothing else in this project looks like this issue</p>
+{% endif %}

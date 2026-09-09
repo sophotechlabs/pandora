@@ -297,3 +297,31 @@ def test_an_sdk_issue_falls_back_to_its_tags(make_issue):
     expected = {"service": "gateway"}
 
     assert result == expected
+
+
+def test_a_person_seen_on_both_issues_is_counted_once(make_issue):
+    """Should answer how many people the merged fault reached, not twice over."""
+    keeper = make_issue("a" * 64, first_seen=NOW - datetime.timedelta(days=2))
+    other = make_issue("b" * 64)
+    for issue in (keeper, other):
+        issue_models.IssueUser.objects.create(issue=issue, key="id:42")
+    issue_models.IssueUser.objects.create(issue=other, key="id:7")
+
+    merge.merge(keeper, [other])
+
+    keeper.refresh_from_db()
+    result = (keeper.user_count, issue_models.IssueUser.objects.count())
+    expected = (2, 2)
+
+    assert result == expected
+
+
+def test_a_capped_loser_marks_the_merged_issue_capped(make_issue):
+    """Should keep the plus sign that says the count stopped being exact."""
+    keeper = make_issue("a" * 64, first_seen=NOW - datetime.timedelta(days=2))
+    other = make_issue("b" * 64, users_capped=True)
+
+    merge.merge(keeper, [other])
+
+    keeper.refresh_from_db()
+    assert keeper.users_capped is True

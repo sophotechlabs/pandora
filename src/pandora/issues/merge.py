@@ -17,6 +17,7 @@ from pandora.issues.models import (
     IssueActivity,
     IssueAlias,
     IssueEnvironment,
+    IssueUser,
     SilenceLink,
     TagStat,
     TriageState,
@@ -208,6 +209,7 @@ def _fold(group: Group, issues: Sequence[Issue] | None = None) -> None:
     _fold_counters(HourlyStat, keeper.pk, loser_ids, ["hour"])
     _fold_counters(TagStat, keeper.pk, loser_ids, ["key", "value"])
     _fold_environments(keeper.pk, loser_ids)
+    _fold_users(keeper.pk, loser_ids)
     _move_events(loser_ids, keeper.pk)
     _write_keeper(keeper, list(issues))
     Issue.objects.filter(pk__in=loser_ids).delete()
@@ -252,6 +254,19 @@ def _fold_environments(keeper_id: int, loser_ids: list[int]) -> None:
         row.delete()
 
 
+def _fold_users(keeper_id: int, loser_ids: list[int]) -> None:
+    known = set(
+        IssueUser.objects.filter(issue_id=keeper_id).values_list("key", flat=True)
+    )
+    for row in IssueUser.objects.filter(issue_id__in=loser_ids):
+        if row.key in known:
+            row.delete()
+            continue
+        known.add(row.key)
+        row.issue_id = keeper_id
+        row.save(update_fields=["issue"])
+
+
 def _move_events(loser_ids: list[int], keeper_id: int) -> None:
     if EVENTS_TABLE not in connection.introspection.table_names():
         return
@@ -272,6 +287,8 @@ def _write_keeper(keeper: Issue, issues: list[Issue]) -> None:
     keeper.source_state = newest.source_state
     keeper.level = newest.level
     keeper.event_count = sum(issue.event_count for issue in issues)
+    keeper.user_count = IssueUser.objects.filter(issue_id=keeper.pk).count()
+    keeper.users_capped = any(issue.users_capped for issue in issues)
     keeper.open_episode_count = sum(issue.open_episode_count for issue in issues)
     keeper.triage_state = _openest(issues)
     if resolved:

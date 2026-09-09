@@ -28,6 +28,7 @@ class Project(models.Model):
     slug = models.SlugField(max_length=100, unique=True)
     name = models.CharField(max_length=200)
     resolve_on_deploy = models.BooleanField(default=False)
+    auto_resolve_days = models.PositiveIntegerField(default=0)
     created_at = models.DateTimeField(default=timezone.now)
 
     class Meta:

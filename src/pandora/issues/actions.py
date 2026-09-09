@@ -10,7 +10,7 @@ from pandora.am import client as am_client
 from pandora.am import silences
 from pandora.issues import hooks, triage
 from pandora.issues import snooze as snooze_module
-from pandora.issues.models import Issue, IssueActivity
+from pandora.issues.models import ActivityKind, Issue, IssueActivity
 
 SILENCE_WINDOWS = {
     "1h": timedelta(hours=1),
@@ -47,7 +47,9 @@ def apply_triage(issue: Issue, target_state: str, actor: str, at: datetime) -> b
     with transaction.atomic():
         for name, value in plan.issue_fields.items():
             setattr(issue, name, value)
-        issue.save(update_fields=list(plan.issue_fields))
+        issue.needs_review = False
+        issue.escalated_at = None
+        issue.save(update_fields=[*plan.issue_fields, "needs_review", "escalated_at"])
         IssueActivity.objects.create(
             issue=issue,
             kind=plan.activity_kind,
@@ -69,6 +71,57 @@ def retriage(
         total += 1
         if apply_triage(issue, target_state, actor, at):
             changed += 1
+    return TriageReport(changed=changed, unchanged=total - changed)
+
+
+def mark_reviewed(issues: Iterable[Issue], actor: str, at: datetime) -> TriageReport:
+    """Take an issue out of the review queue without deciding anything else.
+
+    A reader who has looked at a new issue and wants it to stay open needs a way
+    to say so; without one the queue only empties by resolving things.
+    """
+    changed = 0
+    total = 0
+    for issue in issues:
+        total += 1
+        if not issue.needs_review:
+            continue
+        with transaction.atomic():
+            issue.needs_review = False
+            issue.save(update_fields=["needs_review"])
+            IssueActivity.objects.create(
+                issue=issue,
+                kind=ActivityKind.REVIEWED,
+                actor=actor,
+                at=at,
+            )
+        changed += 1
+    return TriageReport(changed=changed, unchanged=total - changed)
+
+
+def set_priority(
+    issues: Iterable[Issue], value: str, actor: str, at: datetime
+) -> TriageReport:
+    """Pin a rank a person disagreed with, so the sweep stops overwriting it."""
+    changed = 0
+    total = 0
+    for issue in issues:
+        total += 1
+        if issue.priority == value and issue.priority_locked:
+            continue
+        previous = issue.priority
+        with transaction.atomic():
+            issue.priority = value
+            issue.priority_locked = True
+            issue.save(update_fields=["priority", "priority_locked"])
+            IssueActivity.objects.create(
+                issue=issue,
+                kind=ActivityKind.REPRIORITISED,
+                actor=actor,
+                at=at,
+                data={"previous_priority": previous, "priority": value},
+            )
+        changed += 1
     return TriageReport(changed=changed, unchanged=total - changed)
 
 

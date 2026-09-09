@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pandora.issues import comments as comment_service
 from pandora.issues import lifecycle
 from pandora.issues.models import Issue
 from pandora.notify import events, models
@@ -28,3 +29,19 @@ def on_wake(issue: Issue) -> None:
 
 def on_resolve(issue: Issue, actor: str) -> None:
     events.queue(issue, models.RESOLVED, {"actor": actor})
+
+
+def on_escalate(issue: Issue, count: int) -> None:
+    events.queue(issue, models.ESCALATING, {"count": count})
+
+
+def on_comment(issue: Issue, actor: str, body: str) -> None:
+    events.queue(
+        issue,
+        models.COMMENT,
+        {
+            "actor": actor,
+            "body": body,
+            "subscribers": comment_service.addresses(issue),
+        },
+    )

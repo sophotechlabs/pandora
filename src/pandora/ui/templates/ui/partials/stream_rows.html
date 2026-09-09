@@ -15,6 +15,8 @@
                 title="{{ row.state_label }}"></span>
           <a class="subject-title" href="{% url 'ui:issue' row.issue.pk %}">{{ row.issue.title }}</a>
           <span class="chip chip-{{ row.issue.level }}">{{ row.issue.get_level_display }}</span>
+          <span class="chip chip-priority-{{ row.issue.priority }}" title="Priority">{{ row.issue.get_priority_display }}</span>
+          {% if row.issue.needs_review %}<span class="chip chip-review">Review</span>{% endif %}
         </div>
         <div class="subject-sub">
           <span class="project">{{ row.issue.project.slug }}</span>
@@ -41,6 +43,7 @@
         </svg>
       </td>
       <td class="num">{{ row.issue.event_count }}</td>
+      <td class="num">{{ row.users }}</td>
       <td class="num">{{ row.duration }}</td>
       <td class="when" title="{{ row.issue.last_seen|date:'Y-m-d H:i:s e' }}">{{ row.last_seen }}</td>
       <td class="owner">
@@ -56,10 +59,10 @@
     </tr>
   {% empty %}
     <tr>
-      <td class="empty" colspan="{% if can_triage %}8{% else %}7{% endif %}">
+      <td class="empty" colspan="{% if can_triage %}9{% else %}8{% endif %}">
         <p class="empty-title">No issue matches this search</p>
         <p class="empty-hint">
-          Filters: is, state, level, project, environment, tag, label, seen, age. Anything else is matched against the title and the culprit.
+          Filters: is, priority, state, level, project, environment, tag, label, has, events, users, seen, age, owner. A leading ! inverts one; a * is a wildcard. Anything else is matched against the title and the culprit.
         </p>
       </td>
     </tr>

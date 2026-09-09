@@ -19,6 +19,7 @@ from pandora.ingest.models import EnvelopeState, ProcessedEvent, RawEnvelope
 from pandora.issues.models import HourlyStat, IssueActivity, SilenceLink
 from pandora.notify import deliver as notify_deliver
 from pandora.people import audit as people_audit
+from pandora.perf import service as perf
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +42,7 @@ class PruneResult:
     bundles: int = 0
     client_discards: int = 0
     attachments: int = 0
+    transactions: int = 0
 
 
 def _thin_by_relevance(store: Any, now: datetime) -> int:
@@ -78,6 +80,7 @@ def prune_expired(now: datetime) -> PruneResult:
     deliveries = notify_deliver.prune(retention_cutoff)
     audit_entries = people_audit.prune(now - AUDIT_RETENTION)
     client_discards = client_reports.prune(retention_cutoff)
+    transactions = perf.prune(retention_cutoff)
     store.ensure_partitions(months_ahead=MONTHS_AHEAD)
     database.incremental_vacuum()
     database.refresh_size()
@@ -95,12 +98,13 @@ def prune_expired(now: datetime) -> PruneResult:
         bundles=bundles,
         client_discards=client_discards,
         attachments=attachment_count,
+        transactions=transactions,
     )
     logger.info(
         "prune: %s events, %s envelopes, %s processed events, %s silences,"
         " %s hourly stats, %s activities, %s ingest counters, %s deliveries,"
         " %s audit entries, %s artifact bundles, %s client discards,"
-        " %s attachments",
+        " %s attachments, %s transaction buckets",
         result.events,
         result.envelopes,
         result.processed_events,
@@ -113,6 +117,7 @@ def prune_expired(now: datetime) -> PruneResult:
         result.bundles,
         result.client_discards,
         result.attachments,
+        result.transactions,
     )
     return result
 

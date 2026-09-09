@@ -134,6 +134,7 @@ def test_every_pandora_app_is_installed(load_settings):
         "pandora.releases",
         "pandora.artifacts",
         "pandora.attachments",
+        "pandora.perf",
     ]
 
     assert result == expected

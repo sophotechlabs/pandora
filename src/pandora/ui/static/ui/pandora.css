@@ -1752,3 +1752,68 @@ th.owner {
 .segment.view {
   font-style: italic;
 }
+
+.chip-priority-high {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.chip-priority-medium {
+  background: var(--warning-soft);
+  color: var(--warning);
+}
+
+.chip-priority-low {
+  background: var(--info-soft);
+  color: var(--info);
+}
+
+.chip-review {
+  background: var(--surface-2);
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+}
+
+.frame-source {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--accent);
+}
+
+.suspect-commit {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.suspect-commit:last-child {
+  border-bottom: none;
+}
+
+.comment-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0 0 16px;
+}
+
+.comment-input {
+  width: 100%;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text);
+  font: inherit;
+  resize: vertical;
+}
+
+.comment-form .btn {
+  align-self: flex-start;
+}
+
+.issue-watch {
+  margin: 0 0 8px;
+}

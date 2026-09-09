@@ -310,3 +310,163 @@ def test_a_stranger_cannot_reach_the_action_endpoint(client, make_issue):
     assert response.status_code == http.HTTPStatus.FOUND
     assert response.url.startswith("/login/")
     assert models.Issue.objects.get(pk=issue.pk).triage_state == models.TriageState.NEW
+
+
+# review and priority
+
+
+def test_mark_reviewed_empties_the_queue_without_deciding(operator_client, make_issue):
+    """Should let a reader clear the review queue and leave the issue open."""
+    issue = make_issue()
+
+    run(operator_client, "review", [issue])
+
+    issue.refresh_from_db()
+    result = (issue.needs_review, issue.triage_state)
+    expected = (False, models.TriageState.NEW)
+
+    assert result == expected
+
+
+def test_mark_reviewed_writes_one_activity_row(operator_client, make_issue):
+    """Should record who looked at it, which is the whole audit value."""
+    issue = make_issue()
+
+    run(operator_client, "review", [issue])
+
+    row = models.IssueActivity.objects.get(kind=models.ActivityKind.REVIEWED)
+    assert row.actor == "operator"
+
+
+def test_marking_an_already_reviewed_issue_changes_nothing(operator_client, make_issue):
+    """Should not write a second row for a second click."""
+    issue = make_issue(needs_review=False)
+
+    run(operator_client, "review", [issue])
+
+    assert not models.IssueActivity.objects.filter(
+        kind=models.ActivityKind.REVIEWED
+    ).exists()
+
+
+def test_a_triage_action_takes_the_issue_out_of_review(operator_client, make_issue):
+    """Should treat acting on an issue as having reviewed it."""
+    issue = make_issue()
+
+    run(operator_client, "acknowledge", [issue])
+
+    issue.refresh_from_db()
+    assert issue.needs_review is False
+
+
+def test_setting_a_priority_pins_it(operator_client, make_issue):
+    """Should stop the sweep from overwriting a rank a person chose."""
+    issue = make_issue(priority=models.Priority.LOW)
+
+    run(operator_client, "priority:high", [issue])
+
+    issue.refresh_from_db()
+    result = (issue.priority, issue.priority_locked)
+    expected = (models.Priority.HIGH, True)
+
+    assert result == expected
+
+
+def test_setting_a_priority_writes_what_it_replaced(operator_client, make_issue):
+    """Should let the activity trail answer why the rank changed."""
+    issue = make_issue(priority=models.Priority.LOW)
+
+    run(operator_client, "priority:high", [issue])
+
+    row = models.IssueActivity.objects.get(kind=models.ActivityKind.REPRIORITISED)
+    result = (row.data["previous_priority"], row.data["priority"])
+    expected = ("low", "high")
+
+    assert result == expected
+
+
+def test_an_unknown_priority_is_refused(operator_client, make_issue):
+    """Should not let a hand-edited form write a rank the model has no name for."""
+    issue = make_issue(priority=models.Priority.LOW)
+
+    response = run(operator_client, "priority:urgent", [issue])
+
+    issue.refresh_from_db()
+    result = (issue.priority, any("not a priority" in note for note in notes(response)))
+    expected = (models.Priority.LOW, True)
+
+    assert result == expected
+
+
+# comments and watching
+
+
+def test_a_comment_is_recorded_against_the_issue(operator_client, make_issue):
+    """Should be the note a reader leaves for whoever picks the issue up next."""
+    issue = make_issue()
+
+    operator_client.post(
+        f"/issues/{issue.pk}/comment/",
+        {"body": "restarting the pod", "next": "/"},
+    )
+
+    activity = models.IssueActivity.objects.get(kind=models.ActivityKind.COMMENTED)
+    result = (activity.actor, activity.data["body"])
+    expected = ("operator", "restarting the pod")
+
+    assert result == expected
+
+
+def test_an_empty_comment_is_reported_back(operator_client, make_issue):
+    """Should say why nothing was saved rather than pretend it was."""
+    issue = make_issue()
+
+    response = operator_client.post(
+        f"/issues/{issue.pk}/comment/", {"body": "  ", "next": "/"}
+    )
+
+    result = any("needs something" in note for note in notes(response))
+    assert result is True
+
+
+def test_commenting_needs_the_change_permission(client, make_issue):
+    """Should keep a viewer from writing into the trail."""
+    viewer = auth_models.User.objects.create_user(
+        username="viewer", password="viewer-pass", is_staff=True
+    )
+    client.force_login(viewer)
+    issue = make_issue()
+
+    response = client.post(f"/issues/{issue.pk}/comment/", {"body": "hello"})
+
+    assert response.status_code == http.HTTPStatus.FORBIDDEN
+
+
+def test_watching_an_issue_is_recorded(operator_client, make_issue):
+    """Should let a person follow an issue they have not acted on."""
+    issue = make_issue()
+
+    operator_client.post(f"/issues/{issue.pk}/watch/", {"action": "watch", "next": "/"})
+
+    assert models.Subscription.objects.filter(issue=issue, active=True).exists()
+
+
+def test_unwatching_an_issue_is_recorded(operator_client, make_issue):
+    """Should be reversible from the same button."""
+    issue = make_issue()
+    operator_client.post(f"/issues/{issue.pk}/watch/", {"action": "watch", "next": "/"})
+
+    operator_client.post(
+        f"/issues/{issue.pk}/watch/", {"action": "unwatch", "next": "/"}
+    )
+
+    assert not models.Subscription.objects.filter(issue=issue, active=True).exists()
+
+
+def test_acting_on_an_issue_starts_watching_it(operator_client, make_issue):
+    """Should follow Sentry: touching an issue subscribes you to it."""
+    issue = make_issue()
+
+    run(operator_client, "acknowledge", [issue])
+
+    assert models.Subscription.objects.filter(issue=issue, active=True).exists()

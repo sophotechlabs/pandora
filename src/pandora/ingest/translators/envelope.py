@@ -12,6 +12,7 @@ from ulid import ULID
 from pandora.core.models import Project
 from pandora.events import payload as payload_interfaces
 from pandora.ingest import json_payload
+from pandora.ingest.translators import tags as derived_tags
 from pandora.issues import grouping, lifecycle, normalise, paths
 from pandora.issues.models import GroupingRule, GroupingSource, Level, PathRule
 from pandora.scrub import service as scrub
@@ -105,8 +106,9 @@ def translate_event(
         rules = grouping.load_rules(project)
     exception = _first_exception(payload)
     raw_fingerprint, grouping_source = _fingerprint(payload, exception, path_rules)
-    tags = _tags(payload)
-    document = _document(payload, tags)
+    normalised = payload_interfaces.normalize(payload)
+    tags = _tags(payload, normalised, exception)
+    document = _document(normalised, tags, payload)
     rule = grouping.select(rules, document=document, require_declaration=True)
     stored = grouping.source_of(rule)
     if stored == GroupingSource.RULE and rule.fingerprint:
@@ -140,7 +142,7 @@ def translate_event(
         timestamp=received_at,
         tags=scrub.scrub_payload(tags, project),
         extra=scrub.scrub_payload(_extra(payload), project),
-        payload=scrub.scrub_payload(payload_interfaces.normalize(payload), project),
+        payload=scrub.scrub_payload(normalised, project),
         environment=_environment(payload, environment)[:ENVIRONMENT_MAX],
         source=source,
     )
@@ -378,13 +380,17 @@ def _environment(payload: Mapping[str, Any], fallback: str) -> str:
     return fallback
 
 
-def _document(payload: Mapping[str, Any], tags: Mapping[str, str]) -> dict[str, Any]:
+def _document(
+    normalised: Mapping[str, Any],
+    tags: Mapping[str, str],
+    payload: Mapping[str, Any],
+) -> dict[str, Any]:
     """What a grouping rule's conditions and templates read.
 
     The normalised payload plus the tags, so a path is the same one a reader
     would write after looking at the occurrence in the UI.
     """
-    document = dict(payload_interfaces.normalize(payload))
+    document = dict(normalised)
     document["tags"] = dict(tags)
     document["level"] = _level(payload)
     document["message"] = str(payload.get("message", ""))
@@ -393,7 +399,11 @@ def _document(payload: Mapping[str, Any], tags: Mapping[str, str]) -> dict[str, 
     return document
 
 
-def _tags(payload: Mapping[str, Any]) -> dict[str, str]:
+def _tags(
+    payload: Mapping[str, Any],
+    normalised: Mapping[str, Any],
+    exception: Mapping[str, Any] | None,
+) -> dict[str, str]:
     raw = payload.get("tags")
     pairs: Sequence[tuple[Any, Any]] = ()
     if isinstance(raw, Mapping):
@@ -413,6 +423,8 @@ def _tags(payload: Mapping[str, Any]) -> dict[str, str]:
         value = str(payload.get(key, "")).strip()
         if value:
             tags.setdefault(key, value[:TAG_VALUE_MAX])
+    for key, value in derived_tags.derive(normalised, exception).items():
+        tags.setdefault(key, value[:TAG_VALUE_MAX])
     return tags
 
 

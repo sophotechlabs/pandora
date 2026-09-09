@@ -4,6 +4,8 @@ from dataclasses import dataclass, field, replace
 from datetime import datetime
 from typing import Any
 
+from pandora.issues import priority
+
 STATUS_FIRING = "firing"
 STATUS_RESOLVED = "resolved"
 SOURCE_FIRING = "firing"
@@ -92,6 +94,8 @@ def new_issue_fields(occurrence: Occurrence) -> dict[str, Any]:
         "open_episode_count": 0,
         "source_state": None,
         "triage_state": TRIAGE_NEW,
+        "priority": priority.derive(priority.Inputs(level=occurrence.level)),
+        "needs_review": True,
     }
 
 
@@ -110,6 +114,7 @@ def apply_occurrence(
     activities = _activities(issue_state, occurrence, move.open_episode_delta)
     if _has_regression(activities):
         issue_fields["triage_state"] = TRIAGE_NEW
+        issue_fields["needs_review"] = True
 
     return Transition(
         create_issue=issue_state is None,
@@ -149,6 +154,7 @@ def apply_event(
     activities = _event_activities(issue_state, occurrence)
     if _has_regression(activities):
         fields["triage_state"] = TRIAGE_NEW
+        fields["needs_review"] = True
 
     return Transition(
         create_issue=issue_state is None,

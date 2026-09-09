@@ -3,9 +3,10 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 
 from django.conf import settings
-from django.db.models import Count, F, Q, QuerySet, Sum
+from django.db.models import Case, Count, F, IntegerField, Q, QuerySet, Sum, Value, When
 from django.db.models.functions import Coalesce
 
+from pandora.issues import priority
 from pandora.issues.models import HourlyStat, Issue
 
 RECENT = timedelta(hours=24)
@@ -54,6 +55,24 @@ def with_breadth(queryset: QuerySet[Issue]) -> QuerySet[Issue]:
             "tag_stats__value",
             filter=Q(tag_stats__key__in=keys),
             distinct=True,
+        )
+    )
+
+
+def with_priority_rank(queryset: QuerySet[Issue]) -> QuerySet[Issue]:
+    """Order by rank rather than by the alphabet the column stores.
+
+    "high", "low", "medium" sorts backwards as text, which is the whole reason
+    this annotation exists.
+    """
+    return queryset.annotate(
+        priority_rank=Case(
+            *[
+                When(priority=name, then=Value(rank))
+                for name, rank in priority.ORDER.items()
+            ],
+            default=Value(0),
+            output_field=IntegerField(),
         )
     )
 

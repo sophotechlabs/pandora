@@ -34,6 +34,8 @@ from pandora.issues.models import (
     TagStat,
     TriageState,
 )
+from pandora.notify.models import Comparison, MetricDataset, MetricMonitor
+from pandora.perf import demo as perf_demo
 
 WINDOW_MINUTES = 7 * 24 * 60
 GENERATOR_URL = "https://prometheus.demo.invalid/graph"
@@ -427,6 +429,35 @@ def _seed_projects(now: datetime) -> dict[str, Project]:
 DEMO_SLUGS = [slug for slug, _, _ in DEMO_PROJECTS]
 
 
+def _seed_monitors(projects: dict[str, Project]) -> None:
+    for slug, project in projects.items():
+        MetricMonitor.objects.update_or_create(
+            project=project,
+            name="error rate",
+            defaults={
+                "dataset": MetricDataset.EVENTS,
+                "window_minutes": 60,
+                "comparison": Comparison.ABOVE,
+                "threshold": 500,
+                "severity": Level.WARNING,
+            },
+        )
+        if slug != DEMO_PROJECTS[1][0]:
+            continue
+        MetricMonitor.objects.update_or_create(
+            project=project,
+            name="checkout latency",
+            defaults={
+                "dataset": MetricDataset.LATENCY_P95,
+                "query": "POST /api/checkout",
+                "window_minutes": 60,
+                "comparison": Comparison.ABOVE,
+                "threshold": 2000,
+                "severity": Level.WARNING,
+            },
+        )
+
+
 def _real_data_exists() -> bool:
     if Project.objects.exclude(slug__in=DEMO_SLUGS).exists():
         return True
@@ -497,9 +528,15 @@ class Command(BaseCommand):
             environments[sdk_project.slug],
             now,
         )
+        transaction_count = perf_demo.seed(
+            sdk_project,
+            environments[sdk_project.slug],
+            now,
+        )
+        _seed_monitors(projects)
 
         self.stdout.write(
             f"seed_demo: {len(projects)} projects, {issue_count} issues, "
             f"{episode_count} episodes, {event_count} events, "
-            f"{sdk_count} sdk events"
+            f"{sdk_count} sdk events, {transaction_count} transactions"
         )

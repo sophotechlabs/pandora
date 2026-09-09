@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from typing import Any
 
 from pandora.artifacts import service as artifacts
+from pandora.releases import commits as commit_service
+from pandora.releases.models import CodeMapping
 
 VALUE_MAX = 400
 BREADCRUMB_MAX = 100
@@ -44,6 +46,7 @@ class FrameRow:
     variables: tuple[tuple[str, str], ...]
     expanded: bool
     minified: str = ""
+    source_url: str = ""
 
 
 @dataclass(frozen=True)
@@ -80,15 +83,21 @@ class EventBody:
     cards: tuple[ContextCard, ...]
 
 
-def build(payload: Any, project_id: int | None = None) -> EventBody | None:
+def build(
+    payload: Any,
+    project_id: int | None = None,
+    mappings: Sequence[CodeMapping] | None = None,
+) -> EventBody | None:
     if not isinstance(payload, Mapping) or not payload:
         return None
 
+    if mappings is None:
+        mappings = _mappings(project_id)
     exceptions = _exceptions(
-        payload, _debug_ids(payload) if project_id else {}, project_id
+        payload, _debug_ids(payload) if project_id else {}, project_id, mappings
     )
     if not exceptions:
-        exceptions = _threads(payload)
+        exceptions = _threads(payload, mappings)
     body = EventBody(
         exceptions=exceptions,
         breadcrumbs=_breadcrumbs(payload),
@@ -124,10 +133,21 @@ def _debug_ids(payload: Mapping[str, Any]) -> dict[str, str]:
     return found
 
 
+def _mappings(project_id: int | None) -> list[CodeMapping]:
+    if project_id is None:
+        return []
+    return list(
+        CodeMapping.objects.filter(project_id=project_id, active=True).select_related(
+            "repository"
+        )
+    )
+
+
 def _exceptions(
     payload: Mapping[str, Any],
     debug_ids: dict[str, str] | None = None,
     project_id: int | None = None,
+    mappings: Sequence[CodeMapping] = (),
 ) -> tuple[ExceptionBlock, ...]:
     entries = _entries(payload, "exceptions")
     blocks = []
@@ -138,6 +158,7 @@ def _exceptions(
                 caused_by=position > 0,
                 debug_ids=debug_ids or {},
                 project_id=project_id,
+                mappings=mappings,
             )
         )
     return tuple(blocks)
@@ -149,6 +170,7 @@ def _exception(
     caused_by: bool,
     debug_ids: dict[str, str] | None = None,
     project_id: int | None = None,
+    mappings: Sequence[CodeMapping] = (),
 ) -> ExceptionBlock:
     mechanism = entry.get("mechanism")
     kind = ""
@@ -165,13 +187,16 @@ def _exception(
         module=str(entry.get("module", "")),
         mechanism=kind,
         handled=handled,
-        frames=_frames(entry, debug_ids or {}, project_id),
+        frames=_frames(entry, debug_ids or {}, project_id, mappings),
         frames_omitted=int(entry.get("frames_omitted", 0) or 0),
         caused_by=caused_by,
     )
 
 
-def _threads(payload: Mapping[str, Any]) -> tuple[ExceptionBlock, ...]:
+def _threads(
+    payload: Mapping[str, Any],
+    mappings: Sequence[CodeMapping] = (),
+) -> tuple[ExceptionBlock, ...]:
     for entry in _entries(payload, "threads"):
         if not entry.get("frames"):
             continue
@@ -184,7 +209,7 @@ def _threads(payload: Mapping[str, Any]) -> tuple[ExceptionBlock, ...]:
                 module="",
                 mechanism="",
                 handled="",
-                frames=_frames(entry),
+                frames=_frames(entry, {}, None, mappings),
                 frames_omitted=int(entry.get("frames_omitted", 0) or 0),
                 caused_by=False,
             ),
@@ -206,6 +231,7 @@ def _frames(
     entry: Mapping[str, Any],
     debug_ids: dict[str, str] | None = None,
     project_id: int | None = None,
+    mappings: Sequence[CodeMapping] = (),
 ) -> tuple[FrameRow, ...]:
     raw = entry.get("frames")
     if not isinstance(raw, list):
@@ -218,6 +244,7 @@ def _frames(
             expanded=index == expanded,
             debug_ids=debug_ids or {},
             project_id=project_id,
+            mappings=mappings,
         )
         for index, frame in enumerate(usable)
     )
@@ -238,14 +265,15 @@ def _frame(
     expanded: bool,
     debug_ids: dict[str, str] | None = None,
     project_id: int | None = None,
+    mappings: Sequence[CodeMapping] = (),
 ) -> FrameRow:
     lineno = raw.get("lineno")
     if not isinstance(lineno, int):
         lineno = None
     resolved = _resolved(raw, lineno, debug_ids or {}, project_id)
     if resolved is not None:
-        return resolved
-    return FrameRow(
+        return replace(resolved, source_url=_source_url(resolved, mappings))
+    row = FrameRow(
         location=_location(raw),
         filename=str(raw.get("filename") or raw.get("abs_path") or ""),
         lineno=lineno,
@@ -256,6 +284,17 @@ def _frame(
         expanded=expanded,
         minified=_minified_note(raw, debug_ids or {}),
     )
+    return replace(row, source_url=_source_url(row, mappings))
+
+
+def _source_url(row: FrameRow, mappings: Sequence[CodeMapping]) -> str:
+    if not mappings or not row.filename:
+        return ""
+    mapped = commit_service.map_path(row.filename, mappings)
+    if mapped is None:
+        return ""
+    mapping, path = mapped
+    return commit_service.source_url(mapping, path, row.lineno)
 
 
 def _resolved(

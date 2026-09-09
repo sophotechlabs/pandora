@@ -102,6 +102,18 @@
             {% endfor %}
           </div>
         </details>
+        <details class="menu">
+          <summary class="btn">Priority</summary>
+          <div class="menu-list">
+            {% for value, label in priorities %}
+              <button class="menu-item"
+                      type="submit"
+                      name="action"
+                      value="priority:{{ value }}">{{ label }}</button>
+            {% endfor %}
+          </div>
+        </details>
+        <button class="btn" type="submit" name="action" value="review">Mark reviewed</button>
         <button class="btn" type="submit" name="action" value="merge">Merge</button>
         <button class="btn btn-ghost" type="button" data-clear-selection>Clear</button>
       </div>

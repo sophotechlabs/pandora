@@ -5,6 +5,7 @@ from collections.abc import Iterable, Mapping
 from datetime import datetime
 from typing import Any
 
+from django.conf import settings
 from django.db.models import F, QuerySet
 
 from pandora.issues.models import (
@@ -13,6 +14,7 @@ from pandora.issues.models import (
     Episode,
     HourlyStat,
     Issue,
+    IssueUser,
     TagStat,
 )
 
@@ -27,6 +29,35 @@ def hour_of(moment: datetime) -> datetime:
 def count_occurrence(issue: Issue, moment: datetime, tags: Mapping[str, str]) -> None:
     _bump_hour(issue, hour_of(moment))
     _bump_tags(issue, [(k[:KEY_MAX], v[:VALUE_MAX]) for k, v in tags.items()])
+    count_user(issue, tags.get("user", ""), moment)
+
+
+def count_user(issue: Issue, key: str, moment: datetime) -> None:
+    """Record one distinct person, up to the cap.
+
+    Past the cap the row is not written and the issue is marked, so the stream
+    reads "10,000+" rather than a number that quietly stopped moving.
+    """
+    identity = key.strip()[:KEY_MAX]
+    if not identity:
+        return
+    if issue.users_capped:
+        return
+    _, created = IssueUser.objects.get_or_create(
+        issue=issue,
+        key=identity,
+        defaults={"first_seen": moment},
+    )
+    if not created:
+        return
+    cap = max(0, settings.PANDORA_USER_COUNT_CAP)
+    capped = cap > 0 and issue.user_count + 1 >= cap
+    Issue.objects.filter(pk=issue.pk).update(
+        user_count=F("user_count") + 1,
+        users_capped=capped,
+    )
+    issue.user_count += 1
+    issue.users_capped = capped
 
 
 def rebuild(issue: Issue, episodes: Iterable[Episode]) -> None:
@@ -38,13 +69,18 @@ def rebuild_from(
 ) -> None:
     hours: Counter[datetime] = Counter()
     tags: Counter[tuple[str, str]] = Counter()
+    users: dict[str, datetime] = {}
     for moment, labels in samples:
         hours[hour_of(moment)] += 1
         for key, value in labels.items():
             tags[(str(key)[:KEY_MAX], str(value)[:VALUE_MAX])] += 1
+        identity = str(labels.get("user", "")).strip()[:KEY_MAX]
+        if identity:
+            users[identity] = min(users.get(identity, moment), moment)
 
     HourlyStat.objects.filter(issue=issue).delete()
     TagStat.objects.filter(issue=issue).delete()
+    _rebuild_users(issue, users)
     HourlyStat.objects.bulk_create(
         [
             HourlyStat(issue=issue, hour=hour, count=count)
@@ -57,6 +93,24 @@ def rebuild_from(
             for (key, value), count in sorted(_capped(tags).items())
         ]
     )
+
+
+def _rebuild_users(issue: Issue, users: dict[str, datetime]) -> None:
+    cap = max(0, settings.PANDORA_USER_COUNT_CAP)
+    keys = sorted(users)
+    capped = cap > 0 and len(keys) >= cap
+    if capped:
+        keys = keys[:cap]
+    IssueUser.objects.filter(issue=issue).delete()
+    IssueUser.objects.bulk_create(
+        [IssueUser(issue=issue, key=key, first_seen=users[key]) for key in keys]
+    )
+    Issue.objects.filter(pk=issue.pk).update(
+        user_count=len(keys),
+        users_capped=capped,
+    )
+    issue.user_count = len(keys)
+    issue.users_capped = capped
 
 
 def _capped(tags: Counter[tuple[str, str]]) -> dict[tuple[str, str], int]:

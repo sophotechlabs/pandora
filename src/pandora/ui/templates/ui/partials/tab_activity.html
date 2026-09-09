@@ -1,3 +1,17 @@
+{% if can_triage %}
+  <form class="comment-form"
+        method="post"
+        action="{% url 'ui:comment' issue.pk %}">
+    {% csrf_token %}
+    <input type="hidden" name="next" value="{{ next_url }}">
+    <textarea class="comment-input"
+              name="body"
+              rows="3"
+              maxlength="4000"
+              placeholder="Leave a note for whoever picks this up next"></textarea>
+    <button class="btn btn-primary" type="submit">Comment</button>
+  </form>
+{% endif %}
 {% if detail.activities %}
   <ol class="feed">
     {% for entry in detail.activities %}

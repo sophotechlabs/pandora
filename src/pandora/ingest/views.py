@@ -25,7 +25,9 @@ from pandora.ingest.models import ProcessedEvent, RawEnvelope
 from pandora.ingest.queue import get_queue
 from pandora.ingest.translators import envelope as envelope_translator
 from pandora.ingest.translators import logs as log_translator
+from pandora.ingest.translators import security as security_translator
 from pandora.issues.models import Issue, UserReport
+from pandora.perf import service as perf
 from pandora.releases import sessions
 from pandora.scrub import service as scrub
 
@@ -46,6 +48,8 @@ SESSION_ITEMS = ("session", "sessions")
 LOG_LINE_LIMIT = 500
 REPORT_ITEMS = ("user_report", "feedback")
 CLIENT_REPORT_ITEM = "client_report"
+NEL_REPORT_LIMIT = 100
+TRANSACTION_ITEM = "transaction"
 
 
 def _refused(verdict: Verdict) -> JsonResponse:
@@ -88,9 +92,9 @@ def am_webhook(request: HttpRequest) -> JsonResponse:
             status=HTTPStatus.BAD_REQUEST,
         )
 
-    rule = scrub.dropped_by(payload, token.project)
+    rule = scrub.refused(payload, token.project)
     if rule is not None:
-        scrub.record_drop(rule, TokenSource.AM)
+        scrub.record_refusal(rule, TokenSource.AM)
         return JsonResponse({"dropped": rule.name}, status=HTTPStatus.OK)
 
     envelope = RawEnvelope.objects.create(
@@ -181,6 +185,13 @@ def _accept_envelope(
                 continue
             _accept_session(key, item)
             taken += 1
+            continue
+        if item.type == TRANSACTION_ITEM:
+            if not sizes.fits(item.type, len(item.payload)):
+                log.warning("envelope ingest dropped an oversized transaction item")
+                continue
+            _accept_transaction(key, item)
+            taken += 1
     dropped = len(parsed.envelope.items) - taken
     if dropped:
         log.info("envelope ingest acked and dropped %s unhandled items", dropped)
@@ -262,6 +273,31 @@ def _accept_session(key: DsnKey, item: envelope_translator.Item) -> None:
     sessions.accept(key.project, payload, timezone.now())
 
 
+def _accept_transaction(key: DsnKey, item: envelope_translator.Item) -> None:
+    """Fold a transaction into its hour and keep nothing else.
+
+    Sentry stores every span and needs a columnar database for it. What the
+    numbers people alert on need is throughput, failure rate and a percentile,
+    and those survive aggregation — so the item is counted and dropped.
+    """
+    try:
+        payload = json_payload.loads(item.payload)
+    except ValueError:
+        log.warning("envelope ingest dropped a transaction that is not valid JSON")
+        return
+    if not isinstance(payload, dict):
+        log.warning("envelope ingest dropped a transaction that is not a JSON object")
+        return
+    refusal = scrub.refused(payload, key.project)
+    if refusal is not None:
+        scrub.record_refusal(refusal, TokenSource.SDK)
+        return
+    try:
+        perf.record(key.project, payload, timezone.now())
+    except perf.TransactionError:
+        log.warning("envelope ingest dropped an unreadable transaction")
+
+
 def _accept_client_report(key: DsnKey, item: envelope_translator.Item) -> None:
     if not sizes.fits(item.type, len(item.payload)):
         log.warning("envelope ingest dropped an oversized client report")
@@ -313,6 +349,98 @@ def store(request: HttpRequest, project_id: int) -> JsonResponse:
     payload["event_id"] = event_id
     _store_event(key, payload)
     return JsonResponse({"id": event_id}, status=HTTPStatus.OK)
+
+
+@csrf_exempt
+def security(request: HttpRequest, project_id: int) -> JsonResponse:
+    """The endpoint a browser posts a CSP, Expect-CT or HPKP report to.
+
+    No SDK is involved: the browser sends this by itself because a response
+    header told it to, which makes it the cheapest signal in the whole protocol.
+    """
+    if request.method != "POST":
+        return JsonResponse(
+            {"detail": "method not allowed"},
+            status=HTTPStatus.METHOD_NOT_ALLOWED,
+        )
+
+    key = _dsn_key(request, project_id)
+    if key is None:
+        return JsonResponse(
+            {"detail": "unknown or missing DSN key"},
+            status=HTTPStatus.UNAUTHORIZED,
+        )
+
+    body, refusal = _read_body(request, key)
+    if refusal is not None:
+        return refusal
+
+    try:
+        document = json_payload.loads(body)
+        payload = security_translator.translate(document)
+    except ValueError as error:
+        return JsonResponse({"detail": str(error)}, status=HTTPStatus.BAD_REQUEST)
+
+    payload["event_id"] = secrets.token_hex(16)
+    _store_event(key, payload)
+    return JsonResponse({"id": payload["event_id"]}, status=HTTPStatus.CREATED)
+
+
+@csrf_exempt
+def nel(request: HttpRequest, project_id: int) -> JsonResponse:
+    """The endpoint a browser posts Network Error Logging reports to.
+
+    It is the only door that sees the requests that never reached the server,
+    which is exactly the failure nothing else in the stack can observe.
+    """
+    if request.method != "POST":
+        return JsonResponse(
+            {"detail": "method not allowed"},
+            status=HTTPStatus.METHOD_NOT_ALLOWED,
+        )
+
+    key = _dsn_key(request, project_id)
+    if key is None:
+        return JsonResponse(
+            {"detail": "unknown or missing DSN key"},
+            status=HTTPStatus.UNAUTHORIZED,
+        )
+
+    body, refusal = _read_body(request, key)
+    if refusal is not None:
+        return refusal
+
+    try:
+        document = json_payload.loads(body)
+    except ValueError:
+        return JsonResponse(
+            {"detail": "body is not valid JSON"}, status=HTTPStatus.BAD_REQUEST
+        )
+    entries = document
+    if isinstance(document, dict):
+        entries = [document]
+    if not isinstance(entries, list):
+        return JsonResponse(
+            {"detail": "body is not a list of reports"},
+            status=HTTPStatus.BAD_REQUEST,
+        )
+    if len(entries) > NEL_REPORT_LIMIT:
+        return JsonResponse(
+            {"detail": f"at most {NEL_REPORT_LIMIT} reports per request"},
+            status=HTTPStatus.BAD_REQUEST,
+        )
+
+    accepted = 0
+    for entry in entries:
+        try:
+            payload = security_translator.translate_nel(entry)
+        except ValueError:
+            log.warning("nel ingest dropped a report it could not read")
+            continue
+        payload["event_id"] = secrets.token_hex(16)
+        _store_event(key, payload)
+        accepted += 1
+    return JsonResponse({"accepted": accepted}, status=HTTPStatus.CREATED)
 
 
 @csrf_exempt
@@ -398,9 +526,9 @@ def _accept_rows(key: DsnKey, rows: list[dict], source: str) -> int:
 
 
 def _store_event(key: DsnKey, payload: dict, source: str = TokenSource.SDK) -> None:
-    rule = scrub.dropped_by(payload, key.project)
+    rule = scrub.refused(payload, key.project)
     if rule is not None:
-        scrub.record_drop(rule, source)
+        scrub.record_refusal(rule, source)
         return
 
     stored = RawEnvelope.objects.create(
@@ -548,9 +676,9 @@ def _accept_event(
     if not event_id:
         log.warning("envelope ingest dropped attachments for an event without an id")
 
-    rule = scrub.dropped_by(payload, key.project)
+    rule = scrub.refused(payload, key.project)
     if rule is not None:
-        scrub.record_drop(rule, TokenSource.SDK)
+        scrub.record_refusal(rule, TokenSource.SDK)
         return ""
 
     _store_event(key, payload)

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from django.conf import settings
 from django.db import models
 from django.utils import timezone
 
@@ -29,6 +30,12 @@ class TriageState(models.TextChoices):
     IGNORED = "ignored", "Ignored"
 
 
+class Priority(models.TextChoices):
+    HIGH = "high", "High"
+    MEDIUM = "medium", "Medium"
+    LOW = "low", "Low"
+
+
 class ActivityKind(models.TextChoices):
     CREATED = "created", "Created"
     SNOOZED = "snoozed", "Snoozed"
@@ -43,6 +50,11 @@ class ActivityKind(models.TextChoices):
     SILENCED = "silenced", "Silenced"
     UNSILENCED = "unsilenced", "Unsilenced"
     REGROUPED = "regrouped", "Regrouped"
+    ESCALATED = "escalated", "Escalated"
+    AUTO_RESOLVED = "auto_resolved", "Resolved by age"
+    REVIEWED = "reviewed", "Reviewed"
+    REPRIORITISED = "reprioritised", "Priority changed"
+    COMMENTED = "commented", "Commented"
 
 
 class GroupingMode(models.TextChoices):
@@ -79,6 +91,8 @@ class Issue(models.Model):
     first_seen = models.DateTimeField(default=timezone.now)
     last_seen = models.DateTimeField(default=timezone.now)
     event_count = models.PositiveBigIntegerField(default=0)
+    user_count = models.PositiveBigIntegerField(default=0)
+    users_capped = models.BooleanField(default=False)
     open_episode_count = models.PositiveIntegerField(default=0)
     source_state = models.CharField(
         max_length=16,
@@ -91,6 +105,14 @@ class Issue(models.Model):
         choices=TriageState.choices,
         default=TriageState.NEW,
     )
+    priority = models.CharField(
+        max_length=8,
+        choices=Priority.choices,
+        default=Priority.MEDIUM,
+    )
+    priority_locked = models.BooleanField(default=False)
+    needs_review = models.BooleanField(default=True)
+    escalated_at = models.DateTimeField(null=True, blank=True)
     last_resolved_at = models.DateTimeField(null=True, blank=True)
     snoozed_until = models.DateTimeField(null=True, blank=True)
     snoozed_past_count = models.PositiveBigIntegerField(null=True, blank=True)
@@ -128,6 +150,15 @@ class Issue(models.Model):
             models.Index(
                 fields=["snoozed_until"],
                 name="issues_issue_snoozed",
+            ),
+            models.Index(
+                fields=["project", "priority", "-last_seen"],
+                name="issues_issue_priority",
+            ),
+            models.Index(
+                fields=["project", "needs_review"],
+                condition=models.Q(needs_review=True),
+                name="issues_issue_review",
             ),
         ]
         ordering = ("-last_seen",)
@@ -392,6 +423,82 @@ class HourlyStat(models.Model):
 
     def __str__(self) -> str:
         return f"{self.hour:%Y-%m-%dT%H}Z x{self.count}"
+
+
+class SubscriptionReason(models.TextChoices):
+    COMMENTED = "commented", "Commented"
+    ASSIGNED = "assigned", "Assigned"
+    TRIAGED = "triaged", "Acted on it"
+    MANUAL = "manual", "Chose to watch"
+
+
+class Subscription(models.Model):
+    """Who wants to hear about this issue again.
+
+    Sentry subscribes you by inference — you commented, you were assigned, you
+    acted on it — and lets you say otherwise. The inference is what makes it
+    useful, and the row is what makes the inference reversible.
+    """
+
+    issue = models.ForeignKey(
+        Issue,
+        on_delete=models.CASCADE,
+        related_name="subscriptions",
+    )
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="subscriptions",
+    )
+    reason = models.CharField(
+        max_length=16,
+        choices=SubscriptionReason.choices,
+        default=SubscriptionReason.MANUAL,
+    )
+    active = models.BooleanField(default=True)
+    at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["issue", "user"],
+                name="issues_subscription_uq",
+            ),
+        ]
+        ordering = ("user__username",)
+
+    def __str__(self) -> str:
+        return f"{self.user_id} watching {self.issue_id}"
+
+
+class IssueUser(models.Model):
+    """One row per person an issue has reached.
+
+    Counting distinct users needs the identities themselves, and an issue that
+    reaches everybody would otherwise grow a row per request forever. The table
+    stops at a cap and the issue records that it did, so the number stays honest
+    and the disk stays bounded.
+    """
+
+    issue = models.ForeignKey(
+        Issue,
+        on_delete=models.CASCADE,
+        related_name="affected_users",
+    )
+    key = models.CharField(max_length=200)
+    first_seen = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["issue", "key"],
+                name="issues_issue_user_uq",
+            ),
+        ]
+        ordering = ("key",)
+
+    def __str__(self) -> str:
+        return f"{self.key} on issue {self.issue_id}"
 
 
 class TagStat(models.Model):

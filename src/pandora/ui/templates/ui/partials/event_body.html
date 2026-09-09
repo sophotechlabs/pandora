@@ -20,6 +20,12 @@
                 <span class="frame-loc">{{ frame.location }}</span>
                 <span class="frame-file">{{ frame.filename }}{% if frame.lineno %}:{{ frame.lineno }}{% endif %}</span>
                 {% if frame.in_app %}<span class="tag tag-app">app</span>{% endif %}
+                {% if frame.source_url %}
+                  <a class="frame-source"
+                     href="{{ frame.source_url }}"
+                     rel="noopener noreferrer"
+                     target="_blank">Open source</a>
+                {% endif %}
               </summary>
               <div class="frame-body">
                 {% if frame.context %}

@@ -200,6 +200,9 @@ def _links(issue: Issue, now: datetime) -> tuple[Link, ...]:
 
 
 def _activity_note(data: dict) -> str:
+    body = str(data.get("body", "")).strip()
+    if body:
+        return body
     previous = data.get("previous_triage_state", "")
     if previous:
         return f"was {previous}"

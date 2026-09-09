@@ -8,6 +8,8 @@ app_name = "ui"
 urlpatterns = [
     path("", views.stream, name="stream"),
     path("issues/<int:issue_id>/", views.issue_page, name="issue"),
+    path("issues/<int:issue_id>/comment/", views.comment, name="comment"),
+    path("issues/<int:issue_id>/watch/", views.watch, name="watch"),
     path("issues/<int:issue_id>/<str:tab>/", views.issue_page, name="issue-tab"),
     path("issues/actions/", views.issue_actions, name="issue-actions"),
     path(
@@ -28,6 +30,7 @@ urlpatterns = [
     path("views/save/", views.save_view, name="view-save"),
     path("views/<int:view_id>/delete/", views.delete_view, name="view-delete"),
     path("overview/", views.overview, name="overview"),
+    path("performance/", views.performance, name="performance"),
     path("history/", views.history, name="history"),
     path("ingest/", views.ingest, name="ingest"),
     path("ingest/replay/", views.replay_envelopes, name="ingest-replay"),

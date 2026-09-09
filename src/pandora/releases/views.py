@@ -13,13 +13,154 @@ from django.utils.dateparse import parse_datetime
 from django.views.decorators.csrf import csrf_exempt
 
 from pandora.core.models import IngestToken, TokenScope
+from pandora.issues import actions as issue_actions
+from pandora.issues import triage
+from pandora.issues.models import Issue
 from pandora.people import audit
+from pandora.releases import commits as commit_service
 from pandora.releases import service
-from pandora.releases.models import Deploy
+from pandora.releases.models import Deploy, Release
 
 
 class RequestError(ValueError):
     pass
+
+
+@csrf_exempt
+def releases(request: HttpRequest, organization: str) -> JsonResponse:
+    """Create a release the way `sentry-cli releases new` does."""
+    token, refused = _authorize(request, ("POST",))
+    if token is None:
+        return refused
+    try:
+        document = _document(request)
+        version = _required_text(document, "version", 250)
+        _validate_projects(document, token)
+        payload = _commit_payload(document)
+    except RequestError as error:
+        return JsonResponse({"detail": str(error)}, status=HTTPStatus.BAD_REQUEST)
+
+    release = service.ensure_release(token.project, version, "", timezone.now())
+    try:
+        report = _apply_commits(token, release, payload)
+    except commit_service.CommitError as error:
+        return JsonResponse({"detail": str(error)}, status=HTTPStatus.BAD_REQUEST)
+    return JsonResponse(_serialize_release(release, report), status=HTTPStatus.CREATED)
+
+
+@csrf_exempt
+def release_detail(
+    request: HttpRequest,
+    organization: str,
+    version: str,
+) -> JsonResponse:
+    """Attach commits to a release, the way `sentry-cli releases set-commits` does."""
+    token, refused = _authorize(request, ("PUT", "POST"))
+    if token is None:
+        return refused
+    try:
+        document = _document(request)
+        payload = _commit_payload(document)
+    except RequestError as error:
+        return JsonResponse({"detail": str(error)}, status=HTTPStatus.BAD_REQUEST)
+
+    release = service.ensure_release(token.project, version, "", timezone.now())
+    try:
+        report = _apply_commits(token, release, payload)
+    except commit_service.CommitError as error:
+        return JsonResponse({"detail": str(error)}, status=HTTPStatus.BAD_REQUEST)
+    return JsonResponse(_serialize_release(release, report))
+
+
+def _authorize(
+    request: HttpRequest, methods: tuple[str, ...]
+) -> tuple[IngestToken | None, JsonResponse]:
+    token = _token(request)
+    if token is None:
+        response = JsonResponse(
+            {"detail": "unauthorized"}, status=HTTPStatus.UNAUTHORIZED
+        )
+        response["WWW-Authenticate"] = "Bearer"
+        return None, response
+    if not token.has_scope(TokenScope.DEPLOY):
+        return None, JsonResponse(
+            {"detail": "token lacks the deploy capability"},
+            status=HTTPStatus.FORBIDDEN,
+        )
+    if request.method not in methods:
+        response = JsonResponse(
+            {"detail": "method not allowed"},
+            status=HTTPStatus.METHOD_NOT_ALLOWED,
+        )
+        response["Allow"] = ", ".join(methods)
+        return None, response
+    return token, JsonResponse({})
+
+
+def _commit_payload(document: dict[str, Any]) -> list[Any]:
+    raw = document.get("commits")
+    if raw is None:
+        return []
+    if not isinstance(raw, list):
+        raise RequestError("commits must be a list")
+    return raw
+
+
+def _apply_commits(
+    token: IngestToken,
+    release: Release,
+    payload: list[Any],
+) -> commit_service.Report:
+    if not payload:
+        return commit_service.Report()
+    report = commit_service.set_commits(token.project, release, payload)
+    report.resolved = _resolve_from_messages(token, release, payload)
+    audit.record(
+        "",
+        audit.DEPLOY,
+        str(release),
+        {"commits": report.commits, "resolved": report.resolved},
+        project_ids=[token.project_id],
+    )
+    return report
+
+
+def _resolve_from_messages(
+    token: IngestToken,
+    release: Release,
+    payload: list[Any],
+) -> list[int]:
+    wanted: list[int] = []
+    for entry in payload:
+        if not isinstance(entry, dict):
+            continue
+        wanted.extend(commit_service.issue_ids_fixed(entry.get("message", "")))
+    if not wanted:
+        return []
+    at = timezone.now()
+    resolved = []
+    rows = Issue.objects.filter(
+        project=token.project,
+        pk__in=set(wanted),
+        triage_state__in=triage.OPEN_STATES,
+    )
+    for issue in rows:
+        service.resolve_in(issue, release=release, actor="", at=at)
+        issue_actions.apply_triage(issue, triage.RESOLVED, "", at)
+        resolved.append(issue.pk)
+    return sorted(resolved)
+
+
+def _serialize_release(
+    release: Release, report: commit_service.Report
+) -> dict[str, Any]:
+    return {
+        "version": release.version,
+        "dateCreated": _isoformat(release.first_seen),
+        "commitCount": report.commits,
+        "repositories": report.repositories,
+        "resolvedIssues": report.resolved,
+    }
 
 
 @csrf_exempt
@@ -28,25 +169,9 @@ def create_deploy(
     organization: str,
     version: str,
 ) -> JsonResponse:
-    token = _token(request)
+    token, refused = _authorize(request, ("POST",))
     if token is None:
-        response = JsonResponse(
-            {"detail": "unauthorized"}, status=HTTPStatus.UNAUTHORIZED
-        )
-        response["WWW-Authenticate"] = "Bearer"
-        return response
-    if not token.has_scope(TokenScope.DEPLOY):
-        return JsonResponse(
-            {"detail": "token lacks the deploy capability"},
-            status=HTTPStatus.FORBIDDEN,
-        )
-    if request.method != "POST":
-        response = JsonResponse(
-            {"detail": "method not allowed"},
-            status=HTTPStatus.METHOD_NOT_ALLOWED,
-        )
-        response["Allow"] = "POST"
-        return response
+        return refused
     try:
         document = _document(request)
         environment = _required_text(document, "environment", 100)

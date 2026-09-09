@@ -193,3 +193,172 @@ class Resolution(models.Model):
         if self.in_next:
             return f"{self.issue_id} resolved in the next release"
         return f"{self.issue_id} resolved in {self.release_id}"
+
+
+class RepositoryProvider(models.TextChoices):
+    GITHUB = "github", "GitHub"
+    GITLAB = "gitlab", "GitLab"
+    BITBUCKET = "bitbucket", "Bitbucket"
+    GIT = "git", "Plain git"
+
+
+class FileChange(models.TextChoices):
+    ADDED = "A", "Added"
+    MODIFIED = "M", "Modified"
+    DELETED = "D", "Deleted"
+
+
+class Repository(models.Model):
+    """A source repository named by whatever pushed the commits.
+
+    Pandora never talks to the forge. The repository row exists so a commit can
+    be attributed and a frame can be linked, both of which are string work; the
+    data arrives from CI, the way sentry-cli sends it.
+    """
+
+    project = models.ForeignKey(
+        Project,
+        on_delete=models.CASCADE,
+        related_name="repositories",
+    )
+    name = models.CharField(max_length=200)
+    provider = models.CharField(
+        max_length=16,
+        choices=RepositoryProvider.choices,
+        default=RepositoryProvider.GIT,
+    )
+    url = models.CharField(max_length=500, blank=True, default="")
+    active = models.BooleanField(default=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["project", "name"],
+                name="releases_repository_uq",
+            ),
+        ]
+        ordering = ("name",)
+
+    def __str__(self) -> str:
+        return self.name
+
+
+class Commit(models.Model):
+    repository = models.ForeignKey(
+        Repository,
+        on_delete=models.CASCADE,
+        related_name="commits",
+    )
+    key = models.CharField(max_length=64)
+    message = models.TextField(blank=True, default="")
+    author_name = models.CharField(max_length=200, blank=True, default="")
+    author_email = models.CharField(max_length=254, blank=True, default="")
+    committed_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["repository", "key"],
+                name="releases_commit_uq",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["-committed_at"], name="releases_commit_when"),
+        ]
+        ordering = ("-committed_at", "-pk")
+
+    def __str__(self) -> str:
+        return f"{self.key[:12]} {self.summary}"
+
+    @property
+    def summary(self) -> str:
+        return self.message.strip().splitlines()[0] if self.message.strip() else ""
+
+
+class CommitFile(models.Model):
+    commit = models.ForeignKey(
+        Commit,
+        on_delete=models.CASCADE,
+        related_name="files",
+    )
+    path = models.CharField(max_length=500)
+    change = models.CharField(
+        max_length=1,
+        choices=FileChange.choices,
+        default=FileChange.MODIFIED,
+    )
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["commit", "path"],
+                name="releases_commit_file_uq",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["path"], name="releases_commit_path"),
+        ]
+        ordering = ("path",)
+
+    def __str__(self) -> str:
+        return f"{self.change} {self.path}"
+
+
+class ReleaseCommit(models.Model):
+    release = models.ForeignKey(
+        Release,
+        on_delete=models.CASCADE,
+        related_name="release_commits",
+    )
+    commit = models.ForeignKey(
+        Commit,
+        on_delete=models.CASCADE,
+        related_name="release_commits",
+    )
+    order = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["release", "commit"],
+                name="releases_release_commit_uq",
+            ),
+        ]
+        ordering = ("order", "pk")
+
+    def __str__(self) -> str:
+        return f"{self.commit_id} in {self.release_id}"
+
+
+class CodeMapping(models.Model):
+    """How a stack-trace path becomes a path inside a repository.
+
+    Sentry derives these by reading the repository; with no forge access the
+    operator states the two prefixes once and every frame after that resolves
+    without a network call.
+    """
+
+    project = models.ForeignKey(
+        Project,
+        on_delete=models.CASCADE,
+        related_name="code_mappings",
+    )
+    repository = models.ForeignKey(
+        Repository,
+        on_delete=models.CASCADE,
+        related_name="code_mappings",
+    )
+    stack_root = models.CharField(max_length=200, blank=True, default="")
+    source_root = models.CharField(max_length=200, blank=True, default="")
+    default_branch = models.CharField(max_length=100, default="main")
+    ordering = models.IntegerField(default=100)
+    active = models.BooleanField(default=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["active", "ordering"], name="releases_mapping_order"),
+        ]
+        ordering = ("ordering", "pk")
+
+    def __str__(self) -> str:
+        return f"{self.stack_root or '*'} -> {self.repository.name}/{self.source_root}"

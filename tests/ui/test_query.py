@@ -42,7 +42,7 @@ def test_a_known_key_becomes_a_term():
     parsed = query.parse("level:error")
 
     result = parsed.terms
-    expected = (("level", "error"),)
+    expected = (query.Term("level", "error"),)
 
     assert result == expected
 
@@ -52,7 +52,7 @@ def test_terms_and_free_text_can_be_mixed():
     parsed = query.parse("is:unresolved payments ledger")
 
     result = (parsed.terms, parsed.text)
-    expected = ((("is", "unresolved"),), "payments ledger")
+    expected = ((query.Term("is", "unresolved"),), "payments ledger")
 
     assert result == expected
 
@@ -72,7 +72,7 @@ def test_an_unbalanced_quote_falls_back_to_plain_splitting():
     parsed = query.parse('level:error "half typed')
 
     result = parsed.terms
-    expected = (("level", "error"),)
+    expected = (query.Term("level", "error"),)
 
     assert result == expected
 
@@ -82,7 +82,7 @@ def test_env_is_an_alias_for_environment():
     parsed = query.parse("env:p-mk1")
 
     result = parsed.terms
-    expected = (("environment", "p-mk1"),)
+    expected = (query.Term("environment", "p-mk1"),)
 
     assert result == expected
 
@@ -440,5 +440,285 @@ def test_an_issue_is_listed_once_however_many_places_it_fires(make_issue):
 
     result = titles("environment:p-mk1 environment:p-mk2")
     expected = ["Both"]
+
+    assert result == expected
+
+
+# priority and review
+
+
+def test_a_priority_filter_matches_one_rank(make_issue):
+    """Should let a reader see only what the ranking put at the top."""
+    make_issue(title="Loud", priority=models.Priority.HIGH)
+    make_issue(title="Quiet", priority=models.Priority.LOW)
+
+    result = titles("priority:high")
+    expected = ["Loud"]
+
+    assert result == expected
+
+
+def test_a_priority_filter_can_ask_for_a_rank_and_above(make_issue):
+    """Should answer 'anything that matters' in one term."""
+    make_issue(title="Loud", priority=models.Priority.HIGH)
+    make_issue(title="Middling", priority=models.Priority.MEDIUM)
+    make_issue(title="Quiet", priority=models.Priority.LOW)
+
+    result = titles("priority:>=medium")
+    expected = ["Loud", "Middling"]
+
+    assert result == expected
+
+
+def test_an_unknown_priority_is_named_back(make_issue):
+    """Should tell the reader the term was dropped rather than empty the list."""
+    make_issue(title="Loud", priority=models.Priority.HIGH)
+
+    _, rejected = run("priority:urgent")
+
+    assert rejected == ["priority:urgent"]
+
+
+def test_for_review_lists_what_nobody_has_looked_at(make_issue):
+    """Should be the queue Sentry calls For Review."""
+    make_issue(title="Fresh", needs_review=True)
+    make_issue(title="Seen", needs_review=False)
+
+    result = titles("is:for_review")
+    expected = ["Fresh"]
+
+    assert result == expected
+
+
+def test_reviewed_lists_the_rest(make_issue):
+    """Should let a reader ask the opposite question."""
+    make_issue(title="Fresh", needs_review=True)
+    make_issue(title="Seen", needs_review=False)
+
+    result = titles("is:reviewed")
+    expected = ["Seen"]
+
+    assert result == expected
+
+
+def test_assigned_is_another_word_for_owner(make_issue):
+    """Should accept the word Sentry uses for the same filter."""
+    assert query.parse("assigned:me").terms == (query.Term("owner", "me"),)
+
+
+# negation, wildcards and comparisons
+
+
+def test_a_negated_term_removes_what_it_matches(make_issue):
+    """Should be the fastest way to hide one noisy value from the stream."""
+    make_issue(title="Loud", level=models.Level.ERROR)
+    make_issue(title="Quiet", level=models.Level.WARNING)
+
+    result = titles("!level:error")
+    expected = ["Quiet"]
+
+    assert result == expected
+
+
+def test_a_negated_term_is_parsed_as_one(make_issue):
+    """Should keep the negation on the term rather than in the free text."""
+    assert query.parse("!level:error").terms == (
+        query.Term("level", "error", negated=True),
+    )
+
+
+def test_negated_free_text_removes_matching_titles(make_issue):
+    """Should let a reader drop a whole family of titles in one word."""
+    make_issue(title="Checkout failed")
+    make_issue(title="Login failed")
+
+    result = titles("!Checkout")
+    expected = ["Login failed"]
+
+    assert result == expected
+
+
+def test_a_leading_wildcard_matches_the_end(make_issue):
+    """Should match the way Sentry's glob does, not as a regular expression."""
+    make_issue(title="payments-api down")
+    make_issue(title="ledger-api up")
+
+    result = titles("project:*")
+    expected = ["ledger-api up", "payments-api down"]
+
+    assert result == expected
+
+
+def test_a_wildcard_matches_inside_a_tag_value(make_issue):
+    """Should let one term cover every pod in a deployment."""
+    issue = make_issue(title="Crash")
+    models.TagStat.objects.create(issue=issue, key="pod", value="api-7d9f-abc", count=1)
+    other = make_issue(title="Other")
+    models.TagStat.objects.create(issue=other, key="pod", value="worker-1", count=1)
+
+    result = titles("tag:pod=api-*")
+    expected = ["Crash"]
+
+    assert result == expected
+
+
+def test_a_wildcard_in_the_middle_still_matches(make_issue):
+    """Should handle a pattern with text on both sides of the star."""
+    make_issue(title="payments checkout failure")
+    make_issue(title="ledger import failure")
+
+    result = titles("payments*failure")
+    expected = ["payments checkout failure"]
+
+    assert result == expected
+
+
+def test_a_value_with_regex_characters_is_matched_literally(make_issue):
+    """Should not read a title as a pattern just because it has punctuation."""
+    make_issue(title="C++ compiler crashed")
+    make_issue(title="C compiler crashed")
+
+    result = titles("C++*")
+    expected = ["C++ compiler crashed"]
+
+    assert result == expected
+
+
+def test_an_events_comparison_filters_on_the_count(make_issue):
+    """Should answer 'show me what actually happens a lot'."""
+    make_issue(title="Loud", event_count=500)
+    make_issue(title="Quiet", event_count=2)
+
+    result = titles("events:>100")
+    expected = ["Loud"]
+
+    assert result == expected
+
+
+def test_a_users_comparison_filters_on_reach(make_issue):
+    """Should be the filter an alert on people affected is built from."""
+    make_issue(title="Everyone", user_count=400)
+    make_issue(title="One", user_count=1)
+
+    result = titles("users:>=100")
+    expected = ["Everyone"]
+
+    assert result == expected
+
+
+def test_count_is_an_alias_for_events(make_issue):
+    """Should accept the word Sentry's own syntax uses."""
+    make_issue(title="Loud", event_count=500)
+    make_issue(title="Quiet", event_count=2)
+
+    result = titles("count:>100")
+    expected = ["Loud"]
+
+    assert result == expected
+
+
+def test_a_bare_number_means_exactly_that_many(make_issue):
+    """Should not silently turn an equality into a threshold."""
+    make_issue(title="Three", event_count=3)
+    make_issue(title="Four", event_count=4)
+
+    result = titles("events:3")
+    expected = ["Three"]
+
+    assert result == expected
+
+
+def test_an_unusable_comparison_is_named_back(make_issue):
+    """Should tell the reader the term was dropped."""
+    make_issue(title="Three", event_count=3)
+
+    _, rejected = run("events:>lots")
+
+    assert rejected == ["events:>lots"]
+
+
+def test_an_array_value_matches_any_member(make_issue):
+    """Should be one term where a reader would otherwise repeat the key."""
+    make_issue(title="Error", level=models.Level.ERROR)
+    make_issue(title="Fatal", level=models.Level.FATAL)
+    make_issue(title="Info", level=models.Level.INFO)
+
+    result = titles("level:[error,fatal]")
+    expected = ["Error", "Fatal"]
+
+    assert result == expected
+
+
+def test_has_finds_issues_carrying_a_tag_key(make_issue):
+    """Should answer 'which of these even record a release'."""
+    issue = make_issue(title="Tagged")
+    models.TagStat.objects.create(issue=issue, key="release", value="1.2.3", count=1)
+    make_issue(title="Bare")
+
+    result = titles("has:release")
+    expected = ["Tagged"]
+
+    assert result == expected
+
+
+def test_negated_has_finds_the_rest(make_issue):
+    """Should be how a reader finds the events that lost their release tag."""
+    issue = make_issue(title="Tagged")
+    models.TagStat.objects.create(issue=issue, key="release", value="1.2.3", count=1)
+    make_issue(title="Bare")
+
+    result = titles("!has:release")
+    expected = ["Bare"]
+
+    assert result == expected
+
+
+def test_has_owner_finds_assigned_issues(make_issue, django_user_model):
+    """Should not need a tag for the one relation people ask about most."""
+    from pandora.people import models as people_models
+
+    user = django_user_model.objects.create_user(username="dev")
+    issue = make_issue(title="Owned")
+    people_models.Assignment.objects.create(issue=issue, user=user)
+    make_issue(title="Nobody's")
+
+    result = titles("has:owner")
+    expected = ["Owned"]
+
+    assert result == expected
+
+
+def test_a_tag_shortcut_reads_like_sentrys(make_issue):
+    """Should let release:1.2.3 work without the tag: prefix."""
+    issue = make_issue(title="Old build")
+    models.TagStat.objects.create(issue=issue, key="release", value="1.2.3", count=1)
+    make_issue(title="Untagged")
+
+    result = titles("release:1.2.3")
+    expected = ["Old build"]
+
+    assert result == expected
+
+
+def test_the_bracket_tag_syntax_is_accepted(make_issue):
+    """Should accept the explicit form Sentry documents for ambiguous keys."""
+    issue = make_issue(title="Crash")
+    models.TagStat.objects.create(issue=issue, key="pod", value="api-1", count=1)
+    make_issue(title="Other")
+
+    result = titles("tags[pod]:api-1")
+    expected = ["Crash"]
+
+    assert result == expected
+
+
+def test_an_issue_matching_two_tag_terms_is_listed_once(make_issue):
+    """Should not multiply rows by the joins the filters needed."""
+    issue = make_issue(title="Crash")
+    models.TagStat.objects.create(issue=issue, key="pod", value="api-1", count=1)
+    models.TagStat.objects.create(issue=issue, key="release", value="1.2.3", count=1)
+
+    result = titles("tag:pod=api-1 release:1.2.3")
+    expected = ["Crash"]
 
     assert result == expected

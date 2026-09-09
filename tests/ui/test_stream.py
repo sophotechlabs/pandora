@@ -118,6 +118,7 @@ def test_the_segments_count_every_triage_state(operator_client, make_issue):
     result = {segment.key: segment.count for segment in response.context["segments"]}
     expected = {
         "unresolved": 2,
+        "for_review": 4,
         "new": 1,
         "acknowledged": 1,
         "resolved": 1,
@@ -214,6 +215,40 @@ def test_the_stream_can_sort_by_event_count(operator_client, make_issue):
     assert result == expected
 
 
+def test_the_stream_can_sort_by_people_affected(operator_client, make_issue):
+    """Should let a reader find the fault that reached the most people."""
+    now = timezone.now()
+    make_issue(
+        title="Everyone", user_count=400, last_seen=now - datetime.timedelta(days=1)
+    )
+    make_issue(title="One person", user_count=1, last_seen=now)
+
+    response = operator_client.get("/", {"sort": "users"})
+
+    result = [row.issue.title for row in rows(response)]
+    expected = ["Everyone", "One person"]
+
+    assert result == expected
+
+
+def test_a_row_shows_how_many_people_an_issue_reached(operator_client, make_issue):
+    """Should put the number beside the event count, where Sentry puts it."""
+    make_issue(title="Checkout", user_count=12)
+
+    response = operator_client.get("/")
+
+    assert rows(response)[0].users == "12"
+
+
+def test_a_capped_count_is_shown_with_a_plus(operator_client, make_issue):
+    """Should say the number stopped being exact rather than imply it did not."""
+    make_issue(title="Checkout", user_count=10000, users_capped=True)
+
+    response = operator_client.get("/")
+
+    assert rows(response)[0].users == "10000+"
+
+
 def test_the_stream_can_sort_by_first_seen(operator_client, make_issue):
     """Should answer what appeared most recently rather than what fired."""
     now = timezone.now()
@@ -302,7 +337,8 @@ def test_an_empty_stream_explains_the_grammar(operator_client):
     page = body(operator_client)
 
     assert "No issue matches this search" in page
-    assert "is, state, level, project, environment, tag, label, seen, age" in page
+    assert "is, priority, state, level, project, environment, tag, label" in page
+    assert "A leading ! inverts one; a * is a wildcard" in page
 
 
 def test_the_partial_returns_only_the_rows(operator_client, make_issue):

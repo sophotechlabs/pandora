@@ -70,7 +70,7 @@ def payload_for(
             "environment": issue.environment,
             "event_count": issue.event_count,
             "triage_state": issue.triage_state,
-            "url": _issue_url(issue),
+            "url": issue_url(issue),
         },
     }
     if extra:
@@ -78,7 +78,7 @@ def payload_for(
     return body
 
 
-def _issue_url(issue: Issue) -> str:
+def issue_url(issue: Issue) -> str:
     base = settings.PANDORA_BASE_URL.rstrip("/")
     if not base:
         return f"/issues/{issue.pk}/"

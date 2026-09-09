@@ -89,6 +89,7 @@ INSTALLED_APPS = [
     "pandora.releases",
     "pandora.artifacts",
     "pandora.attachments",
+    "pandora.perf",
 ]
 
 if importlib.util.find_spec("django_migration_linter"):
@@ -203,6 +204,11 @@ LOGIN_REDIRECT_URL = "/"
 PANDORA_ENV = os.environ.get("PANDORA_ENV", "")
 PANDORA_BASE_URL = os.environ.get("PANDORA_BASE_URL", "")
 PANDORA_RETENTION_DAYS = _int("PANDORA_RETENTION_DAYS", 30)
+PANDORA_USER_COUNT_CAP = _int("PANDORA_USER_COUNT_CAP", 10_000)
+PANDORA_PRIORITY_USER_THRESHOLD = _int("PANDORA_PRIORITY_USER_THRESHOLD", 100)
+PANDORA_ESCALATION_FACTOR = _int("PANDORA_ESCALATION_FACTOR", 5)
+PANDORA_ESCALATION_FLOOR = _int("PANDORA_ESCALATION_FLOOR", 10)
+PANDORA_AUTO_RESOLVE_DAYS = _int("PANDORA_AUTO_RESOLVE_DAYS", 0)
 PANDORA_ENVELOPE_RETENTION_DAYS = _int("PANDORA_ENVELOPE_RETENTION_DAYS", 7)
 PANDORA_INGEST_MAX_BYTES = _int("PANDORA_INGEST_MAX_BYTES", 1024 * 1024)
 PANDORA_INGEST_COMPRESSED_MAX_BYTES = min(
@@ -266,6 +272,14 @@ PANDORA_ISSUE_HOOKS = os.environ.get(
 PANDORA_WAKE_HOOKS = os.environ.get(
     "PANDORA_WAKE_HOOKS",
     "pandora.notify.hooks.on_wake",
+)
+PANDORA_ESCALATION_HOOKS = os.environ.get(
+    "PANDORA_ESCALATION_HOOKS",
+    "pandora.notify.hooks.on_escalate",
+)
+PANDORA_COMMENT_HOOKS = os.environ.get(
+    "PANDORA_COMMENT_HOOKS",
+    "pandora.notify.hooks.on_comment",
 )
 PANDORA_RESOLVE_HOOKS = os.environ.get(
     "PANDORA_RESOLVE_HOOKS",

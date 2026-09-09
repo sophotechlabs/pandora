@@ -19,6 +19,9 @@ from pandora.core.models import (
 from pandora.issues.models import GroupingRule, PathRule
 from pandora.people import ownership
 from pandora.people.models import Membership, OwnershipRule, Role, Team
+from pandora.releases.models import CodeMapping, Repository, RepositoryProvider
+from pandora.scrub import inbound
+from pandora.scrub.models import InboundFilter
 
 SECTIONS = (
     "projects",
@@ -29,6 +32,9 @@ SECTIONS = (
     "service_links",
     "teams",
     "ownership_rules",
+    "repositories",
+    "code_mappings",
+    "inbound_filters",
 )
 
 
@@ -109,6 +115,9 @@ def apply(document: Mapping[str, Any]) -> Report:
     _apply_service_links(document, projects, report)
     _apply_teams(document, projects, report)
     _apply_ownership_rules(document, projects, report)
+    _apply_repositories(document, projects, report)
+    _apply_code_mappings(document, projects, report)
+    _apply_inbound_filters(document, projects, report)
     return report
 
 
@@ -312,6 +321,99 @@ def _apply_service_links(
         declared.append(link.pk)
         _record(report, created, changed, f"service link {link.name}")
     _deactivate(ServiceLink.objects.exclude(pk__in=declared), report, "service link")
+
+
+def _apply_inbound_filters(
+    document: Mapping[str, Any], projects: Mapping[str, Project], report: Report
+) -> None:
+    declared = []
+    for row in _rows(document, "inbound_filters"):
+        _required(row, "inbound_filters", "kind")
+        kind = str(row["kind"])
+        if kind not in inbound.KINDS:
+            raise ConfigError(f"inbound_filters entry has unknown kind {kind!r}")
+        project = None
+        if row.get("project"):
+            project = _project(projects, row["project"], "inbound_filters")
+        options = row.get("options") or {}
+        if not isinstance(options, Mapping):
+            raise ConfigError("inbound_filters options must be a mapping")
+        found, created = InboundFilter.objects.get_or_create(
+            project=project,
+            kind=kind,
+            defaults={"options": dict(options)},
+        )
+        changed = _write(found, {"options": dict(options), "active": True})
+        declared.append(found.pk)
+        _record(report, created, changed, f"inbound filter {kind}")
+    _deactivate(
+        InboundFilter.objects.exclude(pk__in=declared), report, "inbound filter"
+    )
+
+
+def _apply_repositories(
+    document: Mapping[str, Any], projects: Mapping[str, Project], report: Report
+) -> None:
+    declared = []
+    for row in _rows(document, "repositories"):
+        _required(row, "repositories", "name", "project")
+        project = _project(projects, row["project"], "repositories")
+        provider = str(row.get("provider", RepositoryProvider.GIT))
+        if provider not in RepositoryProvider.values:
+            raise ConfigError(f"repositories entry has unknown provider {provider!r}")
+        repository, created = Repository.objects.get_or_create(
+            project=project,
+            name=str(row["name"]),
+            defaults={"provider": provider},
+        )
+        changed = _write(
+            repository,
+            {
+                "provider": provider,
+                "url": str(row.get("url", "")),
+                "active": True,
+            },
+        )
+        declared.append(repository.pk)
+        _record(report, created, changed, f"repository {repository.name}")
+    _deactivate(Repository.objects.exclude(pk__in=declared), report, "repository")
+
+
+def _apply_code_mappings(
+    document: Mapping[str, Any], projects: Mapping[str, Project], report: Report
+) -> None:
+    declared = []
+    for row in _rows(document, "code_mappings"):
+        _required(row, "code_mappings", "project", "repository")
+        project = _project(projects, row["project"], "code_mappings")
+        repository = Repository.objects.filter(
+            project=project, name=str(row["repository"])
+        ).first()
+        if repository is None:
+            raise ConfigError(
+                f"code_mappings entry names unknown repository {row['repository']!r}"
+            )
+        stack_root = str(row.get("stack_root", ""))
+        mapping, created = CodeMapping.objects.get_or_create(
+            project=project,
+            repository=repository,
+            stack_root=stack_root,
+            defaults={"source_root": str(row.get("source_root", ""))},
+        )
+        changed = _write(
+            mapping,
+            {
+                "source_root": str(row.get("source_root", "")),
+                "default_branch": str(row.get("default_branch", "main")),
+                "ordering": int(row.get("ordering", 100)),
+                "active": True,
+            },
+        )
+        declared.append(mapping.pk)
+        _record(
+            report, created, changed, f"code mapping {repository.name}:{stack_root}"
+        )
+    _deactivate(CodeMapping.objects.exclude(pk__in=declared), report, "code mapping")
 
 
 def _account(username: str) -> Any:

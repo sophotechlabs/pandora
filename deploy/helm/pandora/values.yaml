@@ -100,6 +100,15 @@ cronJobs:
   rollouts:
     enabled: true
     schedule: "*/15 * * * *"
+  triage:
+    enabled: true
+    schedule: "7 * * * *"
+  alerts:
+    enabled: true
+    schedule: "*/5 * * * *"
+  report:
+    enabled: false
+    schedule: "0 9 * * 1"
 
 ingress:
   enabled: false

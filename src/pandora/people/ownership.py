@@ -2,13 +2,18 @@ from __future__ import annotations
 
 import fnmatch
 from collections.abc import Iterable
+from typing import Any
 
+from django.contrib.auth import get_user_model
 from django.db import models
+from django.utils import timezone
 
 from pandora.events.types import Event
+from pandora.issues import comments as comment_service
 from pandora.issues.lifecycle import Occurrence
-from pandora.issues.models import Issue
+from pandora.issues.models import Issue, SubscriptionReason
 from pandora.people.models import Assignment, OwnershipRule
+from pandora.releases import commits as commit_service
 
 PATH = "path"
 URL = "url"
@@ -59,13 +64,55 @@ def matching(issue: Issue, event: Event | Occurrence | None) -> list[OwnershipRu
 
 def assign(issue: Issue, event: Event | Occurrence | None) -> Assignment | None:
     matched = matching(issue, event)
-    if len(matched) != 1:
+    if len(matched) == 1:
+        rule = matched[0]
+        assignment, _ = Assignment.objects.update_or_create(
+            issue=issue,
+            defaults={"team": rule.team, "user": rule.user, "rule": rule},
+        )
+        _watch(issue, rule.user)
+        return assignment
+    return assign_from_commit(issue, event)
+
+
+def _watch(issue: Issue, user: Any) -> None:
+    if user is None:
+        return
+    comment_service.subscribe(issue, user, SubscriptionReason.ASSIGNED, timezone.now())
+
+
+def author_of(issue: Issue, event: Event | Occurrence | None) -> Any:
+    """The person whose commit last touched the code in the stack trace.
+
+    A weaker signal than an ownership rule, so it only runs when no rule
+    matched, and it stays silent unless the address maps to an account that
+    already exists.
+    """
+    if event is None:
         return None
-    rule = matched[0]
+    frames = commit_service.frames_from(event.payload or {})
+    if not frames:
+        return None
+    found = commit_service.suspects(issue.project, frames, issue.first_seen, limit=1)
+    if not found:
+        return None
+    email = found[0].commit.author_email.strip()
+    if not email:
+        return None
+    return get_user_model().objects.filter(email__iexact=email, is_active=True).first()
+
+
+def assign_from_commit(
+    issue: Issue, event: Event | Occurrence | None
+) -> Assignment | None:
+    user = author_of(issue, event)
+    if user is None:
+        return None
     assignment, _ = Assignment.objects.update_or_create(
         issue=issue,
-        defaults={"team": rule.team, "user": rule.user, "rule": rule},
+        defaults={"team": None, "user": user, "rule": None},
     )
+    _watch(issue, user)
     return assignment
 
 

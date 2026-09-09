@@ -10,7 +10,7 @@ import requests
 from django.conf import settings
 from django.core.mail import send_mail
 
-from pandora.notify.models import Delivery, Destination, DestinationKind
+from pandora.notify.models import REPORT, Delivery, Destination, DestinationKind
 
 TIMEOUT = 10
 SIGNATURE_HEADER = "X-Pandora-Signature"
@@ -65,6 +65,10 @@ def send_webhook(destination: Destination, deliveries: list[Delivery]) -> None:
 def _lines(deliveries: list[Delivery]) -> list[str]:
     lines = []
     for delivery in deliveries:
+        report = _report_line(delivery)
+        if report:
+            lines.append(report)
+            continue
         issue = delivery.payload.get("issue", {})
         lines.append(
             f"[{delivery.event}] {issue.get('title', '')} "
@@ -72,6 +76,19 @@ def _lines(deliveries: list[Delivery]) -> list[str]:
             f"{issue.get('url', '')}"
         )
     return lines
+
+
+def _report_line(delivery: Delivery) -> str:
+    payload = delivery.payload or {}
+    if payload.get("event") != REPORT:
+        return ""
+    return (
+        f"[{delivery.event}] {payload.get('project', '')}:"
+        f" {payload.get('events', 0)} events,"
+        f" {payload.get('new_issues', 0)} new,"
+        f" {payload.get('resolved_issues', 0)} resolved"
+        f" over the last {payload.get('period', '')}"
+    )
 
 
 def send_chat(destination: Destination, deliveries: list[Delivery]) -> None:
@@ -82,10 +99,22 @@ def send_chat(destination: Destination, deliveries: list[Delivery]) -> None:
     _post(destination, {field: text}, "chat")
 
 
+def _subscribers(deliveries: list[Delivery]) -> list[str]:
+    found: set[str] = set()
+    for delivery in deliveries:
+        for address in delivery.payload.get("subscribers", []) or []:
+            if isinstance(address, str) and address.strip():
+                found.add(address.strip())
+    return sorted(found)
+
+
 def send_email(destination: Destination, deliveries: list[Delivery]) -> None:
     recipients = [
         part.strip() for part in destination.target.split(",") if part.strip()
     ]
+    for address in _subscribers(deliveries):
+        if address not in recipients:
+            recipients.append(address)
     if not recipients:
         raise SendError(f"{destination.name} has no recipients")
     lines = _lines(deliveries)

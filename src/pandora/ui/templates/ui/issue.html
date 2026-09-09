@@ -8,12 +8,24 @@
             title="{{ row.state_label }}"></span>
       <h1>{{ issue.title }}</h1>
       <span class="chip chip-{{ issue.level }}">{{ issue.get_level_display }}</span>
+      <span class="chip chip-priority-{{ issue.priority }}" title="Priority">{{ issue.get_priority_display }}</span>
       <span class="pill pill-{{ issue.triage_state }}">{{ issue.get_triage_state_display }}</span>
     </div>
     <p class="culprit">{{ issue.culprit }}</p>
     <p class="issue-export">
       <a class="btn btn-ghost" href="?format=md">Copy as Markdown</a>
     </p>
+    <form class="issue-watch"
+          method="post"
+          action="{% url 'ui:watch' issue.pk %}">
+      {% csrf_token %}
+      <input type="hidden" name="next" value="{{ next_url }}">
+      {% if watching %}
+        <button class="btn btn-ghost" type="submit" name="action" value="unwatch">Stop watching</button>
+      {% else %}
+        <button class="btn btn-ghost" type="submit" name="action" value="watch">Watch</button>
+      {% endif %}
+    </form>
     <div class="issue-meta">
       <span class="project">{{ issue.project.slug }}</span>
       {% for row in issue.environments.all %}
@@ -225,6 +237,29 @@
             <span class="muted">— the last deploy before this issue was first seen</span>
           </p>
           <p class="muted">{{ suspect.started_at|date:"Y-m-d H:i:s e" }} · {{ suspect.get_state_display }}</p>
+        </section>
+      {% endif %}
+      {% if suspect_commits %}
+        <section class="card">
+          <h2 class="card-title">Suspect commits</h2>
+          <p class="muted">
+            The last commit to touch each file in the stack trace, from the releases CI
+            reported. Nearest the fault first.
+          </p>
+          {% for suspect in suspect_commits %}
+            <div class="suspect-commit">
+              <span>
+                <code>{{ suspect.commit.key|slice:":12" }}</code>
+                {{ suspect.commit.summary|truncatechars:90 }}
+              </span>
+              <span class="muted">
+                {{ suspect.commit.author_name|default:"unknown author" }}
+                {% if suspect.commit.author_email %}&lt;{{ suspect.commit.author_email }}&gt;{% endif %}
+                · {{ suspect.path }}
+                · {{ suspect.commit.committed_at|date:"Y-m-d H:i" }}
+              </span>
+            </div>
+          {% endfor %}
         </section>
       {% endif %}
       {% if aliases %}

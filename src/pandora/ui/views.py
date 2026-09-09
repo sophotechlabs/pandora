@@ -43,20 +43,26 @@ from pandora.issues import (
     grouping,
     merge,
     ranking,
+    similar,
     sparkline,
     suggest,
     triage,
 )
+from pandora.issues import comments as comment_service
 from pandora.issues import detail as detail_module
 from pandora.issues.models import (
     HourlyStat,
     Issue,
+    Priority,
     SavedView,
     SourceState,
+    SubscriptionReason,
     TriageState,
 )
 from pandora.people import access, audit, oidc, ownership
 from pandora.people.models import AuditEntry
+from pandora.perf import service as perf
+from pandora.releases import commits as commit_service
 from pandora.releases import service as releases
 from pandora.releases.models import Release
 from pandora.ui import markdown, presenters, query
@@ -70,25 +76,31 @@ FAILURE_ROWS = 20
 DISCARD_ROWS = 20
 EVENT_ROWS = 25
 REPLAY_LIMIT = 200
+PERFORMANCE_ROWS = 50
+PERFORMANCE_WINDOWS = (24, 168, 720)
 SILENCE_PREFIX = "silence:"
 SNOOZE_PREFIX = "snooze:"
 MERGE_ACTION = "merge"
+REVIEW_ACTION = "review"
+PRIORITY_PREFIX = "priority:"
 RESOLVE_PREFIX = "resolve:"
 RESOLVE_NEXT = "next"
 RESOLVE_CURRENT = "current"
 TRIAGE_PERMISSION = "issues.change_issue"
 REPLAY_PERMISSION = "ingest.change_rawenvelope"
 
-TABS = ("occurrences", "episodes", "tags", "activity")
+TABS = ("occurrences", "episodes", "tags", "similar", "activity")
 TAB_LABELS = (
     ("occurrences", "Occurrences"),
     ("episodes", "Episodes"),
     ("tags", "Tags"),
+    ("similar", "Similar"),
     ("activity", "Activity"),
 )
 
 SEGMENTS = (
     ("unresolved", "Unresolved", "is:unresolved"),
+    ("for_review", "For review", "is:for_review"),
     ("new", "New", "is:new"),
     ("acknowledged", "Acknowledged", "is:acknowledged"),
     ("resolved", "Resolved", "is:resolved"),
@@ -101,7 +113,9 @@ SORTS = (
     ("relevance", "Relevance", ("-score", "-last_seen", "-id")),
     ("first_seen", "First seen", ("-first_seen", "-id")),
     ("events", "Events", ("-event_count", "-id")),
+    ("users", "Users", ("-user_count", "-last_seen", "-id")),
     ("breadth", "Spread", ("-breadth", "-last_seen", "-id")),
+    ("priority", "Priority", ("-priority_rank", "-last_seen", "-id")),
 )
 
 TRIAGE_ACTIONS = {
@@ -222,6 +236,7 @@ def stream(request: HttpRequest) -> HttpResponse:
         "page_query": urlencode({"q": raw, "sort": sort.key}),
         "windows": SILENCE_LABELS,
         "snoozes": SNOOZE_LABELS,
+        "priorities": Priority.choices,
         "releases": _release_options(request),
         "spark_width": presenters.SPARK_WIDTH,
         "spark_height": presenters.SPARK_HEIGHT,
@@ -296,6 +311,60 @@ def overview(request: HttpRequest) -> HttpResponse:
         "spark_height": presenters.SPARK_HEIGHT,
     }
     return render(request, "ui/overview.html", context)
+
+
+@staff_member_required(login_url=LOGIN_URL)
+def performance(request: HttpRequest) -> HttpResponse:
+    """Endpoint throughput, latency and failure rate, from the hourly buckets.
+
+    There is no trace waterfall and no span search, because both need a span
+    store. What is here is what people put on a dashboard: which endpoint is
+    slow, which one is failing, and where its time goes.
+    """
+    now = timezone.now()
+    window = _performance_window(request)
+    starts_at = now - window
+    rows = []
+    for project in _visible_projects(request):
+        for reading in perf.readings(project, starts_at, now):
+            rows.append((project, reading))
+    rows.sort(key=lambda pair: (-pair[1].quantile(0.95), -pair[1].count))
+    context = {
+        "nav": "performance",
+        "rows": rows[:PERFORMANCE_ROWS],
+        "window_hours": int(window.total_seconds() // 3600),
+        "windows": PERFORMANCE_WINDOWS,
+        "breakdown": _span_breakdown(request, starts_at, now),
+    }
+    return render(request, "ui/performance.html", context)
+
+
+def _performance_window(request: HttpRequest) -> timedelta:
+    raw = request.GET.get("hours", "")
+    if raw.isdigit() and int(raw) in PERFORMANCE_WINDOWS:
+        return timedelta(hours=int(raw))
+    return timedelta(hours=PERFORMANCE_WINDOWS[0])
+
+
+def _visible_projects(request: HttpRequest) -> list[Project]:
+    projects = Project.objects.all().order_by("slug")
+    scope = _project_scope(request)
+    if scope is None:
+        return list(projects)
+    return list(projects.filter(pk__in=scope))
+
+
+def _span_breakdown(
+    request: HttpRequest, starts_at: datetime, ends_at: datetime
+) -> list[tuple[str, int, float]]:
+    wanted = request.GET.get("transaction", "").strip()
+    if not wanted:
+        return []
+    for project in _visible_projects(request):
+        found = perf.span_breakdown(project, wanted, starts_at, ends_at)
+        if found:
+            return found
+    return []
 
 
 @staff_member_required(login_url=LOGIN_URL)
@@ -396,10 +465,52 @@ def issue_actions(request: HttpRequest) -> HttpResponse:
         _run_silence(request, issues, action[len(SILENCE_PREFIX) :])
     elif action == MERGE_ACTION:
         _run_merge(request, issues)
+    elif action == REVIEW_ACTION:
+        _run_review(request, issues)
+    elif action.startswith(PRIORITY_PREFIX):
+        _run_priority(request, issues, action[len(PRIORITY_PREFIX) :])
     elif action.startswith(RESOLVE_PREFIX):
         _run_release_resolve(request, issues, action[len(RESOLVE_PREFIX) :])
     else:
         messages.error(request, f"{action or 'that action'} is not an action")
+    return redirect(_next_url(request))
+
+
+@staff_member_required(login_url=LOGIN_URL)
+@require_POST
+def comment(request: HttpRequest, issue_id: int) -> HttpResponse:
+    if not access.may(request.user, TRIAGE_PERMISSION):
+        return HttpResponseForbidden("commenting requires the issue change permission")
+
+    issue = get_object_or_404(_scoped(Issue.objects.all(), request), pk=issue_id)
+    try:
+        comment_service.add(
+            issue, request.user, request.POST.get("body", ""), timezone.now()
+        )
+    except comment_service.CommentError as error:
+        messages.error(request, str(error))
+        return redirect(_next_url(request))
+    audit.from_request(
+        request,
+        audit.TRIAGE,
+        str(issue.pk),
+        {"state": "commented"},
+        project_ids=[issue.project_id],
+    )
+    messages.success(request, "Comment added")
+    return redirect(_next_url(request))
+
+
+@staff_member_required(login_url=LOGIN_URL)
+@require_POST
+def watch(request: HttpRequest, issue_id: int) -> HttpResponse:
+    issue = get_object_or_404(_scoped(Issue.objects.all(), request), pk=issue_id)
+    if request.POST.get("action") == "unwatch":
+        comment_service.unwatch(issue, request.user)
+        messages.success(request, "You will not hear about this issue again")
+        return redirect(_next_url(request))
+    comment_service.watch(issue, request.user, timezone.now())
+    messages.success(request, "You are watching this issue")
     return redirect(_next_url(request))
 
 
@@ -597,12 +708,15 @@ def _issue_context(
         "tabs": TAB_LABELS,
         "windows": SILENCE_LABELS,
         "snoozes": SNOOZE_LABELS,
+        "priorities": Priority.choices,
         "releases": _release_options(request),
         "suspect": releases.suspect_deploy(issue),
+        "suspect_commits": _suspect_commits(issue),
         "next_url": request.get_full_path(),
         "can_triage": access.may(request.user, TRIAGE_PERMISSION),
         "can_download_attachments": access.owns_project(request.user, issue.project),
         "grouping_reason": grouping.reason_for(issue.grouping_source),
+        "watching": comment_service.watching(issue, request.user),
     }
     context.update(_owner_context(issue))
     context.update(_merge_context(issue))
@@ -610,6 +724,8 @@ def _issue_context(
     context["reports"] = list(issue.user_reports.all()[:REPORT_ROWS])
     if tab == "occurrences":
         context["events"] = _events(issue, request.GET.get("cursor", ""))
+    if tab == "similar":
+        context["similar"] = similar.similar(issue)
     return context
 
 
@@ -642,6 +758,21 @@ def _owner_context(issue: Issue) -> dict[str, Any]:
     }
 
 
+def _suspect_commits(issue: Issue) -> list[commit_service.Suspect]:
+    if not commit_service.mappings_for(issue.project):
+        return []
+    try:
+        found = get_store().fetch(issue.project_id, issue_id=issue.pk, limit=1)
+    except NotImplementedError:
+        return []
+    if not found:
+        return []
+    frames = commit_service.frames_from(found[0].payload)
+    if not frames:
+        return []
+    return commit_service.suspects(issue.project, frames, issue.first_seen)
+
+
 def _latest(issue: Issue) -> presenters.EventRow | None:
     try:
         found = get_store().fetch(issue.project_id, issue_id=issue.pk, limit=1)
@@ -651,7 +782,9 @@ def _latest(issue: Issue) -> presenters.EventRow | None:
         return None
     attachment_map = attachments.for_events(issue.project_id, found)
     return presenters.event_row(
-        found[0], attachment_map.get(attachments.sentry_id(found[0]), ())
+        found[0],
+        attachment_map.get(attachments.sentry_id(found[0]), ()),
+        commit_service.mappings_for(issue.project),
     )
 
 
@@ -671,11 +804,13 @@ def _events(issue: Issue, cursor: str) -> EventPage:
         found = found[:EVENT_ROWS]
         next_cursor = found[-1].id
     attachment_map = attachments.for_events(issue.project_id, found)
+    mappings = commit_service.mappings_for(issue.project)
     return EventPage(
         rows=tuple(
             presenters.event_row(
                 event,
                 attachment_map.get(attachments.sentry_id(event), ()),
+                mappings,
             )
             for event in found
         ),
@@ -684,13 +819,59 @@ def _events(issue: Issue, cursor: str) -> EventPage:
     )
 
 
+def _run_review(request: HttpRequest, issues: list[Issue]) -> None:
+    report = actions.mark_reviewed(
+        issues,
+        request.user.get_username(),
+        timezone.now(),
+    )
+    audit.from_request(
+        request,
+        audit.TRIAGE,
+        ",".join(str(issue.pk) for issue in issues),
+        {"state": "reviewed", "changed": report.changed},
+        project_ids=_project_ids(issues),
+    )
+    messages.success(
+        request,
+        f"Marked {report.changed} issue(s) reviewed, {report.unchanged} unchanged",
+    )
+
+
+def _run_priority(request: HttpRequest, issues: list[Issue], value: str) -> None:
+    if value not in Priority.values:
+        messages.error(request, f"{value or 'that'} is not a priority")
+        return
+    report = actions.set_priority(
+        issues,
+        value,
+        request.user.get_username(),
+        timezone.now(),
+    )
+    audit.from_request(
+        request,
+        audit.TRIAGE,
+        ",".join(str(issue.pk) for issue in issues),
+        {"priority": value, "changed": report.changed},
+        project_ids=_project_ids(issues),
+    )
+    messages.success(
+        request,
+        f"Set {report.changed} issue(s) to {value} priority,"
+        f" {report.unchanged} unchanged",
+    )
+
+
 def _run_triage(request: HttpRequest, issues: list[Issue], target_state: str) -> None:
+    now = timezone.now()
     report = actions.retriage(
         issues,
         target_state,
         request.user.get_username(),
-        timezone.now(),
+        now,
     )
+    for issue in issues:
+        comment_service.subscribe(issue, request.user, SubscriptionReason.TRIAGED, now)
     audit.from_request(
         request,
         audit.TRIAGE,
@@ -877,6 +1058,8 @@ def _ranked(queryset: QuerySet[Issue], sort: Sort, now: datetime) -> QuerySet[Is
         return ranking.with_score(queryset, now)
     if sort.key == "breadth":
         return ranking.with_breadth(queryset)
+    if sort.key == "priority":
+        return ranking.with_priority_rank(queryset)
     return queryset
 
 
@@ -919,6 +1102,7 @@ def _segments(raw: str, request: HttpRequest) -> list[Segment]:
         acknowledged=Count("pk", filter=Q(triage_state=TriageState.ACKNOWLEDGED)),
         resolved=Count("pk", filter=Q(triage_state=TriageState.RESOLVED)),
         ignored=Count("pk", filter=Q(triage_state=TriageState.IGNORED)),
+        for_review=Count("pk", filter=Q(needs_review=True)),
         everything=Count("pk"),
     )
     current = " ".join(raw.split())

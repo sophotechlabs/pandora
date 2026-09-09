@@ -1,3 +1,5 @@
+import pytest
+
 from pandora.ui import event_view
 
 
@@ -582,3 +584,64 @@ def test_an_exception_with_an_empty_frame_list_renders_no_frames():
     expected = ("E", ())
 
     assert result == expected
+
+
+# linking a frame to its source
+
+
+@pytest.fixture
+def code_mapping(db, project):
+    from pandora.releases import models as release_models
+
+    repository = release_models.Repository.objects.create(
+        project=project,
+        name="sophotechlabs/pandora",
+        provider=release_models.RepositoryProvider.GITHUB,
+        url="https://github.com/sophotechlabs/pandora",
+    )
+    return release_models.CodeMapping.objects.create(
+        project=project,
+        repository=repository,
+        stack_root="/app/",
+        source_root="src/",
+    )
+
+
+def stack(path, lineno=12):
+    return {
+        "exceptions": [
+            {
+                "type": "ValueError",
+                "frames": [{"filename": path, "lineno": lineno, "in_app": True}],
+            }
+        ]
+    }
+
+
+@pytest.mark.django_db
+def test_a_mapped_frame_gets_a_source_link(project, code_mapping):
+    """Should put the reader one click from the line that raised."""
+    body = event_view.build(stack("/app/pandora/checkout.py"), project.pk)
+
+    frame = body.exceptions[0].frames[0]
+    expected = (
+        "https://github.com/sophotechlabs/pandora/blob/main/src/pandora/checkout.py#L12"
+    )
+
+    assert frame.source_url == expected
+
+
+@pytest.mark.django_db
+def test_an_unmapped_frame_gets_no_link(project, code_mapping):
+    """Should render nothing rather than a link into the wrong repository."""
+    body = event_view.build(stack("/usr/lib/python3/json.py"), project.pk)
+
+    assert body.exceptions[0].frames[0].source_url == ""
+
+
+@pytest.mark.django_db
+def test_a_project_with_no_mapping_gets_no_links(project):
+    """Should cost nothing until the operator states a mapping."""
+    body = event_view.build(stack("/app/pandora/checkout.py"), project.pk)
+
+    assert body.exceptions[0].frames[0].source_url == ""

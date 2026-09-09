@@ -1,3 +1,5 @@
+import datetime
+
 import pytest
 from django.utils import timezone
 
@@ -280,3 +282,103 @@ def test_an_assignment_reads_as_who_owns_it(make_issue, rule, make_user):
     expected = f"{issue.pk} to dev"
 
     assert result == expected
+
+
+# falling back to whoever last changed the code
+
+
+@pytest.fixture
+def blamed(project, make_user):
+    from pandora.releases import commits as commit_service
+    from pandora.releases import models as release_models
+    from pandora.releases import service as release_service
+
+    def build(email="someone@example.test", **overrides):
+        repository = release_models.Repository.objects.create(
+            project=project,
+            name="sophotechlabs/pandora",
+            provider=release_models.RepositoryProvider.GITHUB,
+            url="https://github.com/sophotechlabs/pandora",
+        )
+        release_models.CodeMapping.objects.create(
+            project=project,
+            repository=repository,
+            stack_root="/app/",
+            source_root="src/",
+        )
+        release = release_service.ensure_release(project, "1.4.0", "", timezone.now())
+        commit_service.set_commits(
+            project,
+            release,
+            [
+                {
+                    "id": "a" * 40,
+                    "repository": "sophotechlabs/pandora",
+                    "message": "touch the charge path",
+                    "author_email": email,
+                    "timestamp": (
+                        timezone.now() - datetime.timedelta(days=1)
+                    ).isoformat(),
+                    "patch_set": [{"path": "src/payments/charge.py", "type": "M"}],
+                }
+            ],
+        )
+        return make_user("committer", email=email, **overrides)
+
+    return build
+
+
+def test_the_commit_author_is_assigned_when_no_rule_matches(
+    make_issue, make_event, blamed
+):
+    """Should reach for the weaker signal only after the stronger one found nothing."""
+    user = blamed()
+    issue = make_issue()
+
+    assignment = ownership.assign(
+        issue, make_event(payload=frames("/app/payments/charge.py"))
+    )
+
+    assert assignment is not None
+    assert assignment.user_id == user.pk
+
+
+def test_an_ownership_rule_still_wins_over_the_commit_author(
+    make_issue, make_event, blamed, rule
+):
+    """Should keep a stated policy above an inference from git history."""
+    blamed()
+    rule(pattern="/app/payments/*")
+    issue = make_issue()
+
+    assignment = ownership.assign(
+        issue, make_event(payload=frames("/app/payments/charge.py"))
+    )
+
+    assert assignment is not None
+    assert assignment.user_id is None
+
+
+def test_an_author_with_no_account_assigns_nobody(make_issue, make_event, blamed):
+    """Should not invent an account for an address nobody has signed in with."""
+    blamed(email="stranger@example.test")
+    from django.contrib.auth import models as auth_models
+
+    auth_models.User.objects.filter(email="stranger@example.test").delete()
+    issue = make_issue()
+
+    assignment = ownership.assign(
+        issue, make_event(payload=frames("/app/payments/charge.py"))
+    )
+
+    assert assignment is None
+
+
+def test_an_issue_with_no_stack_assigns_nobody(make_issue, make_event, blamed):
+    """Should leave an alert with no frames unassigned."""
+    blamed()
+    issue = make_issue()
+
+    assignment = ownership.assign(issue, make_event(payload={"logentry": "boom"}))
+
+    assert assignment is None

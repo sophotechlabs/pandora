@@ -8,6 +8,7 @@ CHECK_IN = "check_in"
 CLIENT_REPORT = "client_report"
 SESSION = "session"
 SESSIONS = "sessions"
+TRANSACTION = "transaction"
 
 MIB = 1024 * 1024
 KIB = 1024
@@ -19,6 +20,7 @@ DEFAULTS = {
     CLIENT_REPORT: 4 * KIB,
     SESSION: 100 * KIB,
     SESSIONS: 100 * KIB,
+    TRANSACTION: 1 * MIB,
 }
 
 

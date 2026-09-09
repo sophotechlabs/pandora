@@ -59,6 +59,11 @@ def test_activity_kinds_cover_the_audit_trail():
             "unsnoozed",
             "merged",
             "unmerged",
+            "escalated",
+            "auto_resolved",
+            "reviewed",
+            "reprioritised",
+            "commented",
         ]
     )
 
@@ -219,6 +224,8 @@ def test_the_changelist_index_matches_the_default_ordering():
         ["project", "triage_state", "-last_seen"],
         ["project", "source_state"],
         ["snoozed_until"],
+        ["project", "priority", "-last_seen"],
+        ["project", "needs_review"],
     ]
 
     assert result == expected
