@@ -1,5 +1,6 @@
 import datetime
 
+import freezegun
 import pytest
 
 from pandora.perf import service
@@ -7,6 +8,12 @@ from pandora.perf import service
 pytestmark = pytest.mark.django_db
 
 NOW = datetime.datetime(2026, 9, 9, 12, 30, tzinfo=datetime.UTC)
+
+
+@pytest.fixture(autouse=True)
+def frozen():
+    with freezegun.freeze_time(NOW):
+        yield
 
 
 @pytest.fixture
