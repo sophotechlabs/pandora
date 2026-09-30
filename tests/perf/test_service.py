@@ -675,3 +675,37 @@ def test_the_demo_produces_failures(project):
     }
 
     assert rows["POST /api/checkout"].failure_rate > 0
+
+
+def test_a_percentile_never_exceeds_the_slowest_request(project):
+    """Should not report a number larger than anything that actually happened."""
+    service.record(project, transaction(duration_ms=4200), NOW)
+
+    row = service.readings(project, NOW - datetime.timedelta(hours=6), NOW)[0]
+
+    assert row.p95 == 4200.0
+
+
+def test_a_percentile_still_rounds_up_inside_the_range(project):
+    """Should keep saying which bucket, when the bucket edge is reachable."""
+    service.record(project, transaction(duration_ms=30), NOW)
+    service.record(project, transaction(duration_ms=4200), NOW)
+
+    row = service.readings(project, NOW - datetime.timedelta(hours=6), NOW)[0]
+
+    assert row.p50 == 50.0
+
+
+def test_a_reading_with_no_maximum_reports_the_bucket(project):
+    """Should not clamp to zero for a reading assembled without a maximum."""
+    empty = service.Reading(
+        transaction="GET /x",
+        count=1,
+        failures=0,
+        duration_sum=0.0,
+        duration_max=0.0,
+        histogram=models.empty_histogram(),
+    )
+    empty.histogram[service.bucket_index(30)] = 1
+
+    assert empty.quantile(0.5) == 50.0

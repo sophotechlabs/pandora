@@ -52,7 +52,10 @@ class Reading:
         return self.duration_sum / self.count
 
     def quantile(self, fraction: float) -> float:
-        return quantile(self.histogram, fraction)
+        found = quantile(self.histogram, fraction)
+        if self.duration_max <= 0:
+            return found
+        return min(found, self.duration_max)
 
     @property
     def p50(self) -> float:

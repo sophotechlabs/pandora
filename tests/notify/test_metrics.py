@@ -385,7 +385,19 @@ def test_the_ninety_fifth_percentile_is_measurable(monitor, endpoint):
 
     found = monitor(dataset=notify_models.MetricDataset.LATENCY_P95)
 
-    assert metrics.value_of(found, NOW) == 1000.0
+    assert metrics.value_of(found, NOW) == 800.0
+
+
+def test_a_latency_reading_never_exceeds_the_slowest_request(monitor, endpoint):
+    """Should not fire a threshold on a number no request ever reached."""
+    endpoint(duration_ms=1200, count=10)
+
+    found = monitor(dataset=notify_models.MetricDataset.LATENCY_P95, threshold=2000)
+
+    result = (metrics.value_of(found, NOW), metrics.sweep(NOW).fired)
+    expected = (1200.0, [])
+
+    assert result == expected
 
 
 def test_the_failure_rate_is_measurable(monitor, endpoint):
