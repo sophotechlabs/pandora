@@ -641,3 +641,69 @@ ci-deadcode:
 # xenon — fail on cyclomatic complexity regressions (optional extra)
 ci-complexity:
     {{ ci_compose_run }} --entrypoint xenon web --max-absolute C --max-modules C --max-average A src
+
+# Point p-mk1 at a released version and print the commands to ship it
+release version="":
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    gitops="${PANDORA_GITOPS_DIR:-$(cd "{{ justfile_directory() }}/../hetzner-gitops" 2> /dev/null && pwd)}"
+    vars="$gitops/clusters/p-mk1/cluster-vars.yaml"
+    if [ ! -f "$vars" ]; then
+        echo "no cluster-vars.yaml at $vars — set PANDORA_GITOPS_DIR" >&2
+        exit 1
+    fi
+
+    released=$(python3 -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+    next="{{ version }}"
+    if [ -z "$next" ]; then
+        next="$released"
+    fi
+    if ! echo "$next" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+        echo "$next is not a version" >&2
+        exit 1
+    fi
+    if [ "$(printf '%s\n%s\n' "$released" "$next" | sort -V | tail -1)" != "$released" ]; then
+        echo "$next has not been released — pyproject.toml is on $released" >&2
+        echo "release-please owns the version; merge its release PR, then ship what it cut" >&2
+        exit 1
+    fi
+
+    tag=$(grep -oE 'pandora_tag: "[0-9]+\.[0-9]+\.[0-9]+"' "$vars" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')
+    if [ -z "$tag" ]; then
+        echo "could not read pandora_tag from $vars" >&2
+        exit 1
+    fi
+    if [ "$tag" = "$next" ]; then
+        echo "p-mk1 is already on $next" >&2
+        exit 1
+    fi
+
+    python3 - "$vars" "$tag" "$next" <<'PY'
+    import pathlib
+    import sys
+
+    vars_path, tag, next_version = sys.argv[1:4]
+
+    cluster = pathlib.Path(vars_path)
+    cluster.write_text(
+        cluster.read_text().replace(
+            f'pandora_tag: "{tag}"', f'pandora_tag: "{next_version}"', 1
+        )
+    )
+    PY
+
+    here="{{ justfile_directory() }}"
+
+    echo "pandora     $tag -> $next"
+    if [ "$next" != "$released" ]; then
+        echo "pyproject   $released — $next is an earlier release, so this is a rollback"
+    fi
+    echo
+    echo "git -C $here push ci main"
+    echo "git -C $here push origin main"
+    echo "until curl -sf https://zot.c.p-mk1.sopho.tech/v2/apps/pandora/tags/list | grep -q '\"$next\"'; do sleep 15; done"
+    echo "git -C $gitops add clusters/p-mk1/cluster-vars.yaml"
+    echo "git -C $gitops commit -m 'chore: pandora $next'"
+    echo "git -C $gitops push"
+    echo "flux --context p-mk1 -n flux-system reconcile kustomization pandora --with-source"

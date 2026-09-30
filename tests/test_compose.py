@@ -184,3 +184,91 @@ def test_the_browser_suite_is_not_collected_by_the_unit_run():
     result = 'testpaths = ["tests"]' in text
 
     assert result is True
+
+
+# shipping a release to the cluster
+
+
+def release_body():
+    return recipe_body("release")
+
+
+def test_the_release_recipe_does_not_bump_the_package_version():
+    """Should leave pyproject.toml to release-please — two writers on one field drift."""
+    body = release_body()
+
+    result = [
+        marker
+        for marker in ('version = "', "release-please-manifest", "uv lock")
+        if marker in body
+    ]
+    expected = []
+
+    assert result == expected
+
+
+def test_the_release_recipe_reads_the_version_release_please_cut():
+    """Should ship what was actually built, not a number typed at the prompt."""
+    result = "tomllib.load(open('pyproject.toml','rb'))" in release_body()
+
+    assert result is True
+
+
+def test_the_release_recipe_writes_the_cluster_tag():
+    """Should do the one step nothing else automates."""
+    result = "pandora_tag" in release_body()
+
+    assert result is True
+
+
+def test_the_release_recipe_takes_the_gitops_path_from_the_environment():
+    """Should work from a worktree, where the sibling checkout is not there."""
+    result = "PANDORA_GITOPS_DIR" in release_body()
+
+    assert result is True
+
+
+def test_the_release_recipe_pushes_to_the_remote_that_builds():
+    """Should name `ci` — origin is GitHub and does not feed the cluster's registry."""
+    result = "push ci main" in release_body()
+
+    assert result is True
+
+
+def test_the_release_recipe_prints_one_command_per_line():
+    """Should hand over commands that can be read and run one at a time."""
+    printed = [
+        line for line in release_body().splitlines() if line.strip().startswith("echo")
+    ]
+
+    result = [line for line in printed if "&&" in line]
+    expected = []
+
+    assert result == expected
+
+
+def test_the_release_recipe_waits_for_the_image():
+    """Should not point the cluster at a tag the registry does not have yet."""
+    body = release_body()
+
+    result = "v2/apps/pandora/tags/list" in body and "until curl" in body
+
+    assert result is True
+
+
+def test_the_release_recipe_reconciles_once():
+    """Should refresh the source and the kustomization in one call, not two."""
+    body = release_body()
+
+    result = body.count("flux --context p-mk1")
+
+    assert result == 1
+
+
+def test_the_release_recipe_stages_the_cluster_file_by_name():
+    """Should never hand over a blanket add."""
+    body = release_body()
+
+    result = "clusters/p-mk1/cluster-vars.yaml" in body and " add ." not in body
+
+    assert result is True
