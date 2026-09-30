@@ -56,6 +56,17 @@ The chart pulls `ghcr.io/sophotechlabs/pandora`, published on every release and 
 
 `host` is the one value that has to be right: it fills allowed hosts, the CSRF origin and the base URL. Turn on `reconcile.enabled` with `alertmanager.url` to close episodes whose webhook never arrived, and `serviceMonitor.enabled` if you run the Prometheus operator. The chart generates a secret key and an admin password on install and keeps them across upgrades; `helm template` shows exactly what it will create, and `just chart-lint` validates it.
 
+### Shipping a release to a cluster
+
+Versions are release-please's: conventional commits on `main` produce a release PR, and merging it bumps `pyproject.toml`, the chart and the manifest, then builds the images. Pointing a running cluster at the new version is the step nothing automates, and `just release` does it:
+
+```sh
+just release          # ship what release-please last cut
+just release 0.6.0    # or pin an earlier release, to roll back
+```
+
+It writes `pandora_tag` in the GitOps checkout beside this one — `PANDORA_GITOPS_DIR` overrides where that is — and prints the commands to push, wait for the registry, commit the change and reconcile. It refuses a version that has not been released, because the tag would not exist to pull. It never edits `pyproject.toml`: release-please owns the version, and two writers on one field drift apart.
+
 ## Development
 
 ```sh
