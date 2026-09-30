@@ -18,6 +18,7 @@ from pandora.issues import (
     hooks,
     lifecycle,
     merge,
+    priority,
     search,
 )
 from pandora.issues.models import Episode, Issue, IssueActivity, SourceState
@@ -344,13 +345,35 @@ def _write_issue(
         0, issue.open_episode_count + transition.open_episode_delta
     )
     issue.search_text = search.text_for(issue, occurrence)
-    fields = sorted(
-        {*transition.issue_fields, "event_count", "open_episode_count", "search_text"}
-    )
-    issue.save(update_fields=fields)
+    fields = {
+        *transition.issue_fields,
+        "event_count",
+        "open_episode_count",
+        "search_text",
+    }
+    if _rerank(issue):
+        fields.add("priority")
+    issue.save(update_fields=sorted(fields))
     if transition.count_occurrence:
         aggregates.count_occurrence(issue, occurrence.starts_at, occurrence.tags)
     hooks.fire("PANDORA_ISSUE_HOOKS", issue, transition, occurrence, before)
+
+
+def _rerank(issue: Issue) -> bool:
+    if issue.priority_locked:
+        return False
+    wanted = priority.derive(
+        priority.Inputs(
+            level=issue.level,
+            open_episode_count=issue.open_episode_count,
+            user_count=issue.user_count,
+            escalating=issue.escalated_at is not None,
+        )
+    )
+    if wanted == issue.priority:
+        return False
+    issue.priority = wanted
+    return True
 
 
 def _record(

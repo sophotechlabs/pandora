@@ -602,3 +602,29 @@ def test_an_issue_grouped_by_the_built_in_denylist_says_so(
     expected = issue_models.GroupingSource.DEFAULT
 
     assert result == expected
+
+
+def test_a_firing_alert_is_ranked_the_moment_it_fires(am_fixture, token, store):
+    """Should not leave a live alert at the level's floor until the sweep runs."""
+    helpers.deliver(am_fixture("firing_group"), token, store, RECEIVED_AT)
+
+    issue = issue_models.Issue.objects.first()
+    result = (issue.open_episode_count > 0, issue.priority)
+    expected = (True, issue_models.Priority.HIGH)
+
+    assert result == expected
+
+
+def test_a_pinned_priority_survives_ingest(am_fixture, token, store):
+    """Should keep a rank a person set, whatever the next occurrence does."""
+    helpers.deliver(am_fixture("firing_group"), token, store, RECEIVED_AT)
+    issue_models.Issue.objects.update(
+        priority=issue_models.Priority.LOW, priority_locked=True
+    )
+
+    helpers.deliver(am_fixture("firing_group"), token, store, RECEIVED_AT)
+
+    result = {issue.priority for issue in issue_models.Issue.objects.all()}
+    expected = {issue_models.Priority.LOW}
+
+    assert result == expected
