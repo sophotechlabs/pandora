@@ -54,7 +54,7 @@ helm install pandora deploy/helm/pandora --set host=pandora.example.com --set in
 
 The chart pulls `ghcr.io/sophotechlabs/pandora`, published on every release and on every commit to `main` — `image.tag` defaults to the chart's app version, `:main` is the tip and `:sha-<commit>` pins one build.
 
-`host` is the one value that has to be right: it fills allowed hosts, the CSRF origin and the base URL. Turn on `reconcile.enabled` with `alertmanager.url` to close episodes whose webhook never arrived, and `serviceMonitor.enabled` if you run the Prometheus operator. The chart generates a secret key and an admin password on install and keeps them across upgrades; `helm template` shows exactly what it will create, and `just chart-lint` validates it.
+`host` is the one value that has to be right: it fills allowed hosts, the CSRF origin and the base URL. Turn on `reconcile.enabled` with `alertmanager.url` to close episodes whose webhook never arrived, and `serviceMonitor.enabled` if you run the Prometheus operator. The delivery worker that sends notifications runs by default; `deliver.enabled=false` drops it for an install with no destinations. The chart generates a secret key and an admin password on install and keeps them across upgrades; `helm template` shows exactly what it will create, and `just chart-lint` validates it.
 
 ### Shipping a release to a cluster
 
@@ -120,6 +120,8 @@ Copies stored events out of another pandora database into this one, paging per p
 | `/api/0/organizations/<org>/chunk-upload/` | source-map chunks, `sentry-cli` protocol (Bearer token) | live |
 | `/api/0/organizations/<org>/artifactbundle/assemble/` | joins the chunks into a bundle (Bearer token) | live |
 | `/api/0/organizations/<org>/releases/` | creates a release, `sentry-cli releases new` (Bearer token) | live |
+| `/api/0/projects/<org>/<project>/releases/` | creates a release, `sentry-cli releases new --project` (Bearer token) | live |
+| `/api/0/organizations/<org>/releases/<version>/previous-with-commits/` | the last commit of the release before, where `set-commits --local` stops reading `git log` (Bearer token) | live |
 | `/api/0/organizations/<org>/releases/<version>/` | attaches commits, `sentry-cli releases set-commits` (Bearer token) | live |
 | `/api/0/organizations/<org>/releases/<version>/deploys/` | records an idempotent successful deploy (Bearer token) | live |
 | `/api/v1/issues` | issue list, filtered and cursor-paged | live |
@@ -268,7 +270,7 @@ Set `comparison_delta_minutes` and the number becomes a percent change against t
 
 A **destination** is a row: a webhook, an email list, or a Slack, Discord or Teams incoming-webhook URL. It picks which events it wants, a minimum level, an optional project, and a digest window. Webhooks are signed with HMAC-SHA256 in `X-Pandora-Signature` when a secret is set, so a receiver can prove the call came from this Pandora.
 
-Deliveries are queued to a table, not sent on the ingest request, and a worker drains them:
+Deliveries are queued to a table, not sent on the ingest request, and a worker drains them — the chart runs it as its own deployment:
 
 ```sh
 python manage.py deliver --loop 15 --metrics-port 9110
@@ -477,7 +479,9 @@ sentry-cli --url https://pandora.example.com \
   releases set-commits 1.4.0 --local
 ```
 
-`--local` reads `git log` in the checkout and posts each commit with its author, its message and the files it touched. That is the whole integration: no token against a forge, no webhook, nothing to revoke, and it works for a repository that is not on a forge at all.
+`--local` reads `git log` in the checkout and posts each commit with its author, its message and the files it touched. That is the whole integration: no token against a forge, no webhook, nothing to revoke, and it works for a repository that is not on a forge at all. It reads back from the commit the previous release ended at, so each release carries only its own commits.
+
+`--local` names each commit's repository by the git remote it came from — `origin`, not `owner/name` — so that is the repository those commits are filed under. Blame matches on file paths, not on the repository name, so the code mapping below can point at the repository you declare and still find them.
 
 A **code mapping** says how a path in a stack trace becomes a path in a repository — `/app/` in the container is `src/` in the repo — and it is the only thing an operator configures. With one in place:
 
