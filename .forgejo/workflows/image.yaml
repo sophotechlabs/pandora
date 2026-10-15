@@ -24,8 +24,30 @@ jobs:
           image="$REGISTRY/apps/pandora:$version"
           latest="$REGISTRY/apps/pandora:latest"
           sha="$REGISTRY/apps/pandora:sha-${GITHUB_SHA:0:12}"
+          status=$(curl -s -o /dev/null -w '%{http_code}' -I \
+            -H 'Accept: application/vnd.oci.image.index.v1+json' \
+            -H 'Accept: application/vnd.oci.image.manifest.v1+json' \
+            -H 'Accept: application/vnd.docker.distribution.manifest.v2+json' \
+            -H 'Accept: application/vnd.docker.distribution.manifest.list.v2+json' \
+            "https://$REGISTRY/v2/apps/pandora/manifests/$version")
+          case "$status" in
+            200)
+              release=no
+              ;;
+            404)
+              release=yes
+              ;;
+            *)
+              echo "could not tell whether $image exists: HTTP $status" >&2
+              exit 1
+              ;;
+          esac
           docker build --network host --target prod -t "$image" -t "$latest" -t "$sha" .
-          docker push "$image"
+          if [ "$release" = yes ]; then
+            docker push "$image"
+          else
+            echo "$image already exists; a version tag is written once, by the release that cut it"
+          fi
           docker push "$latest"
           docker push "$sha"
-          echo "pushed $image, $latest and $sha"
+          echo "pushed $latest and $sha"
