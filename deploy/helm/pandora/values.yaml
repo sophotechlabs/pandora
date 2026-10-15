@@ -87,6 +87,16 @@ reconcile:
     limits:
       memory: 256Mi
 
+deliver:
+  enabled: true
+  interval: 15
+  resources:
+    requests:
+      cpu: 25m
+      memory: 128Mi
+    limits:
+      memory: 256Mi
+
 cronJobs:
   monitors:
     enabled: true

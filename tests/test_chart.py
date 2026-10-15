@@ -101,6 +101,7 @@ def test_a_default_install_needs_no_values():
         "CronJob",
         "CronJob",
         "Deployment",
+        "Deployment",
         "PersistentVolumeClaim",
         "Secret",
         "Service",
@@ -152,6 +153,7 @@ def test_turning_everything_on_renders():
         "CronJob",
         "Deployment",
         "Deployment",
+        "Deployment",
         "Ingress",
         "PersistentVolumeClaim",
         "Secret",
@@ -173,7 +175,7 @@ def test_every_pod_runs_as_a_non_root_user():
     ]
 
     assert result == [True] * len(result)
-    assert len(result) == 8
+    assert len(result) == 9
 
 
 @needs_helm
@@ -490,6 +492,73 @@ def test_the_reconcile_loop_runs_as_a_loop_not_a_one_shot():
     result = "--loop" in command
 
     assert result is True
+
+
+def deliver_of(docs):
+    found = [doc for doc in docs if doc["metadata"]["name"].endswith("-deliver")]
+    return found
+
+
+@needs_helm
+def test_queued_notifications_have_a_worker_by_default():
+    """Should send what destinations queue — a delivery table nobody drains reaches nobody."""
+    deployment = deliver_of(render())[0]
+    command = deployment["spec"]["template"]["spec"]["containers"][0]["command"]
+
+    result = command[:6]
+    expected = ["python", "manage.py", "deliver", "--loop", "15", "--metrics-port"]
+
+    assert result == expected
+
+
+@needs_helm
+def test_the_delivery_interval_comes_from_values():
+    """Should let an operator trade latency for load without editing the template."""
+    docs = render("--set", "deliver.interval=60")
+    command = deliver_of(docs)[0]["spec"]["template"]["spec"]["containers"][0][
+        "command"
+    ]
+
+    result = command[command.index("--loop") + 1]
+
+    assert result == "60"
+
+
+@needs_helm
+def test_the_delivery_worker_can_be_turned_off():
+    """Should leave nothing behind for an install that sends no notifications."""
+    result = deliver_of(render("--set", "deliver.enabled=false"))
+
+    assert result == []
+
+
+@needs_helm
+def test_the_delivery_worker_shares_the_web_pods_database():
+    """Should read the queue the web pod writes, on the same claim and the same URL."""
+    docs = render()
+    web = [doc for doc in docs if doc["kind"] == "Deployment"][0]["spec"]["template"][
+        "spec"
+    ]
+    worker = deliver_of(docs)[0]["spec"]["template"]["spec"]
+
+    result = (
+        env_of(worker["containers"][0])["DATABASE_URL"],
+        worker["volumes"],
+    )
+    expected = (env_of(web["containers"][0])["DATABASE_URL"], web["volumes"])
+
+    assert result == expected
+
+
+@needs_helm
+def test_the_delivery_worker_runs_one_replica_at_a_time():
+    """Should never run two senders through a rollout against one SQLite file."""
+    spec = deliver_of(render())[0]["spec"]
+
+    result = (spec["replicas"], spec["strategy"]["type"])
+    expected = (1, "Recreate")
+
+    assert result == expected
 
 
 def test_the_chart_is_covered_by_a_recipe():

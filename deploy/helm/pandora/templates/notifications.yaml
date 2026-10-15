@@ -1,0 +1,58 @@
+{{- if .Values.deliver.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "pandora.fullname" . }}-deliver
+  labels:
+    {{- include "pandora.labels" . | nindent 4 }}
+    app.kubernetes.io/component: deliver
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "pandora.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: deliver
+  template:
+    metadata:
+      labels:
+        {{- include "pandora.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: deliver
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: deliver
+          image: {{ include "pandora.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          command:
+            - python
+            - manage.py
+            - deliver
+            - --loop
+            - {{ .Values.deliver.interval | quote }}
+            - --metrics-port
+            - "9090"
+          env:
+            {{- include "pandora.env" . | nindent 12 }}
+          envFrom:
+            - secretRef:
+                name: {{ include "pandora.secretName" . }}
+          ports:
+            - name: metrics
+              containerPort: 9090
+              protocol: TCP
+          resources:
+            {{- toYaml .Values.deliver.resources | nindent 12 }}
+          volumeMounts:
+            {{- include "pandora.volumeMounts" . | nindent 12 }}
+      volumes:
+        {{- include "pandora.volumes" . | nindent 8 }}
+{{- end }}
