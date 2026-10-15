@@ -11,6 +11,7 @@ pytestmark = pytest.mark.django_db
 
 CREATE_URL = "/api/0/organizations/pandora/releases/"
 DETAIL_URL = "/api/0/organizations/pandora/releases/1.4.0/"
+PROJECT_URL = "/api/0/projects/pandora/infrastructure/releases/"
 
 
 @pytest.fixture
@@ -63,6 +64,64 @@ def test_a_release_is_created_the_way_sentry_cli_does(client, deploy_token):
 
     assert response.status_code == http.HTTPStatus.CREATED
     assert models.Release.objects.get().version == "1.4.0"
+
+
+def test_a_release_is_created_the_way_sentry_cli_does_for_one_project(
+    client, deploy_token
+):
+    """Should accept the project route `sentry-cli releases new --project` posts to."""
+    response = send(client, deploy_token, PROJECT_URL, {"version": "1.4.0"})
+
+    result = (
+        response.status_code,
+        list(models.Release.objects.values_list("version", flat=True)),
+    )
+    expected = (http.HTTPStatus.CREATED, ["1.4.0"])
+
+    assert result == expected
+
+
+def test_the_project_route_refuses_another_project(client, deploy_token):
+    """Should answer 404, as Sentry does, for a project the token cannot reach."""
+    url = "/api/0/projects/pandora/somebody-else/releases/"
+
+    response = send(client, deploy_token, url, {"version": "1.4.0"})
+
+    result = (response.status_code, models.Release.objects.count())
+    expected = (http.HTTPStatus.NOT_FOUND, 0)
+
+    assert result == expected
+
+
+def test_the_project_route_needs_the_deploy_capability(client, read_token):
+    """Should not let a read token mint releases through the second door."""
+    response = send(client, read_token, PROJECT_URL, {"version": "1.4.0"})
+
+    assert response.status_code == http.HTTPStatus.FORBIDDEN
+
+
+def test_the_project_route_only_creates(client, deploy_token):
+    """Should say which method it takes rather than treat a read as a write."""
+    response = client.get(
+        PROJECT_URL, headers={"Authorization": f"Bearer {deploy_token.token}"}
+    )
+
+    result = (response.status_code, response["Allow"])
+    expected = (http.HTTPStatus.METHOD_NOT_ALLOWED, "POST")
+
+    assert result == expected
+
+
+def test_the_project_route_attaches_commits(client, deploy_token):
+    """Should store commits sent with the release, as the organization route does."""
+    body = {"version": "1.4.0", "commits": [commit()]}
+
+    send(client, deploy_token, PROJECT_URL, body)
+
+    result = list(models.Commit.objects.values_list("key", flat=True))
+    expected = ["a" * 40]
+
+    assert result == expected
 
 
 def test_creating_a_release_twice_is_idempotent(client, deploy_token):

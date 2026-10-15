@@ -9,6 +9,16 @@ urlpatterns = [
         name="releases-create",
     ),
     path(
+        "api/0/projects/<str:organization>/<str:project>/releases/",
+        views.project_releases,
+        name="releases-create-project",
+    ),
+    path(
+        "api/0/organizations/<str:organization>/releases/<path:version>/previous-with-commits/",
+        views.previous_with_commits,
+        name="releases-previous-with-commits",
+    ),
+    path(
         "api/0/organizations/<str:organization>/releases/<path:version>/deploys/",
         views.create_deploy,
         name="releases-create-deploy",

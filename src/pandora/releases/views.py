@@ -19,7 +19,7 @@ from pandora.issues.models import Issue
 from pandora.people import audit
 from pandora.releases import commits as commit_service
 from pandora.releases import service
-from pandora.releases.models import Deploy, Release
+from pandora.releases.models import Deploy, Release, ReleaseCommit
 
 
 class RequestError(ValueError):
@@ -32,6 +32,24 @@ def releases(request: HttpRequest, organization: str) -> JsonResponse:
     token, refused = _authorize(request, ("POST",))
     if token is None:
         return refused
+    return _create_release(request, token)
+
+
+@csrf_exempt
+def project_releases(
+    request: HttpRequest, organization: str, project: str
+) -> JsonResponse:
+    token, refused = _authorize(request, ("POST",))
+    if token is None:
+        return refused
+    if project != token.project.slug:
+        return JsonResponse(
+            {"detail": "project not found"}, status=HTTPStatus.NOT_FOUND
+        )
+    return _create_release(request, token)
+
+
+def _create_release(request: HttpRequest, token: IngestToken) -> JsonResponse:
     try:
         document = _document(request)
         version = _required_text(document, "version", 250)
@@ -70,6 +88,47 @@ def release_detail(
     except commit_service.CommitError as error:
         return JsonResponse({"detail": str(error)}, status=HTTPStatus.BAD_REQUEST)
     return JsonResponse(_serialize_release(release, report))
+
+
+@csrf_exempt
+def previous_with_commits(
+    request: HttpRequest,
+    organization: str,
+    version: str,
+) -> JsonResponse:
+    token, refused = _authorize(request, ("GET",))
+    if token is None:
+        return refused
+    current = Release.objects.filter(project=token.project, version=version).first()
+    if current is None:
+        return JsonResponse(
+            {"detail": "release not found"}, status=HTTPStatus.NOT_FOUND
+        )
+    previous = (
+        Release.objects.filter(
+            project=token.project,
+            first_seen__lt=current.first_seen,
+            release_commits__isnull=False,
+        )
+        .exclude(pk=current.pk)
+        .distinct()
+        .order_by("-first_seen", "-pk")
+        .first()
+    )
+    if previous is None:
+        return JsonResponse({})
+    newest = (
+        ReleaseCommit.objects.filter(release=previous)
+        .select_related("commit")
+        .order_by("order", "pk")[0]
+    )
+    return JsonResponse(
+        {
+            "version": previous.version,
+            "dateCreated": _isoformat(previous.first_seen),
+            "lastCommit": {"id": newest.commit.key},
+        }
+    )
 
 
 def _authorize(
