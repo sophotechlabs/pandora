@@ -417,6 +417,50 @@ def test_a_comment_is_recorded_against_the_issue(operator_client, make_issue):
     assert result == expected
 
 
+def test_the_issue_page_says_the_commenter_is_watching(operator_client, make_issue):
+    """Should offer Stop watching after a comment, since commenting subscribes."""
+    issue = make_issue()
+    page = f"/issues/{issue.pk}/activity/"
+
+    response = operator_client.post(
+        f"/issues/{issue.pk}/comment/",
+        {"body": "restarting the pod", "next": page},
+        follow=True,
+    )
+
+    body = response.content.decode()
+    result = ('value="unwatch"' in body, 'value="watch"' in body)
+    expected = (True, False)
+
+    assert result == expected
+
+
+def test_a_tab_fetched_in_place_sends_its_forms_back_to_the_whole_page(
+    operator_client, make_issue
+):
+    """Should not land a commenter on the bare tab fragment the script fetched."""
+    issue = make_issue()
+
+    response = operator_client.get(f"/issues/{issue.pk}/activity/?partial=1")
+
+    result = response.context["next_url"]
+    expected = f"/issues/{issue.pk}/activity/"
+
+    assert result == expected
+
+
+def test_a_page_keeps_its_own_query_in_the_return_address(operator_client, make_issue):
+    """Should drop only the fragment flag, not the rest of what the reader asked for."""
+    issue = make_issue()
+
+    response = operator_client.get(f"/issues/{issue.pk}/occurrences/?partial=1&page=2")
+
+    result = response.context["next_url"]
+    expected = f"/issues/{issue.pk}/occurrences/?page=2"
+
+    assert result == expected
+
+
 def test_an_empty_comment_is_reported_back(operator_client, make_issue):
     """Should say why nothing was saved rather than pretend it was."""
     issue = make_issue()

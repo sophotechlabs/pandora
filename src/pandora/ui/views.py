@@ -712,7 +712,7 @@ def _issue_context(
         "releases": _release_options(request),
         "suspect": releases.suspect_deploy(issue),
         "suspect_commits": _suspect_commits(issue),
-        "next_url": request.get_full_path(),
+        "next_url": _page_path(request),
         "can_triage": access.may(request.user, TRIAGE_PERMISSION),
         "can_download_attachments": access.owns_project(request.user, issue.project),
         "grouping_reason": grouping.reason_for(issue.grouping_source),
@@ -1116,6 +1116,14 @@ def _segments(raw: str, request: HttpRequest) -> list[Segment]:
         )
         for key, label, segment_query in SEGMENTS
     ]
+
+
+def _page_path(request: HttpRequest) -> str:
+    query = request.GET.copy()
+    query.pop("partial", None)
+    if not query:
+        return request.path
+    return f"{request.path}?{query.urlencode()}"
 
 
 def _next_url(request: HttpRequest) -> str:
