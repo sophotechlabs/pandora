@@ -272,7 +272,10 @@ def _frame(
         lineno = None
     resolved = _resolved(raw, lineno, debug_ids or {}, project_id)
     if resolved is not None:
-        return replace(resolved, source_url=_source_url(resolved, mappings))
+        return replace(
+            resolved,
+            source_url=_source_url(resolved.filename, resolved.lineno, mappings),
+        )
     row = FrameRow(
         location=_location(raw),
         filename=str(raw.get("filename") or raw.get("abs_path") or ""),
@@ -284,17 +287,22 @@ def _frame(
         expanded=expanded,
         minified=_minified_note(raw, debug_ids or {}),
     )
-    return replace(row, source_url=_source_url(row, mappings))
+    return replace(
+        row,
+        source_url=_source_url(commit_service.frame_path(raw), lineno, mappings),
+    )
 
 
-def _source_url(row: FrameRow, mappings: Sequence[CodeMapping]) -> str:
-    if not mappings or not row.filename:
+def _source_url(
+    frame_path: str, lineno: int | None, mappings: Sequence[CodeMapping]
+) -> str:
+    if not mappings or not frame_path:
         return ""
-    mapped = commit_service.map_path(row.filename, mappings)
+    mapped = commit_service.map_path(frame_path, mappings)
     if mapped is None:
         return ""
     mapping, path = mapped
-    return commit_service.source_url(mapping, path, row.lineno)
+    return commit_service.source_url(mapping, path, lineno)
 
 
 def _resolved(

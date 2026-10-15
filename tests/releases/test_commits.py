@@ -196,7 +196,7 @@ def test_a_frame_path_becomes_a_repository_path(project, mapping):
 
 
 def test_a_frame_outside_the_stack_root_does_not_map(project, mapping):
-    """Should leave a vendored path alone rather than mis-attribute it."""
+    """Should leave a vendored path alone rather than misattribute it."""
     assert commits.map_path("/usr/lib/python3/json.py", [mapping]) is None
 
 
@@ -624,11 +624,11 @@ def test_a_frame_with_only_a_module_still_maps(project, mapping):
     """Should use whichever path field the SDK filled in."""
     frames = [{"module": "/app/pandora/checkout.py"}]
 
-    found = commits.map_path(commits._frame_path(frames[0]), [mapping])
+    found = commits.map_path(commits.frame_path(frames[0]), [mapping])
 
     assert found is not None
 
 
 def test_a_frame_with_no_path_at_all_maps_nothing(project, mapping):
     """Should skip a frame that names no file."""
-    assert commits._frame_path({"function": "charge"}) == ""
+    assert commits.frame_path({"function": "charge"}) == ""

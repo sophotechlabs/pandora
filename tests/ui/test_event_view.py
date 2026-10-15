@@ -632,6 +632,56 @@ def test_a_mapped_frame_gets_a_source_link(project, code_mapping):
 
 
 @pytest.mark.django_db
+def test_a_relative_filename_is_linked_through_its_absolute_path(project, code_mapping):
+    """Should map abs_path, as the Python SDK sends filename relative to sys.path."""
+    payload = {
+        "exceptions": [
+            {
+                "type": "ValueError",
+                "frames": [
+                    {
+                        "filename": "pandora/checkout.py",
+                        "abs_path": "/app/pandora/checkout.py",
+                        "lineno": 12,
+                        "in_app": True,
+                    }
+                ],
+            }
+        ]
+    }
+
+    body = event_view.build(payload, project.pk)
+
+    frame = body.exceptions[0].frames[0]
+    expected = (
+        "https://github.com/sophotechlabs/pandora/blob/main/src/pandora/checkout.py#L12"
+    )
+
+    assert frame.source_url == expected
+
+
+@pytest.mark.django_db
+def test_the_link_maps_the_path_suspect_commits_map(project, code_mapping):
+    """Should resolve the frame the same way blame does, so the two never disagree."""
+    from pandora.releases import commits
+
+    frame = {
+        "filename": "pandora/checkout.py",
+        "abs_path": "/app/pandora/checkout.py",
+        "lineno": 3,
+        "in_app": True,
+    }
+    payload = {"exceptions": [{"type": "ValueError", "frames": [frame]}]}
+
+    body = event_view.build(payload, project.pk)
+
+    _, blamed = commits.map_path(commits.frame_path(frame), [code_mapping])
+    linked = body.exceptions[0].frames[0].source_url
+
+    assert f"/{blamed}#L3" in linked
+
+
+@pytest.mark.django_db
 def test_an_unmapped_frame_gets_no_link(project, code_mapping):
     """Should render nothing rather than a link into the wrong repository."""
     body = event_view.build(stack("/usr/lib/python3/json.py"), project.pk)

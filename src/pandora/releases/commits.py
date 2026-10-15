@@ -305,7 +305,7 @@ def suspects(
     found: list[Suspect] = []
     claimed: set[int] = set()
     for index, frame in enumerate(frames):
-        mapped = map_path(_frame_path(frame), mappings)
+        mapped = map_path(frame_path(frame), mappings)
         if mapped is None:
             continue
         _, path = mapped
@@ -320,7 +320,7 @@ def suspects(
     return found
 
 
-def _frame_path(frame: Mapping[str, Any]) -> str:
+def frame_path(frame: Mapping[str, Any]) -> str:
     for key in ("abs_path", "filename", "module"):
         value = frame.get(key)
         if isinstance(value, str) and value.strip():
