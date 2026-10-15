@@ -57,7 +57,7 @@ def main() -> None:
         attach_stacktrace=True,
         include_local_variables=True,
         max_breadcrumbs=50,
-        traces_sample_rate=0,
+        traces_sample_rate=1.0,
         before_send=before_send,
         integrations=[LoggingIntegration(level=None, event_level=None)],
     )
@@ -81,6 +81,12 @@ def main() -> None:
     sentry_sdk.add_breadcrumb(
         category="http", message="POST /checkout 500", level="error"
     )
+
+    with (
+        sentry_sdk.start_transaction(op="http.server", name="POST /checkout"),
+        sentry_sdk.start_span(op="db.query", name="SELECT order"),
+    ):
+        time.sleep(0.05)
 
     try:
         take_payment()

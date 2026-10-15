@@ -17,6 +17,7 @@ services:
       PANDORA_LIVE_LOG_TOKEN: live-log-token
       PANDORA_LIVE_UPLOAD_TOKEN: live-upload-token
       PANDORA_LIVE_READ_TOKEN: live-read-token
+      PANDORA_LIVE_RELEASE_TOKEN: live-release-token
       PANDORA_LIVE_DSN_KEY: 5eb1ve0000000000000000000000dsn0
     volumes:
       - live_logs:/var/log/live
@@ -84,6 +85,22 @@ services:
       SENTRY_AUTH_TOKEN: live-upload-token
       SENTRY_LOG_LEVEL: ${SENTRY_LOG_LEVEL:-warn}
     entrypoint: ["sh", "/srv/run.sh"]
+    depends_on:
+      web:
+        condition: service_healthy
+
+  cli-commits:
+    build:
+      context: ./live
+      dockerfile: Dockerfile.node
+      network: host
+    environment:
+      SENTRY_URL: http://web:8000
+      SENTRY_ORG: pandora
+      SENTRY_PROJECT: live
+      SENTRY_AUTH_TOKEN: live-release-token
+      SENTRY_LOG_LEVEL: ${SENTRY_LOG_LEVEL:-warn}
+    entrypoint: ["sh", "/srv/commits.sh"]
     depends_on:
       web:
         condition: service_healthy

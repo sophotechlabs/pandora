@@ -337,6 +337,7 @@ ci-live-up:
 ci-live-clients:
     #!/usr/bin/env bash
     set -euo pipefail
+    {{ compose_live }} run --rm -T cli-commits
     {{ compose_live }} run --rm sdk-python
     {{ compose_live }} run --rm sdk-python-crash
     {{ compose_live }} run --rm -T sdk-node

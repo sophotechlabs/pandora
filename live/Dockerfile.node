@@ -2,11 +2,16 @@ FROM node:24-slim
 
 WORKDIR /srv
 
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends git \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY node/package.json ./package.json
 RUN npm install --no-audit --no-fund \
     && chown -R node:node /srv
 
 COPY --chown=node:node node/src ./src
 COPY --chown=node:node node/run.sh ./run.sh
+COPY --chown=node:node node/commits.sh ./commits.sh
 
 USER node

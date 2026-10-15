@@ -21,6 +21,23 @@ tokens:
     token_env: PANDORA_LIVE_READ_TOKEN
     source: sdk
     scope: payload
+  - name: live-release
+    project: live
+    token_env: PANDORA_LIVE_RELEASE_TOKEN
+    source: sdk
+    scopes: [deploy]
+
+repositories:
+  - name: sophotechlabs/live-shop
+    project: live
+    provider: github
+    url: https://github.com/sophotechlabs/live-shop
+
+code_mappings:
+  - project: live
+    repository: sophotechlabs/live-shop
+    stack_root: /app/
+    source_root: ""
 
 dsn_keys:
   - project: live
