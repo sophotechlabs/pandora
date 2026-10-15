@@ -3,13 +3,47 @@ import json
 import pathlib
 
 import pytest
+from django import db
 from django.utils import timezone
 
 from pandora.core import models as core_models
+from pandora.events import postgres_store
 from pandora.issues import environments
 from pandora.issues import models as issue_models
 
 FIXTURE_DIR = pathlib.Path(__file__).resolve().parent / "fixtures"
+FIXTURE_MONTHS = ((datetime.date(2026, 8, 1), datetime.date(2026, 9, 1)),)
+
+
+def needs_fixture_months(request):
+    if "transactional_db" in request.fixturenames:
+        return False
+    if request.node.get_closest_marker("clock_partitions") is not None:
+        return False
+    if "db" in request.fixturenames:
+        return True
+    marker = request.node.get_closest_marker("django_db")
+    if marker is None:
+        return False
+    return not marker.kwargs.get("transaction", False)
+
+
+@pytest.fixture(autouse=True)
+def fixture_month_partitions(request):
+    if not needs_fixture_months(request):
+        return
+    request.getfixturevalue("db")
+    if db.connection.vendor != "postgresql":
+        return
+    with db.connection.cursor() as cursor:
+        for start, end in FIXTURE_MONTHS:
+            cursor.execute(
+                postgres_store.PARTITION.format(
+                    suffix=f"{start.year}_{start.month:02d}",
+                    start=start.isoformat(),
+                    end=end.isoformat(),
+                )
+            )
 
 
 @pytest.fixture

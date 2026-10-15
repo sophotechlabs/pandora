@@ -8,7 +8,7 @@ from django.utils import timezone
 from pandora.events import postgres_store
 from tests.events import support
 
-pytestmark = pytest.mark.django_db(databases="__all__")
+pytestmark = [pytest.mark.django_db(databases="__all__"), pytest.mark.clock_partitions]
 
 FIRING = "FOR VALUES FROM ('2026-07-01 00:00:00+00') TO ('2026-08-01 00:00:00+00')"
 

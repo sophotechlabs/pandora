@@ -156,6 +156,7 @@ def test_postgres_partitions_by_the_timestamp_column():
 
 
 @POSTGRES_ONLY
+@pytest.mark.clock_partitions
 def test_postgres_starts_with_monthly_partitions_around_today():
     """Should ship partitions covering last month through two months ahead."""
     with db.connection.cursor() as cursor:

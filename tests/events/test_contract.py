@@ -6,7 +6,7 @@ import pytest
 from pandora.events import types
 from tests.events import support
 
-pytestmark = pytest.mark.django_db(databases="__all__")
+pytestmark = [pytest.mark.django_db(databases="__all__"), pytest.mark.clock_partitions]
 
 
 # store contract

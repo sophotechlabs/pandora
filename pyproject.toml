@@ -96,6 +96,7 @@ testpaths = ["tests"]
 markers = [
     "e2e: drives a real browser against a running stack",
     "live: reads back what real client tooling sent to a running stack",
+    "clock_partitions: counts the event partitions the clock creates, so no fixture month is added",
 ]
 filterwarnings = ["ignore:No directory at.*staticfiles:UserWarning"]
 DJANGO_SETTINGS_MODULE = "tests.settings"
