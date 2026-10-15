@@ -163,7 +163,7 @@ export function upgrade(): void {
 }
 
 export function runMaintenanceJobs(): void {
-  for (const name of ['monitors', 'prune', 'replay', 'rollouts']) {
+  for (const name of ['monitors', 'prune', 'replay', 'rollouts', 'triage', 'alerts']) {
     const job = `pandora-e2e-${name}`;
     run('kubectl', [
       '--kubeconfig', KUBECONFIG, '--context', CONTEXT, '--namespace', NAMESPACE,

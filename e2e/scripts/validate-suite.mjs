@@ -11,6 +11,7 @@ const expectedGroups = [
   'access-triage',
   'search-export',
   'releases-deploys',
+  'parity',
   'protocols-maintenance',
   'helm-lifecycle',
 ];

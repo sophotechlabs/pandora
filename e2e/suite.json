@@ -86,6 +86,22 @@
       ]
     },
     {
+      "id": "parity",
+      "label": "Performance, monitors, review, search grammar, comments, security reports and suspect commits",
+      "runner": "playwright",
+      "profile": "core",
+      "timeoutMinutes": 45,
+      "specs": ["specs/parity.spec.ts"],
+      "paths": [
+        "src/pandora/issues/**",
+        "src/pandora/notify/**",
+        "src/pandora/perf/**",
+        "src/pandora/releases/**",
+        "src/pandora/scrub/**",
+        "e2e/specs/parity.spec.ts"
+      ]
+    },
+    {
       "id": "protocols-maintenance",
       "label": "Protocols and maintenance",
       "runner": "playwright",

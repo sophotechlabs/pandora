@@ -305,3 +305,151 @@ export function maintenanceState(): string {
     "print(f'{UploadChunk.objects.count()}:{RawEnvelope.objects.filter(state=EnvelopeState.FAILED).count()}')",
   ].join('\n'));
 }
+
+export async function sendTransaction(name: string, durationMs: number, spanOp: string, spanMs: number): Promise<void> {
+  const eventID = createHash('md5').update(name).digest('hex');
+  const start = Date.now() / 1000 - 5;
+  const traceID = 'b'.repeat(32);
+  const response = await postEnvelope(envelope([
+    JSON.stringify({ event_id: eventID }),
+    JSON.stringify({ type: 'transaction' }),
+    JSON.stringify({
+      event_id: eventID,
+      type: 'transaction',
+      platform: 'python',
+      environment: 'e2e',
+      transaction: name,
+      start_timestamp: start,
+      timestamp: start + durationMs / 1000,
+      contexts: { trace: { op: 'http.server', status: 'ok', trace_id: traceID, span_id: '1'.repeat(16) } },
+      spans: [{
+        op: spanOp,
+        description: 'e2e span',
+        trace_id: traceID,
+        span_id: '2'.repeat(16),
+        parent_span_id: '1'.repeat(16),
+        start_timestamp: start,
+        timestamp: start + spanMs / 1000,
+      }],
+    }),
+  ]));
+  if (!response.ok) {
+    throw new Error(`transaction ingest failed: ${await response.text()}`);
+  }
+}
+
+export async function sendReleasedEvent(release: string): Promise<void> {
+  const eventID = '9'.repeat(32);
+  const payload = eventPayload(eventID, 'LedgerError', 'src/ledger/post.py', 17);
+  const response = await postEnvelope(envelope([
+    JSON.stringify({ event_id: eventID }),
+    JSON.stringify({ type: 'event' }),
+    JSON.stringify({
+      ...payload,
+      release,
+      exception: {
+        values: [{
+          type: 'LedgerError',
+          value: 'e2e failure',
+          stacktrace: {
+            frames: [{
+              filename: 'src/ledger/post.py',
+              abs_path: '/srv/app/src/ledger/post.py',
+              lineno: 17,
+              function: 'post',
+              in_app: true,
+            }],
+          },
+        }],
+      },
+    }),
+  ]));
+  if (!response.ok) {
+    throw new Error(`released event failed: ${await response.text()}`);
+  }
+}
+
+export async function sendLocalEvent(): Promise<Response> {
+  const eventID = '7'.repeat(32);
+  return postEnvelope(envelope([
+    JSON.stringify({ event_id: eventID }),
+    JSON.stringify({ type: 'event' }),
+    JSON.stringify({
+      ...eventPayload(eventID, 'LocalOnlyError', 'src/dev/server.py', 3),
+      request: { url: 'http://localhost:3000/checkout', method: 'GET' },
+    }),
+  ]));
+}
+
+export async function setCommits(version: string): Promise<Response> {
+  const committed = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+  return fetch(`${BASE_URL}/api/0/organizations/pandora/releases/${version}/`, {
+    method: 'PUT',
+    headers: {
+      Authorization: `Bearer ${CI_TOKEN}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      projects: ['e2e'],
+      commits: [{
+        id: 'c0ffee'.repeat(6) + 'beef',
+        repository: 'sophotechlabs/e2e-ledger',
+        message: 'ledger: post entries in one transaction',
+        author_name: 'E2E Committer',
+        author_email: 'committer@e2e.test',
+        timestamp: committed,
+        patch_set: [{ path: 'src/ledger/post.py', type: 'M' }],
+      }],
+    }),
+  });
+}
+
+export function makeCodeMapping(): void {
+  shell([
+    'from pandora.core.models import Project',
+    'from pandora.releases.models import CodeMapping, Repository, RepositoryProvider',
+    "project = Project.objects.get(slug='e2e')",
+    "repository, _ = Repository.objects.get_or_create(project=project, name='sophotechlabs/e2e-ledger', defaults={'provider': RepositoryProvider.GITHUB, 'url': 'https://github.com/sophotechlabs/e2e-ledger'})",
+    "CodeMapping.objects.create(project=project, repository=repository, stack_root='/srv/app/', source_root='')",
+    "print('created')",
+  ].join('\n'));
+}
+
+export function makeMetricMonitor(name: string): void {
+  shell([
+    'from pandora.core.models import Project',
+    'from pandora.notify.models import MetricMonitor',
+    "project = Project.objects.get(slug='e2e')",
+    `MetricMonitor.objects.create(name='${name}', project=project, dataset='events', window_minutes=60, comparison='above', threshold=0)`,
+    "print('created')",
+  ].join('\n'));
+}
+
+export function makeLocalhostFilter(): void {
+  shell([
+    'from pandora.core.models import Project',
+    'from pandora.scrub.models import InboundFilter',
+    "project = Project.objects.get(slug='e2e')",
+    "InboundFilter.objects.create(project=project, kind='localhost')",
+    "print('created')",
+  ].join('\n'));
+}
+
+export function inboundRefusals(): string {
+  return shell([
+    'from pandora.scrub.models import InboundFilter',
+    "print(InboundFilter.objects.get(kind='localhost').dropped)",
+  ].join('\n'));
+}
+
+export function runCommand(name: string): string {
+  return shell([
+    'from django.core.management import call_command',
+    `call_command('${name}')`,
+    "print('done')",
+  ].join('\n'));
+}
+
+export function securityURL(): string {
+  return `${BASE_URL}/api/${String(projectID())}/security/?sentry_key=${PUBLIC_KEY}`;
+}
