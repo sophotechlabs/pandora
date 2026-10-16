@@ -223,9 +223,31 @@ def test_release_please_bumps_the_chart_as_well():
     extra = config["packages"]["."]["extra-files"]
 
     result = [entry["path"] for entry in extra]
-    expected = ["deploy/helm/pandora/Chart.yaml"]
+    expected = ["deploy/helm/pandora/Chart.yaml", "uv.lock"]
 
     assert result == expected
+
+
+def test_release_please_bumps_only_pandoras_own_entry_in_the_lock():
+    """Should move the package's version in uv.lock and leave every dependency alone."""
+    config = json.loads((ROOT / "release-please-config.json").read_text())
+    extra = config["packages"]["."]["extra-files"]
+
+    result = [(entry["type"], entry.get("jsonpath")) for entry in extra][1]
+    expected = ("toml", "$.package[?(@.name.value==='pandora')].version")
+
+    assert result == expected
+
+
+def test_the_lock_names_the_package_the_release_bumps():
+    """Should hold the entry the jsonpath points at, at the version being released."""
+    lock = (ROOT / "uv.lock").read_text(encoding="utf-8")
+    pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    version = re.search(r'^version = "([^"]+)"', pyproject, re.MULTILINE).group(1)
+
+    result = f'name = "pandora"\nversion = "{version}"' in lock
+
+    assert result is True
 
 
 def test_the_chart_carries_the_markers_the_generic_updater_needs():

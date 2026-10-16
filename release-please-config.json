@@ -55,6 +55,11 @@
         {
           "type": "generic",
           "path": "deploy/helm/pandora/Chart.yaml"
+        },
+        {
+          "type": "toml",
+          "path": "uv.lock",
+          "jsonpath": "$.package[?(@.name.value==='pandora')].version"
         }
       ]
     }
