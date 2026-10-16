@@ -58,14 +58,14 @@ The chart pulls `ghcr.io/sophotechlabs/pandora`, published on every release and 
 
 ### Shipping a release to a cluster
 
-Versions are release-please's: conventional commits on `main` produce a release PR, and merging it bumps `pyproject.toml`, the chart and the manifest, then builds the images. Pointing a running cluster at the new version is the step nothing automates, and `just release` does it:
+Versions are release-please's: conventional commits on `main` keep a release PR open, and merging it bumps `pyproject.toml`, `uv.lock`, the chart and the manifest, tags the commit and builds the images. `just release` is that merge plus everything after it:
 
 ```sh
-just release          # ship what release-please last cut
-just release 0.6.0    # or pin an earlier release, to roll back
+just release          # merge release-please's open PR, then point the cluster at it
+just release 0.6.0    # or point the cluster back at an earlier release, to roll back
 ```
 
-It writes `pandora_tag` in the GitOps checkout beside this one — `PANDORA_GITOPS_DIR` overrides where that is — and prints the commands to push, wait for the registry, commit the change and reconcile. It refuses a version that has not been released, because the tag would not exist to pull. It never edits `pyproject.toml`: release-please owns the version, and two writers on one field drift apart.
+With no version it shows the open release PR and asks before merging it — a merge cannot be taken back. It refuses a checkout with uncommitted changes or one that is not on `main`, merges only the head commit it showed, pulls, and checks that `main` now carries the version the PR named. Then it writes `pandora_tag` in the GitOps checkout beside this one — `PANDORA_GITOPS_DIR` overrides where that is — and prints the commands to push to the remote that builds the image, wait for the registry, commit the GitOps change and reconcile. With a version it skips the merge and refuses anything `main` has not released, because the image tag would not exist. It never writes the version itself: release-please owns it, and two writers on one field drift apart.
 
 ## Development
 

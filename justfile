@@ -643,30 +643,16 @@ ci-deadcode:
 ci-complexity:
     {{ ci_compose_run }} --entrypoint xenon web --max-absolute C --max-modules C --max-average A src
 
-# Point p-mk1 at a released version and print the commands to ship it
+# Cut the release release-please has open, point p-mk1 at it and print the commands to ship it
 release version="":
     #!/usr/bin/env bash
     set -euo pipefail
 
-    gitops="${PANDORA_GITOPS_DIR:-$(cd "{{ justfile_directory() }}/../hetzner-gitops" 2> /dev/null && pwd)}"
+    here="{{ justfile_directory() }}"
+    gitops="${PANDORA_GITOPS_DIR:-$(cd "$here/../hetzner-gitops" 2> /dev/null && pwd)}"
     vars="$gitops/clusters/p-mk1/cluster-vars.yaml"
     if [ ! -f "$vars" ]; then
         echo "no cluster-vars.yaml at $vars — set PANDORA_GITOPS_DIR" >&2
-        exit 1
-    fi
-
-    released=$(python3 -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
-    next="{{ version }}"
-    if [ -z "$next" ]; then
-        next="$released"
-    fi
-    if ! echo "$next" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$'; then
-        echo "$next is not a version" >&2
-        exit 1
-    fi
-    if [ "$(printf '%s\n%s\n' "$released" "$next" | sort -V | tail -1)" != "$released" ]; then
-        echo "$next has not been released — pyproject.toml is on $released" >&2
-        echo "release-please owns the version; merge its release PR, then ship what it cut" >&2
         exit 1
     fi
 
@@ -675,6 +661,57 @@ release version="":
         echo "could not read pandora_tag from $vars" >&2
         exit 1
     fi
+
+    read_version() {
+        python3 -c "import sys, tomllib; print(tomllib.load(open(sys.argv[1], 'rb'))['project']['version'])" "$here/pyproject.toml"
+    }
+
+    next="{{ version }}"
+    cut=no
+    if [ -n "$next" ]; then
+        released=$(read_version)
+        if ! echo "$next" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "$next is not a version" >&2
+            exit 1
+        fi
+        if [ "$(printf '%s\n%s\n' "$released" "$next" | sort -V | tail -1)" != "$released" ]; then
+            echo "$next has not been released — main is on $released" >&2
+            exit 1
+        fi
+    else
+        if [ -n "$(git -C "$here" status --porcelain)" ]; then
+            echo "the checkout has uncommitted changes — commit them before cutting a release" >&2
+            exit 1
+        fi
+        if [ "$(git -C "$here" rev-parse --abbrev-ref HEAD)" != main ]; then
+            echo "a release is cut from main" >&2
+            exit 1
+        fi
+        repo=$(git -C "$here" remote get-url origin | sed -E -e 's#^(git@github\.com:|https://github\.com/)##' -e 's#\.git$##')
+        pending=$(gh pr list --repo "$repo" --head release-please--branches--main --state open \
+            --json number,headRefOid,title --jq '.[0] | select(.) | [.number, .headRefOid, .title] | @tsv')
+        if [ -z "$pending" ]; then
+            echo "release-please has no release open — nothing on main since $(read_version) to release" >&2
+            exit 1
+        fi
+        IFS=$'\t' read -r number head title <<< "$pending"
+        echo "$title (#$number)"
+        answer=""
+        read -r -p "merge it and cut the release? [y/N] " answer || true
+        if [ "$answer" != y ]; then
+            echo "left #$number open" >&2
+            exit 1
+        fi
+        gh pr merge "$number" --repo "$repo" --squash --match-head-commit "$head"
+        git -C "$here" pull --ff-only origin main
+        next=$(read_version)
+        if [ "$title" != "chore(main): release $next" ]; then
+            echo "main is on $next after the merge, but #$number was: $title" >&2
+            exit 1
+        fi
+        cut=yes
+    fi
+
     if [ "$tag" = "$next" ]; then
         echo "p-mk1 is already on $next" >&2
         exit 1
@@ -694,15 +731,16 @@ release version="":
     )
     PY
 
-    here="{{ justfile_directory() }}"
-
-    echo "pandora     $tag -> $next"
-    if [ "$next" != "$released" ]; then
-        echo "pyproject   $released — $next is an earlier release, so this is a rollback"
+    if [ "$cut" = yes ]; then
+        echo "released    $next — release-please tags it and publishes the GitHub release"
+    elif [ "$next" != "$(read_version)" ]; then
+        echo "rollback    main is on $(read_version); p-mk1 goes back to $next"
     fi
+    echo "pandora     $tag -> $next"
     echo
-    echo "git -C $here push ci main"
-    echo "git -C $here push origin main"
+    if [ "$cut" = yes ]; then
+        echo "git -C $here push ci main"
+    fi
     echo "until curl -sf https://zot.c.p-mk1.sopho.tech/v2/apps/pandora/tags/list | grep -q '\"$next\"'; do sleep 15; done"
     echo "git -C $gitops add clusters/p-mk1/cluster-vars.yaml"
     echo "git -C $gitops commit -m 'chore: pandora $next'"
